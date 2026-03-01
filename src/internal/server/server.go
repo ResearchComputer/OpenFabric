@@ -115,6 +115,10 @@ func StartServer() {
 	v1 := r.Group("/v1")
 	{
 		v1.GET("/health", healthStatusCheck)
+		systemGroup := v1.Group("/system")
+		{
+			systemGroup.GET("/stats", getIngestStats)
+		}
 		crdtGroup := v1.Group("/dnt")
 		{
 			crdtGroup.GET("/table", getDNT)

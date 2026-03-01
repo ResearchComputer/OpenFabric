@@ -11,3 +11,9 @@ dependencies = [
 
 [project.scripts]
 cluster-manager = "main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+]
