@@ -1,0 +1,9 @@
+clusters:
+    - name: "dev_cluster"
+      type: "baremetal"
+      host: "dev"
+
+services:
+    - name: "test_subprocess"
+      cluster: "dev_cluster"
+      command: "echo 'Hello from dev!'"
