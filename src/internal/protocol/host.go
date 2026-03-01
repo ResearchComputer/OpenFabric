@@ -219,7 +219,7 @@ func startAutoReconnect(ctx context.Context, h host.Host) {
 				common.Logger.Warn("No active P2P connections; attempting reconnect to bootstraps...")
 			} else {
 				backoff := backoffDelay(attempt-1, minBackoff, maxBackoff)
-				common.Logger.With("attempt", attempt).Warnf("Reconnect will retry after %s", backoff)
+				common.Logger.With("attempt", attempt).Debugf("Reconnect will retry after %s", backoff)
 				if !waitFor(ctx, backoff) {
 					return
 				}
@@ -255,7 +255,7 @@ func tryReconnectToBootstraps(ctx context.Context, h host.Host, dialTimeout time
 	mode := viper.GetString("mode")
 	addrs := getDefaultBootstrapPeers(nil, mode)
 	if len(addrs) == 0 {
-		common.Logger.Warn("Reconnect attempt skipped: no bootstrap addresses configured")
+		common.Logger.Debug("Reconnect attempt skipped: no bootstrap addresses configured")
 		return false
 	}
 
