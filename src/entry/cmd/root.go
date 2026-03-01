@@ -32,7 +32,7 @@ var rootcmd = &cobra.Command{
 
 //nolint:gochecknoinits
 func init() {
-	rootcmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/otela/cfg.yaml)")
+	rootcmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/opentela/cfg.yaml)")
 	startCmd.Flags().String("wallet.account", "", "wallet account")
 	startCmd.Flags().String("account.wallet", "", "path to wallet key file")
 	startCmd.Flags().String("bootstrap.addr", "http://152.67.71.5:8092/v1/dnt/bootstraps", "bootstrap address")
@@ -54,6 +54,27 @@ func init() {
 	rootcmd.AddCommand(startCmd)
 	rootcmd.AddCommand(versionCmd)
 	rootcmd.AddCommand(updateCmd)
+	rootcmd.AddCommand(walletCmd)
+}
+
+// configFilePath returns the canonical path for the OpenTela config file.
+// It first checks for the new ~/.config/opentela/cfg.yaml location; if that
+// does not exist but the legacy ~/.config/ocf/cfg.yaml does, the legacy path
+// is returned so the existing installation keeps working until the user
+// migrates.
+func configFilePath(home string) string {
+	newPath := path.Join(home, ".config", configDirName, "cfg.yaml")
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+
+	legacyPath := path.Join(home, ".config", legacyConfigDirName, "cfg.yaml")
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+
+	// Neither exists yet — use the new location.
+	return newPath
 }
 
 func initConfig(cmd *cobra.Command) error {
@@ -78,7 +99,7 @@ func initConfig(cmd *cobra.Command) error {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		viper.SetConfigFile(path.Join(home, ".config", "ocf", "cfg.yaml"))
+		viper.SetConfigFile(configFilePath(home))
 	}
 	if err = viper.ReadInConfig(); err != nil {
 		viper.SetDefault("path", defaultConfig.Path)
@@ -94,7 +115,7 @@ func initConfig(cmd *cobra.Command) error {
 		viper.SetDefault("solana.rpc", defaultConfig.Solana.RPC)
 		viper.SetDefault("solana.mint", defaultConfig.Solana.Mint)
 		viper.SetDefault("solana.skip_verification", defaultConfig.Solana.SkipVerification)
-		configPath := path.Join(home, ".config", "ocf", "cfg.yaml")
+		configPath := path.Join(home, ".config", configDirName, "cfg.yaml")
 		err = os.MkdirAll(path.Dir(configPath), os.ModePerm)
 		if err != nil {
 			common.Logger.Error("Could not create config directory", "error", err)

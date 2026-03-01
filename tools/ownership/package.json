@@ -1,0 +1,41 @@
+{
+  "name": "@opentela/ownership-tools",
+  "version": "0.1.0",
+  "description": "Utilities for managing OpenTela SPL ownership tokens on Solana",
+  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "create-token": "tsx src/create-token.ts",
+    "mint-tokens": "tsx src/mint-tokens.ts",
+    "transfer-tokens": "tsx src/transfer-tokens.ts",
+    "token-info": "tsx src/token-info.ts",
+    "verify-ownership": "tsx src/verify-ownership.ts",
+    "create-ata": "tsx src/create-ata.ts",
+    "revoke-mint": "tsx src/revoke-mint.ts",
+    "burn-tokens": "tsx src/burn-tokens.ts",
+    "snapshot-holders": "tsx src/snapshot-holders.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "prettier --check \"src/**/*.ts\"",
+    "lint:fix": "prettier --write \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

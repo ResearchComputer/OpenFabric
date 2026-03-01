@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.js
+*.js.map
+*.d.ts
+*.d.ts.map
+!vitest.config.ts
+.DS_Store

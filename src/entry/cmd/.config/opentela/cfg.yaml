@@ -1,0 +1,23 @@
+account:
+    wallet: ""
+crdt:
+    tombstone_compaction_batch: 512
+    tombstone_compaction_interval: 1h
+    tombstone_retention: 24h
+name: relay
+p2p:
+    port: "8093"
+path: ""
+port: "8092"
+queue:
+    port: "8094"
+solana:
+    mint: EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR
+    rpc: https://api.mainnet-beta.solana.com
+    skip_verification: false
+tcpport: "43905"
+udpport: "59820"
+vacuum:
+    interval: 10
+wallet:
+    account: ""

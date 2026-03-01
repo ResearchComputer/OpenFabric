@@ -1,0 +1,495 @@
+# Wallet & Ownership
+
+OpenTela uses a Solana-compatible blockchain wallet to establish **ownership** of nodes and services in the network. Every node that joins the network can carry a cryptographic identity (a wallet public key) that is recorded in the distributed node table alongside the services it provides. This document explains how to create, manage, export, and use wallets within OpenTela.
+
+## Overview
+
+The ownership mechanism works as follows:
+
+1. Each operator generates (or imports) a **Solana Ed25519 keypair** via the `otela` CLI.
+2. The keypair is stored locally under `~/.config/opentela/` and is **automatically loaded** every time the node starts.
+3. A deterministic **Provider ID** (e.g., `otela-5YNmS1R9nNSC`) is derived from the wallet's public key and attached to every service the node registers in the network.
+4. Other participants can verify who owns a given service by inspecting the `owner` field in the node table.
+5. The wallet is a real Solana wallet — you can deposit SOL or SPL tokens into it, transfer funds, and import/export it to third-party wallets like **Phantom**, **Solflare**, or **MetaMask** (via Solana Snap).
+
+## Prerequisites
+
+- OpenTela binary installed (see [Installation](installation.md))
+- A terminal with shell access
+- (Optional) A Phantom or Solflare browser extension for importing the wallet
+
+## Quick start
+
+If you just want to get up and running, these three commands are all you need:
+
+```bash
+# 1. Initialize OpenTela (creates config dir + wallet)
+./otela init
+
+# 2. Verify your wallet
+./otela wallet info
+
+# 3. Start a node — the wallet is loaded automatically
+./otela start --mode standalone --public-addr {YOUR_IP}
+```
+
+The rest of this document explains each step in detail.
+
+---
+
+## Step 1: Initialize your environment
+
+The `otela init` command creates the configuration directory at `~/.config/opentela/`, writes a default `cfg.yaml`, and generates your first Solana wallet:
+
+```bash
+./otela init
+```
+
+Expected output:
+
+```
+Config directory: /home/user/.config/opentela
+Default configuration written to /home/user/.config/opentela/cfg.yaml
+
+✔ Wallet created
+  Public key:   5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
+  Provider ID:  otela-5YNmS1R9nNSC
+  Keypair file: /home/user/.config/opentela/accounts/5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4/keypair.json
+
+This keypair is compatible with Phantom, Solflare, and the Solana CLI.
+To export for use in a third-party wallet run:
+
+  otela wallet export
+```
+
+If you have already initialized before, `otela init` will detect the existing wallet and print its details without overwriting anything.
+
+### What gets created
+
+After initialization, the `~/.config/opentela/` directory looks like this:
+
+```
+~/.config/opentela/
+├── cfg.yaml                          # Node configuration
+├── accounts.json                     # Wallet account registry
+└── accounts/
+    └── 5YNmS1R9nNSC.../
+        └── keypair.json              # Solana-CLI compatible keypair
+```
+
+- **`cfg.yaml`** — node settings (port, bootstrap addresses, Solana RPC endpoint, etc.)
+- **`accounts.json`** — a JSON file listing all managed wallets with their public keys, provider IDs, and file paths.
+- **`keypair.json`** — the raw Ed25519 private key in Solana-CLI JSON int-array format (`[byte0, byte1, ..., byte63]`). This is the same format used by `solana-keygen` and can be imported directly into Solflare, Phantom, or the Solana CLI.
+
+> **Security note:** The `keypair.json` file and `accounts.json` contain your private key material. Both are written with `0600` permissions (owner-readable only). Do not share these files or commit them to version control.
+
+---
+
+## Step 2: Wallet management
+
+### Create additional wallets
+
+You can create more than one wallet. Each wallet gets its own provider ID:
+
+```bash
+./otela wallet create
+```
+
+```
+✔ Created Solana wallet
+  Public key:   9fR2kE7vLm3XhP4qYwBzNcA8JdS6TgU5nWo1HxCjF7bD
+  Provider ID:  otela-9fR2kE7vLm3X
+  Keypair file: /home/user/.config/opentela/accounts/9fR2kE7vLm3X.../keypair.json
+
+Use `otela wallet list` to view all managed wallets.
+
+To import into Phantom or Solflare:
+  otela wallet export --pubkey 9fR2kE7vLm3XhP4qYwBzNcA8JdS6TgU5nWo1HxCjF7bD
+```
+
+The **first wallet** in the list is always the **default** (active) wallet. When you start a node, it uses the default wallet to derive its owner identity.
+
+### List all wallets
+
+```bash
+./otela wallet list
+```
+
+```
+* [0] 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4  (solana)
+      provider-id: otela-5YNmS1R9nNSC
+      stored at:   /home/user/.config/opentela/accounts/5YNmS1R9nNSC.../keypair.json
+      created:     2025-06-01T10:30:00Z
+  [1] 9fR2kE7vLm3XhP4qYwBzNcA8JdS6TgU5nWo1HxCjF7bD  (solana)
+      provider-id: otela-9fR2kE7vLm3X
+      stored at:   /home/user/.config/opentela/accounts/9fR2kE7vLm3X.../keypair.json
+      created:     2025-06-01T11:00:00Z
+```
+
+The `*` marks the default wallet.
+
+### Show default wallet details
+
+```bash
+./otela wallet info
+```
+
+```
+Public key:   5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
+Provider ID:  otela-5YNmS1R9nNSC
+Wallet type:  solana
+Keypair file: /home/user/.config/opentela/accounts/5YNmS1R9nNSC.../keypair.json
+Created at:   2025-06-01T10:30:00Z
+```
+
+---
+
+## Step 3: Export wallet for third-party use
+
+The generated wallet is a standard Solana Ed25519 keypair. You can export it in two formats depending on which third-party wallet you want to use.
+
+### Export for Phantom (base58 private key)
+
+Phantom's "Import Private Key" dialog expects a base58-encoded secret key. Run:
+
+```bash
+./otela wallet export
+```
+
+```
+Base58 private key (paste into Phantom → Import Private Key):
+
+4wBzNcA8JdS6TgU5nWo1HxCjF7bD5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF...
+
+⚠  Keep this key secret — anyone with access can control this wallet.
+```
+
+Copy the base58 string, open Phantom, click **Add / Connect Wallet → Import Private Key**, paste it, and you're done.
+
+To export a specific wallet (not the default), pass `--pubkey`:
+
+```bash
+./otela wallet export --pubkey 9fR2kE7vLm3XhP4qYwBzNcA8JdS6TgU5nWo1HxCjF7bD
+```
+
+### Export for Solflare / Solana CLI (JSON keypair file)
+
+Solflare and the Solana CLI accept a JSON file containing the 64-byte secret key as an integer array. Use the `--file` flag:
+
+```bash
+./otela wallet export --file ~/my-keypair.json
+```
+
+```
+✔ Keypair written to /home/user/my-keypair.json (Solana-CLI format)
+  You can import this file into Solflare or use it with the Solana CLI.
+```
+
+The exported file has the exact same format as `solana-keygen new --outfile` produces:
+
+```json
+[174,23,91,200,55,132,...]
+```
+
+You can then use it with any Solana tool:
+
+```bash
+# Solana CLI
+solana balance --keypair ~/my-keypair.json
+
+# Or import into Solflare via Settings → Import Wallet → Keystore File
+```
+
+### Export for MetaMask
+
+MetaMask supports Solana through the [Solana Snap](https://snaps.metamask.io/). After installing the Snap, use the base58 private key from `otela wallet export` during the import step. The process is the same as with Phantom — paste the base58 string when prompted.
+
+---
+
+## Step 4: Import an existing wallet
+
+If you already have a Solana keypair (from `solana-keygen`, Phantom export, etc.), you can import it:
+
+```bash
+./otela wallet import ~/existing-keypair.json
+```
+
+```
+✔ Imported Solana wallet
+  Public key:   HN7cABqLq46Es1jh92dQQisAXcGFQKmpqKBnqxSdT7ck
+  Provider ID:  otela-HN7cABqLq46E
+  Keypair file: /home/user/.config/opentela/accounts/HN7cABqLq46E.../keypair.json
+```
+
+The imported keypair file is **copied** into the managed directory — the original file is not modified or deleted. The imported wallet can then be used as the owner identity when starting nodes.
+
+> **Note:** The keypair file must be in Solana-CLI JSON format (a JSON array of 64 integers). If you exported a base58 private key from Phantom, you'll need to convert it to JSON format first, or generate a new wallet with `otela wallet create` and transfer your funds.
+
+---
+
+## Step 5: Check balance
+
+You can check the SOL (and SPL token) balance of your default wallet directly from the CLI:
+
+```bash
+./otela wallet balance
+```
+
+```
+Wallet: 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
+RPC:    https://api.mainnet-beta.solana.com
+
+  SOL balance: 1.500000000 SOL
+  Token (EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR): 10000 (10000.000000)
+```
+
+The token balance line only appears if a `solana.mint` is configured in `cfg.yaml` (it is set by default to the OpenTela SPL token mint).
+
+### Using a different RPC endpoint
+
+To check your balance on devnet or a custom RPC:
+
+```bash
+./otela wallet balance --solana.rpc https://api.devnet.solana.com
+```
+
+---
+
+## Step 6: Transfer SOL
+
+You can send native SOL to any Solana wallet directly from the CLI:
+
+```bash
+./otela wallet transfer <RECIPIENT_PUBKEY> <AMOUNT_IN_SOL>
+```
+
+For example, to send 0.5 SOL:
+
+```bash
+./otela wallet transfer HN7cABqLq46Es1jh92dQQisAXcGFQKmpqKBnqxSdT7ck 0.5
+```
+
+```
+From:   5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
+To:     HN7cABqLq46Es1jh92dQQisAXcGFQKmpqKBnqxSdT7ck
+Amount: 0.500000000 SOL (500000000 lamports)
+
+✔ Transaction sent!
+  Signature: 3Kf8x...
+  Explorer:  https://explorer.solana.com/tx/3Kf8x...
+```
+
+The amount is specified in SOL (not lamports). Fractional values are supported up to 9 decimal places.
+
+> **Tip:** To transfer on devnet, add `--solana.rpc https://api.devnet.solana.com`.
+
+---
+
+## Step 7: Get test SOL (devnet airdrop)
+
+For testing purposes, you can request free SOL from the Solana devnet faucet:
+
+```bash
+./otela wallet airdrop --solana.rpc https://api.devnet.solana.com 2
+```
+
+```
+Requesting 2.0 SOL airdrop for 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4 ...
+✔ Airdrop requested (tx: 4Jx9m...)
+```
+
+The default amount is 1 SOL if you omit the argument. This only works on devnet and testnet — mainnet does not have a faucet.
+
+---
+
+## Step 8: Service registration with ownership
+
+When a node starts and joins the network, its wallet identity is automatically attached to every service it registers. This is the core of the ownership mechanism.
+
+### How it works at startup
+
+1. The node reads `~/.config/opentela/accounts.json` and loads the default wallet.
+2. A **Provider ID** is derived from the wallet's public key (e.g., `otela-5YNmS1R9nNSC`).
+3. If an SPL token mint is configured (`solana.mint` in `cfg.yaml`), the node verifies on-chain that the wallet holds at least one of those tokens. This step can be skipped with `--solana.skip_verification` for testing.
+4. The Provider ID is written into the `owner` field of the node's entry in the CRDT distributed node table.
+5. Every service the node registers (e.g., `llm`) inherits this owner identity.
+
+### Starting a node with wallet ownership
+
+No extra flags are needed — the wallet is loaded automatically:
+
+```bash
+./otela start \
+  --mode standalone \
+  --public-addr {YOUR_IP} \
+  --seed 0
+```
+
+In the startup logs you will see:
+
+```
+INFO  Server wallet initialized. Public key: 5YNmS1R9nNSC...  Provider ID: otela-5YNmS1R9nNSC
+INFO  Wallet type: solana
+INFO  Verified configured wallet.account matches local wallet
+INFO  Verified SPL token ownership for mint EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR
+```
+
+### Viewing ownership in the node table
+
+After the node registers, its owner identity is visible in the distributed node table at `http://{YOUR_IP}:8092/v1/dnt/table`:
+
+```json
+{
+  "/QmafRyc9ef1KKKMfG973aApDKCEEjnhf89dZDckgUeSMbB": {
+    "id": "QmafRyc9ef1KKKMfG973aApDKCEEjnhf89dZDckgUeSMbB",
+    "owner": "otela-5YNmS1R9nNSC",
+    "service": [
+      {
+        "name": "llm",
+        "status": "connected",
+        "identity_group": ["model=Qwen/Qwen3-8B"]
+      }
+    ],
+    "connected": true,
+    "hardware": {
+      "gpus": [{"name": "NVIDIA A100", "total_memory": 81920, "used_memory": 1200}]
+    }
+  }
+}
+```
+
+The `"owner"` field (`"otela-5YNmS1R9nNSC"`) ties this node and all its services to the wallet `5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4`. Any participant in the network can see who owns which service.
+
+### Multiple nodes, same owner
+
+If you run several worker nodes using the **same wallet** (same `~/.config/opentela/` directory, or the same imported keypair), they will all share the same Provider ID. This is useful when a single operator manages a fleet of machines:
+
+```
+Node A (GPU worker)  →  owner: otela-5YNmS1R9nNSC
+Node B (GPU worker)  →  owner: otela-5YNmS1R9nNSC
+Node C (head node)   →  owner: otela-5YNmS1R9nNSC
+```
+
+All three nodes are identifiable as belonging to the same operator.
+
+### Different operators, different owners
+
+When different people run nodes in the same OpenTela network, each will have a unique wallet and therefore a unique Provider ID:
+
+```
+Alice's node  →  owner: otela-5YNmS1R9nNSC
+Bob's node    →  owner: otela-HN7cABqLq46E
+Carol's node  →  owner: otela-9fR2kE7vLm3X
+```
+
+This makes it possible to audit which operator provides which services.
+
+---
+
+## Step 9: Skipping wallet (optional)
+
+If you don't want to use the ownership mechanism (e.g., for quick local testing), you can start a node without a wallet by leaving `wallet.account` empty:
+
+```bash
+./otela start --wallet.account "" --mode standalone
+```
+
+The node will log:
+
+```
+INFO  Wallet account set to 'none', skipping wallet initialization
+```
+
+The node will still function normally for routing and serving, but its `owner` field in the node table will be empty.
+
+---
+
+## Configuration reference
+
+All wallet-related settings live in `~/.config/opentela/cfg.yaml`:
+
+```yaml
+# Wallet / ownership
+account:
+  wallet: ""                    # Path to keypair file (auto-detected if empty)
+
+solana:
+  rpc: "https://api.mainnet-beta.solana.com"   # Solana RPC endpoint
+  mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR"  # SPL token mint to verify
+  skip_verification: false       # Set true to skip on-chain token check
+```
+
+These can also be set via CLI flags or environment variables (prefixed with `OF_`):
+
+| Config key | CLI flag | Env var | Description |
+| :--- | :--- | :--- | :--- |
+| `account.wallet` | `--account.wallet` | `OF_ACCOUNT_WALLET` | Path to keypair file |
+| `wallet.account` | `--wallet.account` | `OF_WALLET_ACCOUNT` | Wallet public key override |
+| `solana.rpc` | `--solana.rpc` | `OF_SOLANA_RPC` | Solana JSON-RPC endpoint |
+| `solana.mint` | `--solana.mint` | `OF_SOLANA_MINT` | SPL token mint address to verify |
+| `solana.skip_verification` | `--solana.skip_verification` | `OF_SOLANA_SKIP_VERIFICATION` | Skip token ownership check |
+
+---
+
+## CLI command reference
+
+| Command | Description |
+| :--- | :--- |
+| `otela init` | Create config directory, default config, and first wallet |
+| `otela wallet create` | Generate a new Solana wallet |
+| `otela wallet list` | List all managed wallets |
+| `otela wallet info` | Show default wallet details |
+| `otela wallet export` | Export private key as base58 (for Phantom) |
+| `otela wallet export --file <path>` | Export keypair in Solana-CLI JSON format (for Solflare / CLI) |
+| `otela wallet export --pubkey <key>` | Export a specific wallet (not the default) |
+| `otela wallet import <keypair.json>` | Import an existing Solana keypair file |
+| `otela wallet balance` | Show SOL and token balances |
+| `otela wallet transfer <to> <sol>` | Transfer native SOL to another wallet |
+| `otela wallet airdrop [sol]` | Request devnet/testnet SOL from the faucet |
+
+---
+
+## Storage layout
+
+```
+~/.config/opentela/
+├── cfg.yaml                                       # Node configuration
+├── accounts.json                                  # Account registry
+└── accounts/
+    ├── 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4Ce.../
+    │   └── keypair.json                           # Wallet 1 keypair
+    └── 9fR2kE7vLm3XhP4qYwBzNcA8JdS6TgU5nWo.../
+        └── keypair.json                           # Wallet 2 keypair
+```
+
+- All files under `accounts/` are `chmod 0600`.
+- The `accounts.json` registry is updated whenever a wallet is created or imported.
+- Legacy data from `~/.ocf/` is migrated automatically on first access.
+
+---
+
+## Frequently asked questions
+
+### Can I use the same wallet on multiple machines?
+
+Yes. Copy the `~/.config/opentela/` directory (or just the `accounts.json` and the relevant `accounts/` subdirectory) to another machine. All nodes using the same wallet will register with the same Provider ID.
+
+### What happens if I lose my keypair?
+
+The private key is the only way to prove ownership. If you lose `~/.config/opentela/` and have no backup or export, the wallet (and any SOL/tokens in it) is unrecoverable. **Back up your keypair** or export it to a third-party wallet.
+
+### Does the wallet need to hold tokens to use OpenTela?
+
+By default, yes — the node checks on startup that the wallet holds the configured SPL token (`solana.mint`). You can disable this with `--solana.skip_verification` for development and testing. Without the flag, a node whose wallet has no tokens will log a warning but still start.
+
+### What is the Provider ID?
+
+The Provider ID is a short, deterministic string derived from the wallet public key: `otela-<first 12 characters of the base58 public key>`. It is stable across restarts, unique per wallet, and human-readable in the node table. It serves as a compact identifier so you don't have to compare full 44-character public keys.
+
+### Can I change the default wallet?
+
+Currently the first account in `accounts.json` is always the default. To change the default, you can manually reorder the entries in `~/.config/opentela/accounts.json`.
+
+### Is the wallet compatible with mainnet?
+
+Yes. The generated keypair is a standard Solana Ed25519 keypair that works on mainnet-beta, devnet, and testnet. The `solana.rpc` setting in `cfg.yaml` controls which cluster the node communicates with. For production use, ensure it points to a mainnet RPC endpoint (this is the default).

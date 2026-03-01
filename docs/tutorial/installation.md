@@ -27,13 +27,14 @@ Usage:
 Available Commands:
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command
-  init        Initialize the system, create the database and the config file
+  init        Initialize OpenTela: create config directory and a default wallet
   start       Start listening for incoming connections
   update      Update the Open Compute Binary
   version     Print the version of otela
+  wallet      Wallet management commands
 
 Flags:
-      --config string   config file (default is $HOME/.config/ocf/cfg.yaml)
+      --config string   config file (default is $HOME/.config/opentela/cfg.yaml)
   -h, --help            help for otela
 
 Use "otela [command] --help" for more information about a command.

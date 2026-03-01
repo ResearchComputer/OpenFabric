@@ -18,69 +18,87 @@ import (
 )
 
 func StartServer() {
+	// owner will be passed to InitializeMyself so every service
+	// registration carries the wallet-derived provider identity.
+	owner := ""
+
 	if viper.GetString("wallet.account") == "" {
 		common.Logger.Info("Wallet account set to 'none', skipping wallet initialization")
 	} else {
 		walletManager, err := wallet.InitializeWallet()
 		if err != nil {
 			common.Logger.Warn("Failed to initialize wallet: %v", err)
-		}
-		walletPublicKey := walletManager.GetPublicKey()
-		common.Logger.Infof("Server wallet initialized. Public key: %s", walletPublicKey)
-
-		if walletPublicKey == "" {
-			common.Logger.Warn("No wallet public key available; ensure an account is created with `ocf wallet create`")
-		}
-
-		if viper.GetString("wallet.account") == "" {
-			viper.Set("wallet.account", walletPublicKey)
-		}
-		if walletPath := walletManager.GetWalletPath(); walletPath != "" && viper.GetString("account.wallet") == "" {
-			viper.Set("account.wallet", walletPath)
-		}
-
-		walletType := walletManager.GetWalletType()
-		if walletType == wallet.WalletTypeSolana {
-			common.Logger.Info("Wallet type: solana")
 		} else {
-			common.Logger.Info("Wallet type: ocf")
-		}
+			walletPublicKey := walletManager.GetPublicKey()
+			providerID := walletManager.GetProviderID()
+			common.Logger.Infof("Server wallet initialized. Public key: %s  Provider ID: %s", walletPublicKey, providerID)
 
-		configuredAccount := viper.GetString("wallet.account")
-		if configuredAccount != "" && configuredAccount != walletPublicKey {
-			common.Logger.Warn("Configured wallet.account (%s) does not match local wallet public key (%s)", configuredAccount, walletPublicKey)
-		}
-		if configuredAccount != "" {
-			common.Logger.Infof("Verified configured wallet.account matches local wallet")
-		}
+			if walletPublicKey == "" {
+				common.Logger.Warn("No wallet public key available; ensure an account is created with `otela wallet create`")
+			}
 
-		owner := walletPublicKey
-		if configuredAccount != "" {
-			owner = configuredAccount
-		}
+			if viper.GetString("wallet.account") == "" {
+				viper.Set("wallet.account", walletPublicKey)
+			}
+			if walletPath := walletManager.GetWalletPath(); walletPath != "" && viper.GetString("account.wallet") == "" {
+				viper.Set("account.wallet", walletPath)
+			}
 
-		if walletType == wallet.WalletTypeSolana {
-			mint := viper.GetString("solana.mint")
-			skipVerification := viper.GetBool("solana.skip_verification")
-			if mint != "" && !skipVerification {
-				rpcEndpoint := viper.GetString("solana.rpc")
-				client := solanaclient.NewClient(rpcEndpoint)
-				verifyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				hasToken, err := client.HasSPLToken(verifyCtx, owner, mint)
-				cancel()
-				if err != nil {
-					common.Logger.Warn("Failed to verify SPL token ownership: %v", err)
+			walletType := walletManager.GetWalletType()
+			if walletType == wallet.WalletTypeSolana {
+				common.Logger.Info("Wallet type: solana")
+			} else {
+				common.Logger.Info("Wallet type: ocf")
+			}
+
+			configuredAccount := viper.GetString("wallet.account")
+			if configuredAccount != "" && configuredAccount != walletPublicKey {
+				common.Logger.Warn("Configured wallet.account (%s) does not match local wallet public key (%s)", configuredAccount, walletPublicKey)
+			}
+			if configuredAccount != "" {
+				common.Logger.Infof("Verified configured wallet.account matches local wallet")
+			}
+
+			// Prefer the provider ID derived from the wallet so every
+			// service registration in the CRDT carries a deterministic,
+			// wallet-bound identity.  Fall back to the raw public key
+			// when the provider ID is empty (legacy OCF accounts).
+			if providerID != "" {
+				owner = providerID
+			} else if configuredAccount != "" {
+				owner = configuredAccount
+			} else {
+				owner = walletPublicKey
+			}
+
+			if walletType == wallet.WalletTypeSolana {
+				mint := viper.GetString("solana.mint")
+				skipVerification := viper.GetBool("solana.skip_verification")
+				if mint != "" && !skipVerification {
+					rpcEndpoint := viper.GetString("solana.rpc")
+					client := solanaclient.NewClient(rpcEndpoint)
+					verifyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					// Use the raw public key for on-chain verification,
+					// not the provider ID.
+					verifyAddr := walletPublicKey
+					if configuredAccount != "" {
+						verifyAddr = configuredAccount
+					}
+					hasToken, err := client.HasSPLToken(verifyCtx, verifyAddr, mint)
+					cancel()
+					if err != nil {
+						common.Logger.Warn("Failed to verify SPL token ownership: %v", err)
+					} else if !hasToken {
+						common.Logger.Warn("Solana wallet %s does not hold SPL mint %s", verifyAddr, mint)
+					} else {
+						common.Logger.Infof("Verified SPL token ownership for mint %s", mint)
+					}
+				} else if mint != "" && skipVerification {
+					common.Logger.Warn("Skipping Solana token ownership verification as requested")
 				}
-				if !hasToken {
-					common.Logger.Warn("Solana wallet %s does not hold SPL mint %s", owner, mint)
-				}
-				common.Logger.Infof("Verified SPL token ownership for mint %s", mint)
-			} else if mint != "" && skipVerification {
-				common.Logger.Warn("Skipping Solana token ownership verification as requested")
 			}
 		}
 	}
-	owner := ""
 
 	protocol.InitializeMyself(owner)
 	_, cancelCtx := protocol.GetCRDTStore()

@@ -36,6 +36,16 @@ type SolanaConfig struct {
 	SkipVerification bool   `json:"skip_verification" yaml:"skip_verification"`
 }
 
+// configDirName is the canonical subdirectory under $HOME/.config that
+// holds the OpenTela node configuration file (cfg.yaml).  Wallet data
+// lives at the same path so both the config and the wallet share the
+// ~/.config/opentela root.
+const configDirName = "opentela"
+
+// legacyConfigDirName is the old directory name so we can detect and
+// transparently migrate existing installations.
+const legacyConfigDirName = "ocf"
+
 var defaultConfig = Config{
 	Seed:    "0",
 	Path:    "",
@@ -47,5 +57,9 @@ var defaultConfig = Config{
 	Vacuum:  VaccumConfig{Interval: 10},
 	Queue:   QueueConfig{Port: "8094"},
 	Account: AccountConfig{Wallet: ""},
-	Solana:  SolanaConfig{RPC: "https://api.mainnet-beta.solana.com", Mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR", SkipVerification: false},
+	Solana: SolanaConfig{
+		RPC:              "https://api.mainnet-beta.solana.com",
+		Mint:             "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR",
+		SkipVerification: false,
+	},
 }
