@@ -19,11 +19,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-AVAILABLE_MODELS = ["gpt-fake-1", "gpt-fake-2"]
+AVAILABLE_MODELS = ["gpt-fake-1", "gpt-fake-2", "echo"]
 
 @app.get("/v1/models", response_model=models.ModelsListResponse )
 async def list_models():
     return {"data": [{"id": m, "object": "model"} for m in AVAILABLE_MODELS], "object": "list"}
+
+
+@app.post("/v1/echo")
+async def echo_endpoint(request: Request):
+    try:
+        data = await request.json()
+        return data
+    except Exception:
+        return {"error": "Invalid JSON payload"}
 
 
 @app.post("/v1/completions", response_model=models.CompletionResponse)

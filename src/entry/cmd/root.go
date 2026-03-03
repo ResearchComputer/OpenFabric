@@ -35,11 +35,11 @@ func init() {
 	rootcmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/otela/cfg.yaml)")
 	startCmd.Flags().String("wallet.account", "", "wallet account")
 	startCmd.Flags().String("account.wallet", "", "path to wallet key file")
-	startCmd.Flags().String("bootstrap.addr", "http://bootstrap.opentela.ai/v1/dnt/bootstraps", "bootstrap address")
+	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
 	startCmd.Flags().StringSlice("bootstrap.source", nil, "bootstrap source (HTTP URL, dnsaddr://host, or multiaddr). Repeatable")
 	startCmd.Flags().StringSlice("bootstrap.static", []string{
-		"/ip4/140.238.223.116/tcp/43905/p2p/QmSk2VF9j8bF6Bhw4EFY7bhv74jXi7MTgVBScFwvmTLPGf",
-		"/ip4/152.67.64.117/tcp/43905/p2p/QmdCzPyBnFDwraYcHJb2HnN1g7mAGCQabkHpGkw8Hr6SA7",
+		"/ip4/140.238.223.116/tcp/43905/p2p/QmVhz27y8kJQ14EnUyHZpY7aUWKGPPUonstFhuyLYmaXgQ",
+		"/ip4/152.67.64.117/tcp/43905/p2p/QmckWGfEuHFwMhgthJvQGkjZVXFo2SVb7JDHXi3N8QTnp8",
 	}, "static bootstrap multiaddr (repeatable)")
 	startCmd.Flags().String("seed", "0", "Seed")
 	startCmd.Flags().String("mode", "node", "Mode (standalone, local, full)")

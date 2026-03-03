@@ -1,0 +1,57 @@
+# Large-Scale Single-Machine Simulation
+
+OpenTela provides a simple way to spin up a large-scale, single-machine simulation of the decentralized network using Docker Compose. This allows you to study its behavior, P2P network properties, and routing capabilities with hundreds of nodes running locally.
+
+## Architecture
+
+The simulation leverages Docker Compose to spin up lightweight Linux containers rather than full virtual machines (e.g., Firecracker), which avoids the complexity of setting up hundreds of TAP interfaces and managing IP allocation manually.
+
+The environment consists of two main service types defined in `local-demo/simulation/docker-compose.yml`:
+- **`head-node`**: Acts as the first peer in the network. It always starts with a deterministic seed (`--seed 0`), fixed IP address, and static port mappings. This provides a stable bootstrap node for all other nodes to connect to.
+- **`worker`**: Simulates the compute nodes. The workers do not have fixed peer IDs, IPs, or host port mappings. This allows Docker Compose to scale them dynamically, with each replica generating a unique peer ID on startup.
+
+## Running the Simulation
+
+A convenience script is provided to easily build and scale the cluster.
+
+To start a simulation, navigate to the simulation directory and run the attached script, providing the desired number of worker replicas as an argument.
+
+```bash
+cd local-demo/simulation
+./run-simulation.sh <number_of_workers>
+```
+
+For example, to simulate a network with 1 head node and 300 compute nodes:
+
+```bash
+./run-simulation.sh 300
+```
+
+This will automatically build the necessary Docker images, launch the network, and return you to the prompt while the nodes run in the background.
+
+## Interacting with the Simulated Cluster
+
+Once the cluster is running, you can monitor the network by querying the head node's Distributed Node Table (DNT) API. Because the head node's port is mapped to your localhost, you can easily access it via `curl`:
+
+```bash
+curl -s http://localhost:8092/v1/dnt/table
+```
+
+If you have `jq` installed, you can quickly check the total number of peers in the network:
+
+```bash
+curl -s http://localhost:8092/v1/dnt/table | jq 'keys | length'
+```
+
+To view the collective logs of all nodes in realtime:
+```bash
+docker compose logs -f
+```
+
+## Teardown
+
+To shut down the deployment and clean up the Docker containers and networks:
+
+```bash
+docker compose down
+```

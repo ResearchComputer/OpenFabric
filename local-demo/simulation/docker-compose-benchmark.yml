@@ -1,0 +1,58 @@
+networks:
+  ocf-internal:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.200.0/24
+
+services:
+  head-node:
+    image: ocf-amd64:latest
+    build:
+      context: ../../
+      dockerfile: ./local-demo/docker/dispatcher/Dockerfile
+    command:
+      [
+        "start",
+        "--mode",
+        "standalone",
+        "--seed",
+        "0",
+        "--public-addr",
+        "192.168.200.10"
+      ]
+    volumes:
+      - ../env/id.dispatcher:/root/.ocfcore/keys/id
+    networks:
+      ocf-internal:
+        ipv4_address: 192.168.200.10
+    ports:
+      - 8092:8092
+      - 43905:43905
+
+  echo-worker:
+    image: ocf-sql-amd64:latest
+    build:
+      context: ../../
+      dockerfile: ./local-demo/docker/llm-serving/Dockerfile
+      args:
+        OCF_IMAGE: ocf-amd64:latest
+    depends_on:
+      - head-node
+    command:
+      [
+        "start",
+        "--bootstrap.addr",
+        "/ip4/192.168.200.10/tcp/43905/p2p/QmcMpnf39qfJcXssHrFFw7nvAioLd4SXKhzBZ4XMcLDoSU",
+        "--subprocess",
+        "uvicorn serving-engine.main:app --host 0.0.0.0 --port 8080",
+        "--service.name",
+        "llm",
+        "--service.port",
+        "8080"
+      ]
+    networks:
+      - ocf-internal
+    ports:
+      - 8080:8080

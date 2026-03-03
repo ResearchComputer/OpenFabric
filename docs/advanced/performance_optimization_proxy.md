@@ -1,49 +1,40 @@
----
-title: "Performance Optimization: Proxy Request Handling"
-date: "2026-02-17"
-tldr: "Introduced request streaming and connection pooling to the P2P proxy, reducing memory usage by 96% and request latency by 55%."
----
+# Proxy Performance Benchmark
 
-# Performance Optimization: Proxy Request Handling
+OpenTela introduces a small amount of overhead when routing requests. To measure this, we provide a benchmarking script that tests the latency and throughput of requests sent directly to a worker node versus requests routed through an OpenTela dispatcher.
 
-## Overview
-As part of the performance review for the OpenTela `src/internal/server` component, critical bottlenecks were identified in how the server handled forwarded requests:
-1.  **Unbounded Memory Growth**: The server read the entire request body into memory before forwarding, causing O(N) memory usage where N is the payload size.
-2.  **Connection Churn**: A new `http.Transport` was created for every request, preventing TCP connection reuse and increasing latency due to repeated handshakes.
+## Running the Benchmark
 
-## Changes Implemented
+We provide a dedicated Docker Compose configuration for this benchmark located in `local-demo/simulation`. It spins up an OpenTela head node and a single worker node running a lightweight `/v1/echo` service.
 
-### 1. Request Streaming
-We refactored `P2PForwardHandler` and `ServiceForwardHandler` to use `io.Pipe` (implicitly via `httputil.ReverseProxy`'s director).
-- **Before**: `io.ReadAll(c.Request.Body)`
-- **After**: `req.Body = c.Request.Body` (Zero-copy forwarding)
+1. **Start the benchmark environment**
+   ```bash
+   cd local-demo/simulation
+   docker compose -f docker-compose-benchmark.yml up -d
+   ```
 
-### 2. Connection Pooling
-We introduced a package-level `globalTransport` in `proxy_handler.go`.
-- **Before**: `proxy.Transport = &http.Transport{...}` inside handler.
-- **After**: `proxy.Transport = getGlobalTransport()` (Singleton).
-- **Configuration**:
-    - `MaxIdleConns`: 100
-    - `IdleConnTimeout`: 90s
-    - `KeepAlive`: Enabled
+2. **Run the Python script**  
+   The script requires `aiohttp`. You can set up a virtual environment and run it:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install aiohttp
+   python benchmark.py
+   ```
 
-## Benchmark Results
+3. **Tear down the environment**
+   ```bash
+   docker compose -f docker-compose-benchmark.yml down
+   ```
 
-We compared the "Old" (buffering, no pool) approach vs the "New" (streaming, pooled) approach using a 1MB payload benchmark.
+## Example Results
 
-| Metric | Old Implementation | New Implementation | Improvement |
-| :--- | :--- | :--- | :--- |
-| **Throughput** | 1,057 ops/sec | **2,516 ops/sec** | **+138%** |
-| **Latency** | 1.08 ms/op | **0.48 ms/op** | **-55%** |
-| **Memory** | 2.37 MB/op | **0.08 MB/op** | **-96%** |
-| **Allocs** | 232 allocs/op | **109 allocs/op** | **-53%** |
+Testing from a standard local environment under a concurrency of 50 for 1000 requests shows the following typical results:
 
-### Interpretation
-- **Memory**: The 96% reduction confirms that we are no longer buffering payloads. Memory usage is now constant (O(1)) regardless of request size.
-- **Latency**: The 55% reduction is primarily due to connection reuse (avoiding TCP/TLS handshakes) and avoiding memory allocation overhead.
+| Metric | Direct (Baseline) | OpenTela Proxy |
+| :--- | :--- | :--- |
+| **Throughput** | ~2800 - 3600 req/s | ~1800 - 2000 req/s |
+| **P50 Latency** | ~12 - 16 ms | ~12 - 14 ms |
+| **Average Latency**| ~13 - 17 ms | ~26 - 30 ms |
+| **P90 Latency** | ~17 - 19 ms | ~90 - 100 ms |
 
-## Verify
-To verify these results locally, run the benchmark test:
-```bash
-go test -bench=. -benchmem ./src/internal/server/
-```
+*(Note: Results will vary by hardware. In general, expect the routing overhead to add ~10-15ms to the average request latency.)*
