@@ -40,7 +40,6 @@ func StartTicker() {
 				} else if peer_id != host.ID() && host.Network().Connectedness(peer_id) != network.Connected {
 					// try to dial the peer, if cannot dial, then mark it as disconnected
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
 					addrInfo := libpeer.AddrInfo{ID: peer_id, Addrs: host.Peerstore().Addrs(peer_id)}
 					if len(addrInfo.Addrs) == 0 {
 						p.Connected = false
@@ -55,6 +54,7 @@ func StartTicker() {
 						p.Connected = true
 						reconnected++
 					}
+					cancel() // release context immediately after the dial attempt, not deferred to function return
 				}
 				// update last seen timestamp
 				p.LastSeen = time.Now().Unix()

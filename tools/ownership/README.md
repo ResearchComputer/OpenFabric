@@ -33,7 +33,7 @@ This toolkit provides standalone scripts and a reusable library for managing the
 
 ```sh
 cd tools/ownership
-yarn install
+bun install
 # or: npm install
 ```
 
