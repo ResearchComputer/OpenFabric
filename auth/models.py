@@ -13,6 +13,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class UsedChallenge(Base):
+    """Tracks consumed challenge nonces to prevent replay attacks.
+
+    Each row is retained until ``expires_at`` so that a signed challenge
+    cannot be replayed within its validity window.
+    """
+
+    __tablename__ = "used_challenges"
+
+    challenge = Column(String, primary_key=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class APIKey(Base):
     __tablename__ = "api_keys"
 
