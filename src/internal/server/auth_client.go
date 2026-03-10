@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
+
+// authHTTPClient is a dedicated client with a short timeout so that a slow or
+// unreachable auth server never hangs request handling indefinitely.
+var authHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
 // authVerifyResponse is the JSON returned by POST /api/keys/verify.
 type authVerifyResponse struct {
@@ -54,7 +59,9 @@ func (c *authCache) set(token, wallet string) {
 
 // verifyBearerToken calls the auth server to resolve a bearer token into
 // a wallet public key.  Returns ("", nil) if auth is not configured.
-func verifyBearerToken(token string) (string, error) {
+// ctx should be the caller's request context so that the outbound request is
+// canceled when the incoming request is canceled or times out.
+func verifyBearerToken(ctx context.Context, token string) (string, error) {
 	authURL := viper.GetString("security.auth_url")
 	if authURL == "" {
 		return "", nil
@@ -67,7 +74,12 @@ func verifyBearerToken(token string) (string, error) {
 
 	url := strings.TrimRight(authURL, "/") + "/api/keys/verify"
 	body := fmt.Sprintf(`{"token":%q}`, token)
-	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("building auth request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("auth server unreachable: %w", err)
 	}
@@ -104,7 +116,7 @@ func resolveClientWallet(c *gin.Context) string {
 	}
 	token := parts[1]
 
-	wallet, err := verifyBearerToken(token)
+	wallet, err := verifyBearerToken(c.Request.Context(), token)
 	if err != nil {
 		common.Logger.Warnf("Bearer token verification failed: %v", err)
 		return ""
