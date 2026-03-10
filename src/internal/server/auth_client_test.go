@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func TestVerifyBearerTokenWithMockServer(t *testing.T) {
 	tokenCache.entries = make(map[string]authCacheEntry)
 	tokenCache.mu.Unlock()
 
-	wallet, err := verifyBearerToken("test_token_123")
+	wallet, err := verifyBearerToken(context.Background(), "test_token_123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestVerifyBearerTokenWithMockServer(t *testing.T) {
 	}
 
 	// Second call should hit the cache.
-	wallet2, err := verifyBearerToken("test_token_123")
+	wallet2, err := verifyBearerToken(context.Background(), "test_token_123")
 	if err != nil {
 		t.Fatalf("unexpected error on cached call: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestVerifyBearerTokenRejected(t *testing.T) {
 	tokenCache.entries = make(map[string]authCacheEntry)
 	tokenCache.mu.Unlock()
 
-	_, err := verifyBearerToken("bad_token")
+	_, err := verifyBearerToken(context.Background(), "bad_token")
 	if err == nil {
 		t.Fatal("expected error for rejected token")
 	}
