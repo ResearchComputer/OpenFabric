@@ -12,7 +12,7 @@ ifdef SOURCE_DATE_EPOCH
 else
     BUILD_DATE ?= $(shell date "$(DATE_FMT)")
 endif
-LDFLAGS += -X main.version=${VERSION} -X main.commitHash=${COMMIT_HASH} -X main.buildDate=${BUILD_DATE} -X main.authUrl=$(AUTH_URL) -X main.authClientId=$(AUTH_CLIENT_ID) -X main.authSecret=$(AUTH_CLIENT_SECRET) -X main.sentryDSN=$(SENTRY_DSN)
+LDFLAGS += -X main.version=${VERSION} -X main.commitHash=${COMMIT_HASH} -X main.buildDate=${BUILD_DATE} -X main.buildSig=${BUILD_SIG} -X main.authUrl=$(AUTH_URL) -X main.authClientId=$(AUTH_CLIENT_ID) -X main.authSecret=$(AUTH_CLIENT_SECRET) -X main.sentryDSN=$(SENTRY_DSN)
 
 export CGO_ENABLED ?= 0
 ifeq (${VERBOSE}, 1)

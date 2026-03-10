@@ -21,11 +21,13 @@ func StartServer() {
 	// owner will be passed to InitializeMyself so every service
 	// registration carries the wallet-derived provider identity.
 	owner := ""
+	var walletManager *wallet.WalletManager
 
 	if viper.GetString("wallet.account") == "" {
 		common.Logger.Info("Wallet account set to 'none', skipping wallet initialization")
 	} else {
-		walletManager, err := wallet.InitializeWallet()
+		var err error
+		walletManager, err = wallet.InitializeWallet()
 		if err != nil {
 			common.Logger.Warn("Failed to initialize wallet: %v", err)
 		} else {
@@ -100,7 +102,7 @@ func StartServer() {
 		}
 	}
 
-	protocol.InitializeMyself(owner)
+	protocol.InitializeMyself(owner, walletManager)
 	_, cancelCtx := protocol.GetCRDTStore()
 	defer cancelCtx()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
@@ -110,6 +112,7 @@ func StartServer() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(corsHeader())
+	r.Use(rateLimitMiddleware())
 	r.Use(gin.Recovery())
 	// Initialize OpenAPI/Swagger documentation
 	r.GET("/openapi.yaml", func(c *gin.Context) {

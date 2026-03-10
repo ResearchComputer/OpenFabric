@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"opentela/internal/attestation"
 	"opentela/internal/common"
 	"opentela/internal/platform"
 	"opentela/internal/wallet"
@@ -35,6 +36,14 @@ type Service struct {
 	IdentityGroup []string `json:"identity_group"`
 }
 
+// Trust levels for nodes in the network.
+const (
+	TrustUntrusted    = 0 // no attestation or invalid
+	TrustSelfAttested = 1 // wallet signature verified
+	TrustUserTrusted  = 2 // explicitly trusted by the requesting user
+	TrustKYCVerified  = 3 // passed KYC (future)
+)
+
 // Peer is a single node in the network, as can be seen by the current node.
 type Peer struct {
 	ID                string              `json:"id"`
@@ -52,6 +61,19 @@ type Peer struct {
 	Hardware          common.HardwareSpec `json:"hardware"`
 	Connected         bool                `json:"connected"`
 	Load              []int               `json:"load"`
+	// BuildAttestation carries the version + commit + signature so peers
+	// can verify that this node is running an officially signed binary.
+	// Absent (nil) for nodes running older versions without attestation.
+	BuildAttestation *attestation.BuildInfo `json:"build_attestation,omitempty"`
+	// SignedBuild is set locally (not serialised from remote) after
+	// verifying BuildAttestation.  true = signature valid.
+	SignedBuild bool `json:"signed_build"`
+	// IdentityAttestation proves this node's operator controls the
+	// wallet key listed in Owner.  Nil for old nodes without attestation.
+	IdentityAttestation *wallet.IdentityAttestation `json:"identity_attestation,omitempty"`
+	// TrustLevel is computed locally after verifying attestations.
+	// 0=untrusted, 1=self-attested, 2=user-trusted, 3=KYC-verified.
+	TrustLevel int `json:"trust_level"`
 }
 
 type PeerWithStatus struct {
@@ -149,6 +171,45 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	var peer Peer
 	err := json.Unmarshal(value, &peer)
 	common.ReportError(err, "Error while unmarshalling peer")
+
+	// Verify build attestation from the remote peer.
+	peer.SignedBuild = false
+	if peer.BuildAttestation != nil {
+		if err := attestation.Verify(*peer.BuildAttestation); err == nil {
+			peer.SignedBuild = true
+		} else {
+			common.Logger.Warnf("Peer [%s] build attestation invalid: %v", peer.ID, err)
+		}
+	}
+
+	// If enforcement is on, reject peers without a valid signed build.
+	if viper.GetBool("security.require_signed_binary") && !peer.SignedBuild {
+		common.Logger.Warnf("Rejecting peer [%s]: no valid build attestation (security.require_signed_binary=true)", peer.ID)
+		return
+	}
+
+	// Compute trust level from identity attestation.
+	peer.TrustLevel = TrustUntrusted
+	if peer.IdentityAttestation != nil {
+		if err := wallet.VerifyIdentity(peer.IdentityAttestation); err == nil {
+			peer.TrustLevel = TrustSelfAttested
+			// Check if this peer's wallet is in our trusted wallets list.
+			for _, tw := range viper.GetStringSlice("trusted_wallets") {
+				if tw == peer.IdentityAttestation.WalletPubkey {
+					peer.TrustLevel = TrustUserTrusted
+					break
+				}
+			}
+			// Self-trust: if our own wallet matches the peer's wallet.
+			if peer.IdentityAttestation.WalletPubkey == viper.GetString("wallet.account") {
+				if peer.TrustLevel < TrustUserTrusted {
+					peer.TrustLevel = TrustUserTrusted
+				}
+			}
+		} else {
+			common.Logger.Warnf("Peer [%s] identity attestation invalid: %v", peer.ID, err)
+		}
+	}
 
 	// Check for Left status — keep the peer in the table marked as LEFT
 	// so TombstoneManager.collectCandidates can find it for deferred cleanup.
@@ -258,7 +319,11 @@ func GetAllProviders(serviceName string) ([]Peer, error) {
 	return providers, nil
 }
 
-func InitializeMyself(ownerOverride string) {
+// InitializeMyself registers this node in the CRDT.
+// ownerOverride is the wallet-derived provider identity (may be empty).
+// wm is the wallet manager for signing identity attestations (may be nil
+// if no wallet is configured).
+func InitializeMyself(ownerOverride string, wm *wallet.WalletManager) {
 	host, _ := GetP2PNode(nil)
 	ctx := context.Background()
 	store, _ := GetCRDTStore()
@@ -270,6 +335,21 @@ func InitializeMyself(ownerOverride string) {
 		Connected:     true,
 	}
 
+	// Attach build attestation so peers can verify we run a signed binary.
+	if common.JSONVersion.Version != "" && common.JSONVersion.Commit != "" {
+		myself.BuildAttestation = &attestation.BuildInfo{
+			Version:   common.JSONVersion.Version,
+			Commit:    common.JSONVersion.Commit,
+			Signature: common.JSONVersion.BuildSig,
+		}
+		if err := attestation.Verify(*myself.BuildAttestation); err == nil {
+			myself.SignedBuild = true
+			common.Logger.Info("Build attestation verified: running signed binary")
+		} else {
+			common.Logger.Warnf("Build attestation not verified: %v", err)
+		}
+	}
+
 	// Add wallet address as provider if available
 	if ownerOverride != "" {
 		myself.Owner = ownerOverride
@@ -277,10 +357,22 @@ func InitializeMyself(ownerOverride string) {
 	} else if account := viper.GetString("wallet.account"); account != "" {
 		myself.Owner = account
 		common.Logger.Infof("Using configured wallet account for provider: %s", myself.Owner)
-	} else if wm, err := wallet.InitializeWallet(); err == nil && wm.WalletExists() {
+	} else if wm != nil && wm.WalletExists() {
 		myself.Owner = wm.GetPublicKey()
 		if myself.Owner != "" {
 			common.Logger.Infof("Added wallet address as provider: %s", myself.Owner)
+		}
+	}
+
+	// Sign identity attestation binding our peer ID to our wallet key.
+	if wm != nil && wm.WalletExists() {
+		att, err := wallet.SignIdentity(myself.ID, time.Now().Unix(), wm)
+		if err != nil {
+			common.Logger.Warnf("Could not sign identity attestation: %v", err)
+		} else {
+			myself.IdentityAttestation = att
+			myself.TrustLevel = TrustSelfAttested
+			common.Logger.Info("Identity attestation signed: trust_level=1 (self-attested)")
 		}
 	}
 

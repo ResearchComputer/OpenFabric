@@ -142,7 +142,12 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	// Log connection events for debugging
 	host.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(n network.Network, c network.Conn) {
-			common.Logger.Info("Connected to peer: ", c.RemotePeer(), " Total connections: ", len(n.Conns()))
+			// Log the negotiated security protocol for observability.
+			secProto := "<unknown>"
+			if cs := c.ConnState(); cs.Security != "" {
+				secProto = string(cs.Security)
+			}
+			common.Logger.Infof("Connected to peer: %s  security=%s  Total connections: %d", c.RemotePeer(), secProto, len(n.Conns()))
 			// On (re)connections, re-announce local services
 			go ReannounceLocalServices()
 

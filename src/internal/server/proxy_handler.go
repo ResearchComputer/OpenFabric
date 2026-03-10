@@ -234,6 +234,21 @@ func selectCandidates(providers []protocol.Peer, serviceName string, body []byte
 	return candidates
 }
 
+// filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
+func filterByTrust(candidates []string, minTrust int) []string {
+	var filtered []string
+	for _, id := range candidates {
+		peer, err := protocol.GetPeerFromTable(id)
+		if err != nil {
+			continue
+		}
+		if peer.TrustLevel >= minTrust {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
+}
+
 // in case of global service, we need to forward the request to the service, identified by the service name and identity group
 func GlobalServiceForwardHandler(c *gin.Context) {
 	// Generate request ID for usage tracking
@@ -272,6 +287,20 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	if len(candidates) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No provider found for the requested service."})
 		return
+	}
+
+	// Trust-aware filtering: if the client specifies a minimum trust level
+	// via X-Otela-Trust, remove candidates that don't meet the threshold.
+	if trustHeader := c.GetHeader("X-Otela-Trust"); trustHeader != "" {
+		if minTrust, err := strconv.Atoi(trustHeader); err == nil && minTrust > 0 {
+			candidates = filterByTrust(candidates, minTrust)
+			if len(candidates) == 0 {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": fmt.Sprintf("No provider meets the requested trust level (%d).", minTrust),
+				})
+				return
+			}
+		}
 	}
 
 	// randomly select one of the candidates

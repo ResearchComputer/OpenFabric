@@ -6,18 +6,19 @@ import (
 )
 
 var (
-	// Populated during build
-	version    = "dev"
+	// Populated during build via ldflags
+	version   = "dev"
 	commitHash = "?"
 	buildDate  = ""
-	// buildSecret left for future use to verify official builds
-	buildSecret string
+	// buildSig is the hex-encoded Ed25519 signature over "version|commitHash",
+	// injected by the release pipeline using the maintainer's private key.
+	buildSig string
 )
 
 func main() {
 	common.JSONVersion.Version = version
 	common.JSONVersion.Commit = commitHash
 	common.JSONVersion.Date = buildDate
-	_ = buildSecret
+	common.JSONVersion.BuildSig = buildSig
 	cmd.Execute()
 }

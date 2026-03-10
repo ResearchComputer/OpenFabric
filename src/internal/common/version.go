@@ -1,10 +1,10 @@
 package common
 
 type jsonVersion struct {
-	Version     string `json:"version"`
-	Commit      string `json:"commit"`
-	Date        string `json:"date"`
-	BuildSecret string `json:"buildSecret"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	Date      string `json:"date"`
+	BuildSig  string `json:"build_sig"`
 }
 
 var JSONVersion jsonVersion
