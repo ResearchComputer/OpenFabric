@@ -11,7 +11,8 @@ Run:
     uvicorn auth.server:app --host 0.0.0.0 --port 8090
 """
 
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 
 import base58
 from fastapi import FastAPI, HTTPException
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 from .models import (
     APIKey,
+    UsedChallenge,
     get_session,
     generate_key_id,
     generate_token,
@@ -75,10 +77,59 @@ class VerifyResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# Accepted challenge prefixes. The challenge must start with one of these
-# so that an attacker cannot trick a user into signing an arbitrary message
-# by reusing a signature from another context.
+# Challenge format: "otela-auth:<wallet>:<unix_ts>"
+# The wallet segment binds the challenge to the requesting key-pair so that a
+# signature produced for one wallet cannot be reused by a different one.
 CHALLENGE_PREFIX = "otela-auth:"
+
+# Maximum age (in seconds) of a freshly issued challenge.  Challenges older
+# than this window are rejected to limit the exposure from a stolen signature.
+CHALLENGE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _validate_challenge(challenge: str, wallet: str) -> None:
+    """Validate challenge format, wallet binding, and freshness.
+
+    Expected format: ``otela-auth:<wallet>:<unix_ts>``
+
+    Raises :class:`fastapi.HTTPException` (400) on any validation failure.
+    """
+    parts = challenge.split(":")
+    if len(parts) != 3 or parts[0] != "otela-auth":
+        raise HTTPException(
+            status_code=400,
+            detail='Challenge must be in the format "otela-auth:<wallet>:<unix_ts>"',
+        )
+
+    _, ch_wallet, ts_str = parts
+
+    if ch_wallet != wallet:
+        raise HTTPException(
+            status_code=400,
+            detail="Challenge wallet does not match the request wallet",
+        )
+
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Challenge timestamp must be a valid integer",
+        )
+
+    now_ts = int(time.time())
+    # Reject timestamps too far in the future (allow ≤60 s of clock skew) or
+    # too old (older than CHALLENGE_TTL_SECONDS).
+    if ts > now_ts + 60:
+        raise HTTPException(
+            status_code=400,
+            detail="Challenge timestamp is too far in the future",
+        )
+    if now_ts - ts > CHALLENGE_TTL_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail="Challenge has expired",
+        )
 
 
 def verify_wallet_signature(wallet: str, signature: str, message: str) -> bool:
@@ -101,12 +152,14 @@ def verify_wallet_signature(wallet: str, signature: str, message: str) -> bool:
 @app.post("/api/keys", response_model=CreateKeyResponse)
 def create_key(req: CreateKeyRequest):
     """Create a new API key. Requires a signed challenge to prove wallet
-    ownership."""
-    if not req.challenge.startswith(CHALLENGE_PREFIX):
-        raise HTTPException(
-            status_code=400,
-            detail=f'Challenge must start with "{CHALLENGE_PREFIX}"',
-        )
+    ownership.
+
+    The challenge must follow the format ``otela-auth:<wallet>:<unix_ts>``,
+    be signed with the wallet's Ed25519 private key, be no older than
+    ``CHALLENGE_TTL_SECONDS``, and must not have been used before (replay
+    prevention).
+    """
+    _validate_challenge(req.challenge, req.wallet)
 
     if not verify_wallet_signature(req.wallet, req.signature, req.challenge):
         raise HTTPException(status_code=403, detail="Invalid wallet signature")
@@ -117,15 +170,34 @@ def create_key(req: CreateKeyRequest):
 
     session = get_session()
     try:
-        row = APIKey(
+        # Replay prevention: reject challenges that have already been consumed.
+        existing = session.query(UsedChallenge).filter_by(challenge=req.challenge).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Challenge has already been used")
+
+        # Purge expired challenge nonces to keep the table bounded.
+        # Done probabilistically (1-in-10 chance) to limit overhead on busy
+        # paths while still preventing unbounded growth.
+        if int(time.time()) % 10 == 0:
+            session.query(UsedChallenge).filter(UsedChallenge.expires_at < now).delete()
+
+        # Record this challenge so it cannot be replayed.
+        session.add(UsedChallenge(
+            challenge=req.challenge,
+            expires_at=now + timedelta(seconds=CHALLENGE_TTL_SECONDS),
+        ))
+
+        session.add(APIKey(
             key_id=key_id,
             token_hash=hash_token(token),
             wallet=req.wallet,
             label=req.label,
             created_at=now,
-        )
-        session.add(row)
+        ))
         session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
     finally:
         session.close()
 

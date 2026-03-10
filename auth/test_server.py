@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 
 import base58
 import pytest
@@ -29,6 +30,11 @@ def _make_wallet():
     return sk, pubkey
 
 
+def _make_challenge(wallet: str) -> str:
+    """Build a fresh, properly-formatted challenge for *wallet*."""
+    return f"otela-auth:{wallet}:{int(time.time())}"
+
+
 def _sign_challenge(sk: SigningKey, challenge: str) -> str:
     signed = sk.sign(challenge.encode())
     return base58.b58encode(signed.signature).decode()
@@ -37,7 +43,7 @@ def _sign_challenge(sk: SigningKey, challenge: str) -> str:
 class TestCreateKey:
     def test_success(self):
         sk, wallet = _make_wallet()
-        challenge = f"otela-auth:{wallet}:12345"
+        challenge = _make_challenge(wallet)
         sig = _sign_challenge(sk, challenge)
 
         resp = client.post("/api/keys", json={
@@ -55,7 +61,7 @@ class TestCreateKey:
 
     def test_bad_challenge_prefix(self):
         sk, wallet = _make_wallet()
-        challenge = "wrong-prefix:hello"
+        challenge = f"wrong-prefix:{wallet}:{int(time.time())}"
         sig = _sign_challenge(sk, challenge)
 
         resp = client.post("/api/keys", json={
@@ -68,7 +74,7 @@ class TestCreateKey:
     def test_bad_signature(self):
         _, wallet = _make_wallet()
         other_sk = SigningKey.generate()
-        challenge = f"otela-auth:{wallet}:12345"
+        challenge = _make_challenge(wallet)
         sig = _sign_challenge(other_sk, challenge)  # wrong key
 
         resp = client.post("/api/keys", json={
@@ -78,11 +84,95 @@ class TestCreateKey:
         })
         assert resp.status_code == 403
 
+    def test_challenge_wallet_mismatch(self):
+        """Challenge signed for wallet A must not be usable for wallet B."""
+        sk_a, wallet_a = _make_wallet()
+        _, wallet_b = _make_wallet()
+        # Challenge is bound to wallet_a but request claims wallet_b
+        challenge = _make_challenge(wallet_a)
+        sig = _sign_challenge(sk_a, challenge)
+
+        resp = client.post("/api/keys", json={
+            "wallet": wallet_b,
+            "signature": sig,
+            "challenge": challenge,
+        })
+        assert resp.status_code == 400
+
+    def test_stale_challenge_rejected(self):
+        """A challenge whose timestamp is outside the TTL window is rejected."""
+        sk, wallet = _make_wallet()
+        old_ts = int(time.time()) - 600  # 10 minutes ago
+        challenge = f"otela-auth:{wallet}:{old_ts}"
+        sig = _sign_challenge(sk, challenge)
+
+        resp = client.post("/api/keys", json={
+            "wallet": wallet,
+            "signature": sig,
+            "challenge": challenge,
+        })
+        assert resp.status_code == 400
+
+    def test_future_challenge_rejected(self):
+        """A challenge with a timestamp more than 60 s in the future is rejected."""
+        sk, wallet = _make_wallet()
+        future_ts = int(time.time()) + 600  # 10 minutes from now
+        challenge = f"otela-auth:{wallet}:{future_ts}"
+        sig = _sign_challenge(sk, challenge)
+
+        resp = client.post("/api/keys", json={
+            "wallet": wallet,
+            "signature": sig,
+            "challenge": challenge,
+        })
+        assert resp.status_code == 400
+
+    def test_replay_rejected(self):
+        """The same signed challenge must not be accepted a second time."""
+        sk, wallet = _make_wallet()
+        challenge = _make_challenge(wallet)
+        sig = _sign_challenge(sk, challenge)
+
+        payload = {"wallet": wallet, "signature": sig, "challenge": challenge}
+
+        resp1 = client.post("/api/keys", json=payload)
+        assert resp1.status_code == 200
+
+        resp2 = client.post("/api/keys", json=payload)
+        assert resp2.status_code == 400
+        assert "already been used" in resp2.json()["detail"]
+
+    def test_bad_challenge_format_missing_parts(self):
+        """Challenges that lack the required three colon-separated parts are rejected."""
+        sk, wallet = _make_wallet()
+        challenge = f"otela-auth:{wallet}"  # missing timestamp
+        sig = _sign_challenge(sk, challenge)
+
+        resp = client.post("/api/keys", json={
+            "wallet": wallet,
+            "signature": sig,
+            "challenge": challenge,
+        })
+        assert resp.status_code == 400
+
+    def test_bad_challenge_non_integer_timestamp(self):
+        """A challenge whose timestamp field is not an integer is rejected."""
+        sk, wallet = _make_wallet()
+        challenge = f"otela-auth:{wallet}:not-a-number"
+        sig = _sign_challenge(sk, challenge)
+
+        resp = client.post("/api/keys", json={
+            "wallet": wallet,
+            "signature": sig,
+            "challenge": challenge,
+        })
+        assert resp.status_code == 400
+
 
 class TestVerifyAndRevoke:
     def _create_key(self):
         sk, wallet = _make_wallet()
-        challenge = f"otela-auth:{wallet}:99999"
+        challenge = _make_challenge(wallet)
         sig = _sign_challenge(sk, challenge)
         resp = client.post("/api/keys", json={
             "wallet": wallet,
