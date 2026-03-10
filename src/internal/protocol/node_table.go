@@ -67,13 +67,13 @@ type Peer struct {
 	BuildAttestation *attestation.BuildInfo `json:"build_attestation,omitempty"`
 	// SignedBuild is set locally (not serialised from remote) after
 	// verifying BuildAttestation.  true = signature valid.
-	SignedBuild bool `json:"signed_build"`
+	SignedBuild bool `json:"-"`
 	// IdentityAttestation proves this node's operator controls the
 	// wallet key listed in Owner.  Nil for old nodes without attestation.
 	IdentityAttestation *wallet.IdentityAttestation `json:"identity_attestation,omitempty"`
 	// TrustLevel is computed locally after verifying attestations.
 	// 0=untrusted, 1=self-attested, 2=user-trusted, 3=KYC-verified.
-	TrustLevel int `json:"trust_level"`
+	TrustLevel int `json:"-"`
 }
 
 type PeerWithStatus struct {
