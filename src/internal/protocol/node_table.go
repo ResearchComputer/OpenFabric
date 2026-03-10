@@ -49,7 +49,15 @@ type Peer struct {
 	ID                string              `json:"id"`
 	Latency           int                 `json:"latency"` // in ms
 	Privileged        bool                `json:"privileged"`
+	// Owner is the wallet public key (base58) of the node operator.
+	// This field is always a raw wallet pubkey and is used for
+	// trust/access-control decisions.
 	Owner             string              `json:"owner"`
+	// ProviderID is the deterministic human-readable identifier derived
+	// from the wallet pubkey (e.g. "otela-AbCdEfGh...").  It is stored
+	// separately so that Owner always carries the raw pubkey and callers
+	// never confuse the two.
+	ProviderID        string              `json:"provider_id,omitempty"`
 	CurrentOffering   []string            `json:"current_offering"`
 	Role              []string            `json:"role"`
 	Status            string              `json:"status"`
@@ -106,9 +114,12 @@ func UpdateNodeTable(peer Peer) {
 	existingPeer, err := GetPeerFromTable(peer.ID)
 	if err == nil {
 		peer.Service = append(peer.Service, existingPeer.Service...)
-		// Preserve existing provider if not set in the update
+		// Preserve existing wallet pubkey and provider ID if not set in the update.
 		if peer.Owner == "" && existingPeer.Owner != "" {
 			peer.Owner = existingPeer.Owner
+		}
+		if peer.ProviderID == "" && existingPeer.ProviderID != "" {
+			peer.ProviderID = existingPeer.ProviderID
 		}
 	}
 	if viper.GetString("public-addr") != "" {
@@ -320,10 +331,12 @@ func GetAllProviders(serviceName string) ([]Peer, error) {
 }
 
 // InitializeMyself registers this node in the CRDT.
-// ownerOverride is the wallet-derived provider identity (may be empty).
-// wm is the wallet manager for signing identity attestations (may be nil
-// if no wallet is configured).
-func InitializeMyself(ownerOverride string, wm *wallet.WalletManager) {
+// walletPubkeyOverride is the raw wallet public key (base58) for this node
+// (may be empty).  It is stored in Owner so that all trust/access-control
+// comparisons work with like-for-like values.
+// wm is the wallet manager for signing identity attestations and deriving the
+// ProviderID (may be nil if no wallet is configured).
+func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	host, _ := GetP2PNode(nil)
 	ctx := context.Background()
 	store, _ := GetCRDTStore()
@@ -350,9 +363,10 @@ func InitializeMyself(ownerOverride string, wm *wallet.WalletManager) {
 		}
 	}
 
-	// Add wallet address as provider if available
-	if ownerOverride != "" {
-		myself.Owner = ownerOverride
+	// Owner always holds the raw wallet public key so access-control
+	// comparisons are like-for-like (wallet pubkey vs wallet pubkey).
+	if walletPubkeyOverride != "" {
+		myself.Owner = walletPubkeyOverride
 		common.Logger.Infof("Using verified wallet account for provider: %s", myself.Owner)
 	} else if account := viper.GetString("wallet.account"); account != "" {
 		myself.Owner = account
@@ -361,6 +375,15 @@ func InitializeMyself(ownerOverride string, wm *wallet.WalletManager) {
 		myself.Owner = wm.GetPublicKey()
 		if myself.Owner != "" {
 			common.Logger.Infof("Added wallet address as provider: %s", myself.Owner)
+		}
+	}
+
+	// Store the human-readable provider ID separately so it never
+	// overwrites the wallet pubkey in Owner.
+	if wm != nil && wm.WalletExists() {
+		if pid := wm.GetProviderID(); pid != "" {
+			myself.ProviderID = pid
+			common.Logger.Infof("Provider ID: %s", myself.ProviderID)
 		}
 	}
 
