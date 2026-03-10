@@ -1,0 +1,9 @@
+{
+  "title": "Advanced",
+  "pages": [
+    "security",
+    "crdt-tombstones",
+    "benchmark",
+    "performance-optimization"
+  ]
+}

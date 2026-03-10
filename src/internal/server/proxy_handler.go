@@ -324,11 +324,19 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		Host:   targetPeer,
 		Path:   requestPath,
 	}
+	// Resolve the end-user's wallet from their bearer token (if auth is
+	// configured) and inject it into the forwarded request so the worker
+	// knows who the original caller is.
+	clientWallet := resolveClientWallet(c)
+
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
 		req.URL.Host = req.Host
 		req.Host = target.Host
+		if clientWallet != "" {
+			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
+		}
 		// Body is already reset on c.Request
 	}
 	proxy := httputil.NewSingleHostReverseProxy(&target)

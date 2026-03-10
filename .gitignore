@@ -3,3 +3,8 @@ _internal/
 .env
 __pycache__
 *.out
+
+# Website (Fumadocs)
+website/node_modules/
+website/.next/
+website/.source/

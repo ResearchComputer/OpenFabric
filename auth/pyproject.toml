@@ -1,0 +1,24 @@
+[project]
+name = "otela-auth"
+version = "0.1.0"
+description = "OpenTela API key management server and CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.0",
+    "sqlalchemy>=2.0",
+    "httpx>=0.28.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "pynacl>=1.5.0",
+    "base58>=2.1.0",
+]
+
+[project.scripts]
+otela-auth = "auth.cli:cli"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

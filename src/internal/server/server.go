@@ -167,6 +167,7 @@ func StartServer() {
 			globalServiceGroup.DELETE("/:service/*path", GlobalServiceForwardHandler)
 		}
 		serviceGroup := v1.Group("/_service")
+		serviceGroup.Use(accessControlMiddleware())
 		{
 			serviceGroup.GET("/:service/*path", ServiceForwardHandler)
 			serviceGroup.POST("/:service/*path", ServiceForwardHandler)

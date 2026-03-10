@@ -1,0 +1,28 @@
+{
+  "name": "opentela-docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "type": "module",
+  "dependencies": {
+    "@types/mdx": "^2.0.13",
+    "fumadocs-core": "^16.6.13",
+    "fumadocs-mdx": "^14.2.9",
+    "fumadocs-ui": "^16.6.13",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^25.4.0",
+    "@types/react": "^19.2.14",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3"
+  }
+}

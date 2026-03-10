@@ -1,0 +1,140 @@
+package server
+
+import (
+	"net/http"
+	"opentela/internal/common"
+	"opentela/internal/protocol"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
+)
+
+// Access control policies for incoming requests on worker nodes.
+//
+// Configuration (cfg.yaml):
+//
+//	security:
+//	  access_control:
+//	    policy: "any"          # "any" | "self" | "whitelist" | "blacklist"
+//	    whitelist:             # used when policy = "whitelist"
+//	      - "5WalletPubkey1..."
+//	      - "7WalletPubkey2..."
+//	    blacklist:             # used when policy = "blacklist"
+//	      - "5BannedWallet..."
+//
+// Policies:
+//   - "any"       — accept requests from any peer (default, backward-compatible)
+//   - "self"      — only accept requests from peers whose wallet matches our own
+//   - "whitelist" — only accept requests from peers whose wallet is in the list
+//   - "blacklist" — accept from everyone except wallets in the list
+
+// resolveCallerWallet determines who is making this request.
+//
+// Priority:
+//  1. X-Otela-Client-Wallet header (set by the head node after verifying the
+//     end-user's bearer token against the auth server).  This represents the
+//     actual end-user, not the forwarding head node.
+//  2. The libp2p peer ID of the direct caller (the head node), looked up in
+//     the node table for its wallet (Owner).
+//
+// Returns the wallet public key, or "" if the caller cannot be identified.
+func resolveCallerWallet(r *http.Request) string {
+	// Prefer the end-user wallet injected by the head node.
+	if clientWallet := r.Header.Get("X-Otela-Client-Wallet"); clientWallet != "" {
+		return clientWallet
+	}
+
+	addr := r.RemoteAddr
+	// libp2p-http sets RemoteAddr to the raw peer ID string.
+	// Peer IDs start with "12D3" (modern), "Qm" (legacy), or "16Ui".
+	if !strings.HasPrefix(addr, "12D3") &&
+		!strings.HasPrefix(addr, "Qm") &&
+		!strings.HasPrefix(addr, "16Ui") {
+		return ""
+	}
+	peer, err := protocol.GetPeerFromTable(addr)
+	if err != nil {
+		return ""
+	}
+	return peer.Owner
+}
+
+// accessControlMiddleware returns a Gin middleware that enforces the
+// operator's access control policy on incoming forwarded requests.
+func accessControlMiddleware() gin.HandlerFunc {
+	policy := strings.ToLower(viper.GetString("security.access_control.policy"))
+	if policy == "" {
+		policy = "any"
+	}
+
+	// Fast path: no restrictions.
+	if policy == "any" {
+		return func(c *gin.Context) { c.Next() }
+	}
+
+	return func(c *gin.Context) {
+		callerWallet := resolveCallerWallet(c.Request)
+
+		// Re-read policy each time so config changes take effect without
+		// restart (viper supports hot-reload).
+		currentPolicy := strings.ToLower(viper.GetString("security.access_control.policy"))
+		if currentPolicy == "" || currentPolicy == "any" {
+			c.Next()
+			return
+		}
+
+		switch currentPolicy {
+		case "self":
+			myWallet := viper.GetString("wallet.account")
+			if myWallet == "" {
+				common.Logger.Warn("access_control: policy=self but no wallet configured; denying request")
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "access denied: node has policy=self but no wallet configured",
+				})
+				return
+			}
+			if callerWallet != myWallet {
+				common.Logger.Infof("access_control: denied peer wallet=%s (policy=self, my wallet=%s)", callerWallet, myWallet)
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "access denied: only requests from the node operator's own wallet are accepted",
+				})
+				return
+			}
+
+		case "whitelist":
+			allowed := viper.GetStringSlice("security.access_control.whitelist")
+			if !containsWallet(allowed, callerWallet) {
+				common.Logger.Infof("access_control: denied peer wallet=%s (not in whitelist)", callerWallet)
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "access denied: wallet not in whitelist",
+				})
+				return
+			}
+
+		case "blacklist":
+			blocked := viper.GetStringSlice("security.access_control.blacklist")
+			if containsWallet(blocked, callerWallet) {
+				common.Logger.Infof("access_control: denied peer wallet=%s (in blacklist)", callerWallet)
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "access denied: wallet is blacklisted",
+				})
+				return
+			}
+
+		default:
+			common.Logger.Warnf("access_control: unknown policy %q, allowing request", currentPolicy)
+		}
+
+		c.Next()
+	}
+}
+
+func containsWallet(list []string, wallet string) bool {
+	for _, w := range list {
+		if w == wallet {
+			return true
+		}
+	}
+	return false
+}
