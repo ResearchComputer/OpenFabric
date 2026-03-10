@@ -7,6 +7,7 @@ import {
 } from 'fumadocs-ui/page';
 import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import type { MDXContent } from 'mdx/types';
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -15,10 +16,12 @@ export default async function Page(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  const MDX = page.data.body;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- fumadocs-mdx generic chain loses type info
+  const data = page.data as any;
+  const MDX = data.body as MDXContent;
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
+    <DocsPage toc={data.toc} full={data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>

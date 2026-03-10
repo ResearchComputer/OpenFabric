@@ -43,16 +43,6 @@ const features = [
     ),
   },
   {
-    title: 'On-Chain Settlement',
-    description:
-      'Dual-attestation billing with Solana-based settlement for transparent, verifiable resource accounting.',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-6">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" />
-      </svg>
-    ),
-  },
-  {
     title: 'OpenAI-Compatible API',
     description:
       'Drop-in replacement for OpenAI endpoints. Point your existing apps at an OpenTela cluster.',
@@ -64,33 +54,68 @@ const features = [
   },
 ];
 
+function MeshBackground() {
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      viewBox="0 0 800 400"
+      fill="none"
+      preserveAspectRatio="xMidYMid slice"
+    >
+      {/* Nodes */}
+      <circle cx="80" cy="80" r="3" className="fill-fd-primary/20" />
+      <circle cx="200" cy="50" r="4" className="fill-fd-primary/25" />
+      <circle cx="350" cy="90" r="3" className="fill-fd-primary/20" />
+      <circle cx="500" cy="60" r="4" className="fill-fd-primary/25" />
+      <circle cx="650" cy="85" r="3" className="fill-fd-primary/20" />
+      <circle cx="720" cy="45" r="3" className="fill-fd-primary/15" />
+      <circle cx="130" cy="180" r="3" className="fill-fd-primary/20" />
+      <circle cx="300" cy="200" r="4" className="fill-fd-primary/25" />
+      <circle cx="450" cy="170" r="3" className="fill-fd-primary/20" />
+      <circle cx="600" cy="210" r="3" className="fill-fd-primary/20" />
+      <circle cx="750" cy="180" r="4" className="fill-fd-primary/15" />
+      <circle cx="50" cy="300" r="3" className="fill-fd-primary/15" />
+      <circle cx="180" cy="320" r="3" className="fill-fd-primary/20" />
+      <circle cx="400" cy="310" r="4" className="fill-fd-primary/20" />
+      <circle cx="550" cy="330" r="3" className="fill-fd-primary/15" />
+      <circle cx="700" cy="300" r="3" className="fill-fd-primary/15" />
+      {/* Edges */}
+      <line x1="80" y1="80" x2="200" y2="50" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="200" y1="50" x2="350" y2="90" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="350" y1="90" x2="500" y2="60" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="500" y1="60" x2="650" y2="85" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="650" y1="85" x2="720" y2="45" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="80" y1="80" x2="130" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="200" y1="50" x2="300" y2="200" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="350" y1="90" x2="450" y2="170" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="500" y1="60" x2="600" y2="210" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="650" y1="85" x2="750" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="130" y1="180" x2="300" y2="200" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="300" y1="200" x2="450" y2="170" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="450" y1="170" x2="600" y2="210" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="600" y1="210" x2="750" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
+      <line x1="50" y1="300" x2="180" y2="320" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="180" y1="320" x2="400" y2="310" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="400" y1="310" x2="550" y2="330" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="550" y1="330" x2="700" y2="300" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="130" y1="180" x2="180" y2="320" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="300" y1="200" x2="400" y2="310" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="450" y1="170" x2="550" y2="330" className="stroke-fd-primary/8" strokeWidth="0.5" />
+      <line x1="600" y1="210" x2="700" y2="300" className="stroke-fd-primary/8" strokeWidth="0.5" />
+    </svg>
+  );
+}
+
 export default function HomePage() {
   return (
-    <main className="flex min-h-screen flex-col">
-      {/* Nav */}
-      <header className="sticky top-0 z-50 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-          <span className="text-lg font-semibold tracking-tight">OpenTela</span>
-          <nav className="flex items-center gap-4">
-            <Link href="/docs" className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors">
-              Docs
-            </Link>
-            <a
-              href="https://github.com/opentela/opentela"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-            >
-              GitHub
-            </a>
-          </nav>
-        </div>
-      </header>
-
+    <main className="flex min-h-dvh flex-col">
       {/* Hero */}
-      <section className="relative flex flex-col items-center justify-center px-6 pt-24 pb-16 text-center">
+      <section className="relative flex flex-col items-center justify-center overflow-hidden px-6 pt-24 pb-16 text-center">
         {/* Gradient blob */}
         <div className="pointer-events-none absolute -top-32 h-[500px] w-[500px] rounded-full bg-fd-primary/10 blur-[120px]" />
+
+        {/* Mesh */}
+        <MeshBackground />
 
         <div className="relative">
           <p className="mb-4 text-sm font-medium tracking-widest uppercase text-fd-primary">
@@ -104,7 +129,7 @@ export default function HomePage() {
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg text-fd-muted-foreground leading-relaxed">
             OpenTela is a peer-to-peer platform for orchestrating distributed GPU
-            resources. No central coordinator — just nodes, gossip, and CRDTs.
+            resources.
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
@@ -113,17 +138,46 @@ export default function HomePage() {
             >
               Get Started
             </Link>
-            <Link
-              href="/docs/tutorial/installation"
+            <a
+              href="https://github.com/eth-easl/opentela"
+              target="_blank"
+              rel="noopener noreferrer"
               className="rounded-lg border border-fd-border bg-fd-background px-6 py-3 text-sm font-medium text-fd-foreground hover:bg-fd-muted transition-colors"
             >
-              Installation Guide
-            </Link>
+              GitHub
+            </a>
+          </div>
+        </div>
+
+        {/* Terminal preview */}
+        <div className="relative mt-14 w-full max-w-xl">
+          <div className="overflow-hidden rounded-xl border border-fd-border bg-fd-card shadow-xl shadow-fd-primary/5">
+            <div className="flex items-center gap-2 border-b border-fd-border px-4 py-3">
+              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
+              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
+              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
+              <span className="ml-2 text-xs text-fd-muted-foreground">terminal</span>
+            </div>
+            <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed">
+              {/* <code>
+                <span className="text-fd-primary">$</span>
+                <span className="text-fd-foreground"> curl -fsSL https://get.opentela.dev | sh</span>
+                {'\n'}
+                <span className="text-fd-primary">$</span>
+                <span className="text-fd-foreground"> opentela start --role head</span>
+                {'\n'}
+                <span className="text-fd-muted-foreground">{'  '}Listening on :8080</span>
+                {'\n'}
+                <span className="text-fd-muted-foreground">{'  '}Discovered 12 peers via gossip</span>
+                {'\n'}
+                <span className="text-green-500">{'  '}✓ Mesh ready</span>
+              </code> */}
+            </pre>
           </div>
         </div>
       </section>
 
-      {/* Features */}
+      {/* Features
       <section className="mx-auto w-full max-w-6xl px-6 py-20">
         <h2 className="mb-2 text-center text-sm font-medium tracking-widest uppercase text-fd-muted-foreground">
           Features
@@ -147,36 +201,7 @@ export default function HomePage() {
             </div>
           ))}
         </div>
-      </section>
-
-      {/* Quick start snippet */}
-      <section className="mx-auto w-full max-w-6xl px-6 py-16">
-        <div className="rounded-2xl border border-fd-border bg-fd-card p-8 sm:p-12">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-md">
-              <h2 className="text-2xl font-bold tracking-tight">Up and running in minutes</h2>
-              <p className="mt-3 text-fd-muted-foreground leading-relaxed">
-                Install the binary, point to your GPU service, and join the mesh.
-                OpenTela handles discovery, routing, and load balancing.
-              </p>
-            </div>
-            <div className="flex-1 lg:max-w-md">
-              <pre className="overflow-x-auto rounded-lg border border-fd-border bg-fd-background p-4 text-sm leading-relaxed">
-                <code>{`# Install
-curl -fsSL https://get.opentela.dev | sh
-
-# Start a worker node
-opentela start --role worker \\
-  --service-port 8000 \\
-  --identity model=Qwen/Qwen3-8B
-
-# Start the head node
-opentela start --role head`}</code>
-              </pre>
-            </div>
-          </div>
-        </div>
-      </section>
+      </section> */}
 
       {/* Footer */}
       <footer className="mt-auto border-t border-fd-border py-8">
@@ -189,7 +214,7 @@ opentela start --role head`}</code>
               Documentation
             </Link>
             <a
-              href="https://github.com/opentela/opentela"
+              href="https://github.com/eth-easl/opentela"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
