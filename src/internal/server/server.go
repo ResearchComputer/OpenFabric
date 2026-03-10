@@ -18,9 +18,10 @@ import (
 )
 
 func StartServer() {
-	// owner will be passed to InitializeMyself so every service
-	// registration carries the wallet-derived provider identity.
-	owner := ""
+	// walletPubkey is passed to InitializeMyself so Peer.Owner is always the
+	// raw wallet public key (used for access-control comparisons).
+	// The human-readable ProviderID is derived inside InitializeMyself via wm.
+	walletPubkey := ""
 	var walletManager *wallet.WalletManager
 
 	if viper.GetString("wallet.account") == "" {
@@ -61,16 +62,14 @@ func StartServer() {
 				common.Logger.Infof("Verified configured wallet.account matches local wallet")
 			}
 
-			// Prefer the provider ID derived from the wallet so every
-			// service registration in the CRDT carries a deterministic,
-			// wallet-bound identity.  Fall back to the raw public key
-			// when the provider ID is empty (legacy OCF accounts).
-			if providerID != "" {
-				owner = providerID
-			} else if configuredAccount != "" {
-				owner = configuredAccount
+			// Owner must always be the wallet public key so that access-control
+			// decisions (which compare against wallet.account) are like-for-like.
+			// The ProviderID ("otela-...") is stored separately in Peer.ProviderID
+			// by InitializeMyself via wm.GetProviderID().
+			if configuredAccount != "" {
+				walletPubkey = configuredAccount
 			} else {
-				owner = walletPublicKey
+				walletPubkey = walletPublicKey
 			}
 
 			if walletType == wallet.WalletTypeSolana {
@@ -102,7 +101,7 @@ func StartServer() {
 		}
 	}
 
-	protocol.InitializeMyself(owner, walletManager)
+	protocol.InitializeMyself(walletPubkey, walletManager)
 	_, cancelCtx := protocol.GetCRDTStore()
 	defer cancelCtx()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)

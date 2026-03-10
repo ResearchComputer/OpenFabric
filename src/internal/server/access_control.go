@@ -36,7 +36,11 @@ import (
 //     end-user's bearer token against the auth server).  This represents the
 //     actual end-user, not the forwarding head node.
 //  2. The libp2p peer ID of the direct caller (the head node), looked up in
-//     the node table for its wallet (Owner).
+//     the node table.  If the peer has a verified identity attestation
+//     (TrustLevel >= TrustSelfAttested), its WalletPubkey is returned because
+//     that is the cryptographically proven wallet key.  Otherwise Owner is
+//     used as a fallback (backward-compatible with peers that have no
+//     attestation).
 //
 // Returns the wallet public key, or "" if the caller cannot be identified.
 func resolveCallerWallet(r *http.Request) string {
@@ -56,6 +60,11 @@ func resolveCallerWallet(r *http.Request) string {
 	peer, err := protocol.GetPeerFromTable(addr)
 	if err != nil {
 		return ""
+	}
+	// Prefer the cryptographically verified wallet pubkey from the identity
+	// attestation when available; fall back to Owner for backward compat.
+	if peer.TrustLevel >= protocol.TrustSelfAttested && peer.IdentityAttestation != nil {
+		return peer.IdentityAttestation.WalletPubkey
 	}
 	return peer.Owner
 }
