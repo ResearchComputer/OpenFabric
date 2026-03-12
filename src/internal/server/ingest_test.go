@@ -59,7 +59,7 @@ func TestGetIngestStats_UpstreamReturnsStats(t *testing.T) {
 		assert.Equal(t, "/status", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedStats)
+		_ = json.NewEncoder(w).Encode(expectedStats)
 	}))
 	defer upstream.Close()
 
@@ -119,7 +119,7 @@ func TestGetIngestStats_InvalidJSON(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("this is not valid json{{{"))
+		_, _ = w.Write([]byte("this is not valid json{{{"))
 	}))
 	defer upstream.Close()
 
