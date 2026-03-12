@@ -22,13 +22,41 @@ import (
 	"github.com/buger/jsonparser"
 	"github.com/gin-gonic/gin"
 	p2phttp "github.com/libp2p/go-libp2p-http"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
 
 var (
 	globalTransport *http.Transport
 	transportOnce   sync.Once
+
+	routingRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "otela_routing_requests_total",
+			Help: "Total number of requests forwarded to workers",
+		},
+		[]string{"service", "status"},
+	)
+	routingRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "otela_routing_request_duration_seconds",
+			Help:    "End-to-end forwarding latency",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"service"},
+	)
+	routingFallbackTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "otela_routing_fallback_total",
+			Help: "Number of times each fallback tier was used",
+		},
+		[]string{"service", "level"},
+	)
 )
+
+func init() {
+	prometheus.MustRegister(routingRequestsTotal, routingRequestDuration, routingFallbackTotal)
+}
 
 func getGlobalTransport() *http.Transport {
 	transportOnce.Do(func() {
@@ -270,6 +298,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	c.Request = c.Request.WithContext(ctx)
 
 	serviceName := c.Param("service")
+	routingStart := time.Now()
 	requestPath := c.Param("path")
 	providers, err := protocol.GetAllProviders(serviceName)
 	if err != nil {
@@ -284,6 +313,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	fallbackLevel := parseFallbackLevel(c.GetHeader("X-Otela-Fallback"))
 
 	candidates := selectCandidates(providers, serviceName, bodyBytes, fallbackLevel)
+	routingFallbackTotal.WithLabelValues(serviceName, strconv.Itoa(fallbackLevel)).Inc()
 	if len(candidates) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No provider found for the requested service."})
 		return
@@ -369,4 +399,8 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	}
 
 	proxy.ServeHTTP(streamWriter, c.Request)
+
+	status := strconv.Itoa(c.Writer.Status())
+	routingRequestsTotal.WithLabelValues(serviceName, status).Inc()
+	routingRequestDuration.WithLabelValues(serviceName).Observe(time.Since(routingStart).Seconds())
 }
