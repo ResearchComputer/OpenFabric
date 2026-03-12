@@ -134,7 +134,7 @@ func UpdateNodeTable(peer Peer) {
 
 func MarkSelfAsBootstrap() {
 	if viper.GetString("public-addr") != "" {
-		common.Logger.Info("Registering myself as a bootstrap node")
+		common.Logger.Debug("Registering as bootstrap node")
 		ctx := context.Background()
 		store, _ := GetCRDTStore()
 		host, _ := GetP2PNode(nil)
@@ -159,7 +159,7 @@ func AnnounceLeave() {
 	// broadcast the peer to the network
 	store, _ := GetCRDTStore()
 	key := ds.NewKey(host.ID().String())
-	common.Logger.Info("Announcing myself as LEFT from the network")
+	common.Logger.Info("Leaving network")
 
 	// Update self status to LEFT
 	myself.Status = LEFT
@@ -189,7 +189,7 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 		if err := attestation.Verify(*peer.BuildAttestation); err == nil {
 			peer.SignedBuild = true
 		} else {
-			common.Logger.Warnf("Peer [%s] build attestation invalid: %v", peer.ID, err)
+			common.Logger.Debugf("Peer [%s] build attestation invalid: %v", peer.ID, err)
 		}
 	}
 
@@ -241,7 +241,7 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	defer func() { <-tableUpdateSem }() // Release on exit
 	if existing, ok := table[key.String()]; ok {
 		if existing.Status == LEFT {
-			common.Logger.Infof("Peer [%s] rejoined the network (was LEFT)", peer.ID)
+			common.Logger.Debugf("Peer [%s] rejoined (was LEFT)", peer.ID)
 		}
 		// If LastSeen is missing in the update, keep the existing one
 		if peer.LastSeen == 0 {
@@ -357,9 +357,9 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 		}
 		if err := attestation.Verify(*myself.BuildAttestation); err == nil {
 			myself.SignedBuild = true
-			common.Logger.Info("Build attestation verified: running signed binary")
+			common.Logger.Info("Build attestation verified")
 		} else {
-			common.Logger.Warnf("Build attestation not verified: %v", err)
+			common.Logger.Debugf("Build attestation not verified: %v", err)
 		}
 	}
 
@@ -367,14 +367,14 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	// comparisons are like-for-like (wallet pubkey vs wallet pubkey).
 	if walletPubkeyOverride != "" {
 		myself.Owner = walletPubkeyOverride
-		common.Logger.Infof("Using verified wallet account for provider: %s", myself.Owner)
+		common.Logger.Debugf("Wallet provider: %s (verified)", myself.Owner)
 	} else if account := viper.GetString("wallet.account"); account != "" {
 		myself.Owner = account
-		common.Logger.Infof("Using configured wallet account for provider: %s", myself.Owner)
+		common.Logger.Debugf("Wallet provider: %s (configured)", myself.Owner)
 	} else if wm != nil && wm.WalletExists() {
 		myself.Owner = wm.GetPublicKey()
 		if myself.Owner != "" {
-			common.Logger.Infof("Added wallet address as provider: %s", myself.Owner)
+			common.Logger.Debugf("Wallet provider: %s (local)", myself.Owner)
 		}
 	}
 
@@ -383,7 +383,7 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	if wm != nil && wm.WalletExists() {
 		if pid := wm.GetProviderID(); pid != "" {
 			myself.ProviderID = pid
-			common.Logger.Infof("Provider ID: %s", myself.ProviderID)
+			common.Logger.Debugf("Provider ID: %s", myself.ProviderID)
 		}
 	}
 
@@ -395,7 +395,7 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 		} else {
 			myself.IdentityAttestation = att
 			myself.TrustLevel = TrustSelfAttested
-			common.Logger.Info("Identity attestation signed: trust_level=1 (self-attested)")
+			common.Logger.Info("Identity attestation signed (self-attested)")
 		}
 	}
 

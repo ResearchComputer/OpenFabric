@@ -38,9 +38,9 @@ func init() {
 	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
 	startCmd.Flags().StringSlice("bootstrap.source", nil, "bootstrap source (HTTP URL, dnsaddr://host, or multiaddr). Repeatable")
 	startCmd.Flags().StringSlice("bootstrap.static", []string{
-		"/ip4/140.238.223.116/tcp/43905/p2p/QmVhz27y8kJQ14EnUyHZpY7aUWKGPPUonstFhuyLYmaXgQ",
-		"/ip4/152.67.64.117/tcp/43905/p2p/QmckWGfEuHFwMhgthJvQGkjZVXFo2SVb7JDHXi3N8QTnp8",
-	}, "static bootstrap multiaddr (repeatable)")
+		"http://140.238.223.116:8092/v1/dnt/bootstraps",
+		"http://152.67.64.117:8092/v1/dnt/bootstraps",
+	}, "static bootstrap sources (HTTP URL, dnsaddr://, or multiaddr). Repeatable")
 	startCmd.Flags().String("seed", "0", "Seed")
 	startCmd.Flags().String("mode", "node", "Mode (standalone, local, full)")
 	startCmd.Flags().String("tcpport", "43905", "TCP Port")
@@ -101,7 +101,7 @@ func initConfig(cmd *cobra.Command) error {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
 		// print out the config file
-		common.Logger.Info("Using config file: ", viper.ConfigFileUsed())
+		common.Logger.Debug("Using config file: ", viper.ConfigFileUsed())
 	} else {
 		// Find home directory.
 		home, err = homedir.Dir()

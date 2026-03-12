@@ -40,7 +40,7 @@ func loadKeyFromFile() crypto.PrivKey {
 		return nil
 	}
 	keyPath := path.Join(home, ".ocfcore", "keys", "id")
-	common.Logger.Info("Looking for keys under: ", keyPath)
+	common.Logger.Debug("Looking for keys under: ", keyPath)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		common.Logger.Error("Error while reading private key file: ", err)

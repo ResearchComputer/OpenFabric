@@ -16,7 +16,7 @@ var lookupTXT = net.LookupTXT
 
 func getDefaultBootstrapPeers(bootstrapAddrs []string, mode string) []multiaddr.Multiaddr {
 	if mode == "standalone" {
-		common.Logger.Info("Bootstrap: []")
+		common.Logger.Debug("Bootstrap: [] (standalone mode)")
 		return []multiaddr.Multiaddr{}
 	}
 
@@ -42,7 +42,7 @@ func getDefaultBootstrapPeers(bootstrapAddrs []string, mode string) []multiaddr.
 		return nil
 	}
 
-	common.Logger.Info("Bootstrap: ", peers)
+	common.Logger.Debug("Bootstrap peers: ", peers)
 	return peers
 }
 
@@ -102,7 +102,7 @@ func resolveBootstrapSource(source string) ([]string, error) {
 }
 
 func fetchHTTPBootstraps(url string) ([]string, error) {
-	common.Logger.With("source", url).Info("Fetching bootstrap list")
+	common.Logger.With("source", url).Debug("Fetching bootstrap list")
 	body, err := common.RemoteGET(url)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)

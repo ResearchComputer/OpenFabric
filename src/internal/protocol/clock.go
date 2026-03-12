@@ -50,7 +50,7 @@ func StartTicker() {
 						disconnected++
 					} else {
 						// Successfully reconnected
-						common.Logger.Infof("Reconnected to peer %s", peer_id)
+						common.Logger.Debugf("Reconnected to peer %s", peer_id)
 						p.Connected = true
 						reconnected++
 					}

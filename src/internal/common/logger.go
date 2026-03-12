@@ -34,7 +34,7 @@ func InitLogger() {
 	}
 	// fmt.Printf("Log level set to %s\n", config.Level.Level().String())
 	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	zapLogger, err := config.Build()
+	zapLogger, err := config.Build(zap.AddStacktrace(zapcore.ErrorLevel))
 	// defer func() { _ = zapLogger.Sync() }()
 	if err != nil {
 		panic(err)

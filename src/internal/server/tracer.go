@@ -21,7 +21,7 @@ func initTracer() {
 	tracerOnce.Do(func() {
 		if dataset == "" {
 			tracker = nil
-			common.Logger.Info("AXIOM_DATASET not set, tracing disabled")
+			common.Logger.Debug("AXIOM_DATASET not set, tracing disabled")
 		} else {
 			ctx := context.Background()
 			stop, err := axiotel.InitTracing(ctx, dataset, "research-computer-coordinator", "v1.0.0")

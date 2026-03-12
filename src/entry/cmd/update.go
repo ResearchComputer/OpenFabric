@@ -14,7 +14,7 @@ func doUpdate() error {
 	// detect cpu arch
 	arch := runtime.GOARCH
 	url := "https://github.com/eth-easl/OpenTela/releases/latest/download/otela-" + arch
-	common.Logger.Info("Downloading from ", url)
+	common.Logger.Debug("Downloading from ", url)
 	resp, err := http.Get(url)
 	if err != nil {
 		return err

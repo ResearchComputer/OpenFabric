@@ -104,7 +104,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 				return
 			}
 			if callerWallet != myWallet {
-				common.Logger.Infof("access_control: denied peer wallet=%s (policy=self, my wallet=%s)", callerWallet, myWallet)
+				common.Logger.Warnf("access_control: denied wallet=%s (policy=self)", callerWallet)
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: only requests from the node operator's own wallet are accepted",
 				})
@@ -114,7 +114,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 		case "whitelist":
 			allowed := viper.GetStringSlice("security.access_control.whitelist")
 			if !containsWallet(allowed, callerWallet) {
-				common.Logger.Infof("access_control: denied peer wallet=%s (not in whitelist)", callerWallet)
+				common.Logger.Warnf("access_control: denied wallet=%s (not in whitelist)", callerWallet)
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: wallet not in whitelist",
 				})
@@ -124,7 +124,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 		case "blacklist":
 			blocked := viper.GetStringSlice("security.access_control.blacklist")
 			if containsWallet(blocked, callerWallet) {
-				common.Logger.Infof("access_control: denied peer wallet=%s (in blacklist)", callerWallet)
+				common.Logger.Warnf("access_control: denied wallet=%s (blacklisted)", callerWallet)
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: wallet is blacklisted",
 				})

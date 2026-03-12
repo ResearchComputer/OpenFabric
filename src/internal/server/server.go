@@ -25,7 +25,7 @@ func StartServer() {
 	var walletManager *wallet.WalletManager
 
 	if viper.GetString("wallet.account") == "" {
-		common.Logger.Info("Wallet account set to 'none', skipping wallet initialization")
+		common.Logger.Debug("Wallet account not set, skipping wallet init")
 	} else {
 		var err error
 		walletManager, err = wallet.InitializeWallet()
@@ -34,7 +34,7 @@ func StartServer() {
 		} else {
 			walletPublicKey := walletManager.GetPublicKey()
 			providerID := walletManager.GetProviderID()
-			common.Logger.Infof("Server wallet initialized. Public key: %s  Provider ID: %s", walletPublicKey, providerID)
+			common.Logger.Debugf("Wallet initialized: pubkey=%s provider=%s", walletPublicKey, providerID)
 
 			if walletPublicKey == "" {
 				common.Logger.Warn("No wallet public key available; ensure an account is created with `otela wallet create`")
@@ -49,9 +49,9 @@ func StartServer() {
 
 			walletType := walletManager.GetWalletType()
 			if walletType == wallet.WalletTypeSolana {
-				common.Logger.Info("Wallet type: solana")
+				common.Logger.Debug("Wallet type: solana")
 			} else {
-				common.Logger.Info("Wallet type: ocf")
+				common.Logger.Debug("Wallet type: ocf")
 			}
 
 			configuredAccount := viper.GetString("wallet.account")
@@ -59,7 +59,7 @@ func StartServer() {
 				common.Logger.Warn("Configured wallet.account (%s) does not match local wallet public key (%s)", configuredAccount, walletPublicKey)
 			}
 			if configuredAccount != "" {
-				common.Logger.Infof("Verified configured wallet.account matches local wallet")
+				common.Logger.Debug("Configured wallet.account matches local wallet")
 			}
 
 			// Owner must always be the wallet public key so that access-control
@@ -92,7 +92,7 @@ func StartServer() {
 					} else if !hasToken {
 						common.Logger.Warn("Solana wallet %s does not hold SPL mint %s", verifyAddr, mint)
 					} else {
-						common.Logger.Infof("Verified SPL token ownership for mint %s", mint)
+						common.Logger.Debugf("SPL token ownership verified: mint=%s", mint)
 					}
 				} else if mint != "" && skipVerification {
 					common.Logger.Warn("Skipping Solana token ownership verification as requested")
@@ -194,13 +194,18 @@ func StartServer() {
 	go func() {
 		protocol.RegisterLocalServices()
 	}()
+
+	// Startup banner
+	hasBootstrap := len(protocol.ConnectedPeers()) > 0
+	common.Logger.Infof("Server started: id=%s bootstrap_connected=%v", protocol.MyID, hasBootstrap)
+
 	<-ctx.Done()
 	// shutting down...
 	protocol.AnnounceLeave()
 	protocol.ClearCRDTStore()
 	time.Sleep(5 * time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	common.Logger.Info("Shutting down server gracefully")
+	common.Logger.Info("Shutting down")
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.ReportError(err, "Server shutdown failed")

@@ -93,7 +93,7 @@ func P2PForwardHandler(c *gin.Context) {
 		Host:   requestPeer,
 		Path:   requestPath,
 	}
-	common.Logger.Infof("Forwarding request to %s", target.String())
+	common.Logger.Debugf("P2P forward: %s", target.String())
 
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
@@ -317,8 +317,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	event := []axiom.Event{{ingest.TimestampField: time.Now(), "event": "Service Forward", "from": protocol.MyID, "to": targetPeer, "path": requestPath, "service": serviceName}}
 	IngestEvents(event)
 
-	common.Logger.Info("Forwarding request to: ", targetPeer)
-	common.Logger.Info("Forwarding path to: ", requestPath)
+	common.Logger.Debugf("Service forward: peer=%s path=%s", targetPeer, requestPath)
 	target := url.URL{
 		Scheme: "libp2p",
 		Host:   targetPeer,

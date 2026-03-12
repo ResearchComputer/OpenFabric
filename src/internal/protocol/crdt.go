@@ -34,7 +34,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		mode := viper.GetString("mode")
 		host, dht := GetP2PNode(nil)
 		ctx := context.Background()
-		common.Logger.Info("Creating CRDT store, using dbpath: " + common.GetDBPath(host.ID().String()))
+		common.Logger.Debug("Creating CRDT store, dbpath: " + common.GetDBPath(host.ID().String()))
 		store, err := badger.NewDatastore(common.GetDBPath(host.ID().String()), &badger.DefaultOptions)
 		common.ReportError(err, "Error while creating datastore")
 
@@ -136,10 +136,6 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		ipfs.Bootstrap(addsInfo)
 		common.ReportError(err, "Error while starting ticker")
 		// h.ConnManager().TagPeer(inf.ID, "keep", 100)
-		common.Logger.Info("Mode: ", mode)
-		common.Logger.Info("Peer ID: ", host.ID().String())
-		common.Logger.Info("Listen Addr: ", host.Addrs())
-
 		startTombstoneCompactor(crdtStore)
 	})
 	return crdtStore, cancelSubscriptions
@@ -148,7 +144,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 func Reconnect() {
 	mode := viper.GetString("mode")
 	if ipfs == nil {
-		common.Logger.Warn("Reconnect requested but CRDT/IPFS not initialized yet; skipping")
+		common.Logger.Debug("Reconnect skipped: CRDT/IPFS not initialized yet")
 		return
 	}
 	addsInfo, err := peer.AddrInfosFromP2pAddrs(getDefaultBootstrapPeers(nil, mode)...)

@@ -68,7 +68,7 @@ func RegisterLocalServices() {
 			common.Logger.Error("could not health check LLM service: ", err)
 			return
 		}
-		common.Logger.Info("LLM service is healthy")
+		common.Logger.Debug("LLM service healthy")
 		registerLLMService(servicePort)
 	}
 }
@@ -79,7 +79,7 @@ func healthCheckRemote(port string, maxTries int) error {
 	for err != nil {
 		_, err := common.RemoteGET("http://localhost:" + port + "/health")
 		if err != nil {
-			common.Logger.Info("could not health check LLM service: ", err, " retrying in 10 seconds...")
+			common.Logger.Debug("LLM health check failed, retrying in 10s: ", err)
 			time.Sleep(10 * time.Second)
 			tries++
 		}
@@ -98,7 +98,7 @@ func registerLLMService(port string) {
 	if err != nil {
 		common.Logger.Error("could not fetch models from LLM service: ", err)
 	}
-	common.Logger.Info("Fetched models from LLM service: ", string(modelsBytes))
+	common.Logger.Debug("Fetched models from LLM service: ", string(modelsBytes))
 	var availableModels common.LMAvailableModels
 	err = json.Unmarshal(modelsBytes, &availableModels)
 	if err != nil {
@@ -131,7 +131,7 @@ func provideService(service Service) {
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}
-	common.Logger.Info("Registering LLM service: ", myself)
+	common.Logger.Debug("Registering LLM service: ", myself)
 	value, err := json.Marshal(myself)
 	UpdateNodeTableHook(key, value)
 	common.ReportError(err, "Error while marshalling peer")
@@ -162,6 +162,6 @@ func ReannounceLocalServices() {
 	if err := store.Put(ctx, key, value); err != nil {
 		common.Logger.Warn("Failed to reannounce local services: ", err)
 	} else {
-		common.Logger.Info("Re-announced local services to network")
+		common.Logger.Debug("Re-announced local services")
 	}
 }

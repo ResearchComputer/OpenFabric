@@ -25,7 +25,7 @@ var startCmd = &cobra.Command{
 		// check if cleanslate is set
 		if viper.GetBool("cleanslate") {
 			// clean slate, by removing the database
-			common.Logger.Info("Cleaning slate")
+			common.Logger.Debug("Cleaning slate")
 			protocol.ClearCRDTStore()
 		}
 

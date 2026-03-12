@@ -299,7 +299,7 @@ func New(
 		cancel()
 		return nil, err
 	}
-	dstore.logger.Infof(
+	dstore.logger.Debugf(
 		"crdt Datastore created. Number of heads: %d. Current max-height: %d. Dirty: %t",
 		len(headList),
 		maxHeight,
@@ -509,7 +509,7 @@ func (store *Datastore) repair(ctx context.Context) {
 			return
 		case <-timer.C:
 			if !store.IsDirty(ctx) {
-				store.logger.Info("store is marked clean. No need to repair")
+				store.logger.Debug("store is marked clean. No need to repair")
 			} else {
 				store.logger.Warn("store is marked dirty. Starting DAG repair operation")
 				err := store.repairDAG(ctx)
@@ -809,9 +809,9 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 
 	// Some informative logging
 	if prio := delta.GetPriority(); prio%50 == 0 {
-		common.Logger.Infof("merged delta from node %s (priority: %d)", current, prio)
+		common.Logger.Debugf("merged delta from %s (priority: %d, milestone)", current, prio)
 	} else {
-		common.Logger.Debugf("merged delta from node %s (priority: %d)", current, prio)
+		common.Logger.Debugf("merged delta from %s (priority: %d)", current, prio)
 	}
 
 	links := node.Links()
