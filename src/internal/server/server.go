@@ -143,7 +143,9 @@ func StartServer() {
 			for range ticker.C {
 				connected := protocol.GetConnectedPeers()
 				all := protocol.GetAllPeers()
-				metricsCollector.SetNetworkStats(len(*connected), len(*all))
+				if connected != nil && all != nil {
+					metricsCollector.SetNetworkStats(len(*connected), len(*all))
+				}
 				metricsCollector.SetScraperTargets(len(provider.GetScrapablePeers()))
 			}
 		}()

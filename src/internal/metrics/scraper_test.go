@@ -49,7 +49,7 @@ go_goroutines 42
 
 func TestScrapeTarget_ReturnsErrorOnTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Second)
+		<-r.Context().Done() // exits when client cancels
 	}))
 	defer srv.Close()
 

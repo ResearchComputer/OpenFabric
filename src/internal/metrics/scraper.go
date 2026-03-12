@@ -54,7 +54,6 @@ type MetricsScraper struct {
 func NewMetricsScraper(cfg ScraperConfig, provider PeerProvider, transport http.RoundTripper) *MetricsScraper {
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   cfg.ScrapeTimeout,
 	}
 	return &MetricsScraper{
 		provider:    provider,
