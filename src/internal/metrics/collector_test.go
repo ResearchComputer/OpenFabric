@@ -1,7 +1,11 @@
 package metrics
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
@@ -73,4 +77,57 @@ func TestAggregatedCollector_RegistersWithoutError(t *testing.T) {
 	c := NewAggregatedCollector(&mockScraper{})
 	err := reg.Register(c)
 	assert.NoError(t, err, "unchecked collector should register without error")
+}
+
+func TestFullPipeline_ScrapeRelabelCollect(t *testing.T) {
+	metricsBody := `# TYPE test_counter counter
+test_counter{env="prod"} 99
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		fmt.Fprint(w, metricsBody)
+	}))
+	defer srv.Close()
+
+	provider := &mockPeerProvider{
+		peers: []PeerInfo{
+			{
+				ID:      "test-peer-1",
+				Address: srv.URL,
+				Labels:  map[string]string{"peer_id": "test-peer-1", "provider_id": "otela-test"},
+			},
+		},
+	}
+	cfg := ScraperConfig{
+		ScrapeInterval: time.Second,
+		ScrapeTimeout:  5 * time.Second,
+		MetricsPath:    "",
+		MaxConcurrent:  5,
+	}
+	scraper := NewMetricsScraper(cfg, provider, http.DefaultTransport)
+
+	scraper.scrapeAll()
+
+	collector := NewAggregatedCollector(scraper)
+	reg := prometheus.NewRegistry()
+	require.NoError(t, reg.Register(collector))
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+
+	found := false
+	for _, mf := range families {
+		if mf.GetName() == "otela_node_test_counter" {
+			found = true
+			require.Len(t, mf.Metric, 1)
+			labelMap := make(map[string]string)
+			for _, lp := range mf.Metric[0].Label {
+				labelMap[lp.GetName()] = lp.GetValue()
+			}
+			assert.Equal(t, "prod", labelMap["env"])
+			assert.Equal(t, "test-peer-1", labelMap["peer_id"])
+			assert.Equal(t, "otela-test", labelMap["provider_id"])
+		}
+	}
+	assert.True(t, found, "should find otela_node_test_counter in gathered metrics")
 }
