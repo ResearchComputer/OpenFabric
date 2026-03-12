@@ -96,6 +96,15 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetDefault("billing.max_interval_minutes", 60)
 	viper.SetDefault("billing.dispute_threshold_pct", 10)
 
+	viper.SetDefault("security.require_signed_binary", true)
+
+	// Metrics aggregation configuration (opt-in, disabled by default)
+	viper.SetDefault("metrics.aggregation_enabled", false)
+	viper.SetDefault("metrics.scrape_interval_seconds", 30)
+	viper.SetDefault("metrics.scrape_timeout_seconds", 5)
+	viper.SetDefault("metrics.worker_metrics_path", "/metrics")
+	viper.SetDefault("metrics.max_concurrent_scrapes", 10)
+
 	// Don't forget to read config either from cfgFile or from home directory!
 	if cfgFile != "" {
 		// Use config file from the flag.
