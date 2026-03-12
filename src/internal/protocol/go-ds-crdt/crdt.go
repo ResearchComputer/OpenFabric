@@ -192,6 +192,11 @@ type Datastore struct {
 	// keep track of children to be fetched so only one job does every
 	// child
 	queuedChildren *cidSafeSet
+
+	// rate-limited logging for head processing errors
+	headErrMux   sync.Mutex
+	headErrCount int
+	headErrReset *time.Ticker
 }
 
 type dagJob struct {
@@ -271,6 +276,7 @@ func New(
 		return nil, fmt.Errorf("error building heads: %w", err)
 	}
 
+	headErrTicker := time.NewTicker(1 * time.Minute)
 	dstore := &Datastore{
 		ctx:            ctx,
 		cancel:         cancel,
@@ -286,6 +292,7 @@ func New(
 		jobQueue:       make(chan *dagJob, opts.NumWorkers),
 		sendJobs:       make(chan *dagJob),
 		queuedChildren: newCidSafeSet(),
+		headErrReset:   headErrTicker,
 	}
 
 	err = dstore.applyMigrations(ctx)
@@ -318,7 +325,7 @@ func New(
 			dstore.dagWorker()
 		}()
 	}
-	dstore.wg.Add(4)
+	dstore.wg.Add(5)
 	go func() {
 		defer dstore.wg.Done()
 		dstore.handleNext(ctx)
@@ -336,6 +343,25 @@ func New(
 	go func() {
 		defer dstore.wg.Done()
 		dstore.logStats(ctx)
+	}()
+
+	go func() {
+		defer dstore.wg.Done()
+		defer headErrTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-headErrTicker.C:
+				dstore.headErrMux.Lock()
+				count := dstore.headErrCount
+				dstore.headErrCount = 0
+				dstore.headErrMux.Unlock()
+				if count >= 100 {
+					dstore.logger.Warnf("high rate of head processing errors: %d in the last minute", count)
+				}
+			}
+		}
 	}()
 
 	return dstore, nil
@@ -370,7 +396,10 @@ func (store *Datastore) handleNext(ctx context.Context) {
 		processHead := func(ctx context.Context, c cid.Cid) {
 			err = store.handleBlock(ctx, c) //handleBlock blocks
 			if err != nil {
-				store.logger.Errorf("error processing new head: %s", err)
+				store.logger.Debugf("error processing new head: %s", err)
+				store.headErrMux.Lock()
+				store.headErrCount++
+				store.headErrMux.Unlock()
 				// For posterity: do not mark the store as
 				// Dirty if we could not handle a block. If an
 				// error happens here, it means the node could

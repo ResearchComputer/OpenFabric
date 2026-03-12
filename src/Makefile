@@ -97,6 +97,18 @@ endif
 	go build ${GOARGS} -trimpath -tags "${GOTAGS}" -ldflags "${LDFLAGS}" -o ${BUILD_DIR} ./entry...
 	@${MAKE} post-build
 
+.PHONY: build-signed
+build-signed: build-deps pre-build ## Build a signed binary (requires BUILD_SIGN_KEY env var)
+build-signed: goversion
+ifndef BUILD_SIGN_KEY
+	$(error BUILD_SIGN_KEY is not set. Generate one with: go run ./internal/attestation/cmd/buildsign keygen)
+endif
+	$(eval BUILD_SIG := $(shell go run ./internal/attestation/cmd/buildsign sign "${VERSION}" "${COMMIT_HASH}" "${BUILD_SIGN_KEY}"))
+	@mkdir -p ${BUILD_DIR}
+	go build ${GOARGS} -trimpath -tags "${GOTAGS}" -ldflags "${LDFLAGS}" -o ${BUILD_DIR} ./entry...
+	@echo "Signed build complete (version=${VERSION} commit=${COMMIT_HASH})"
+	@${MAKE} post-build
+
 .PHONY: build-release-deps
 build-release-deps: build-deps
 build-release-deps: ${BUILD_RELEASE_DEP_TARGETS}

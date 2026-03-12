@@ -1,0 +1,55 @@
+---
+title: "CRDT Internals & Troubleshooting"
+description: How the CRDT DAG synchronization works internally, common log messages, and how to troubleshoot them.
+---
+
+## DAG Synchronization
+
+OpenTela's CRDT datastore replicates state by exchanging Merkle-DAG nodes over libp2p. When a peer writes to the datastore, it broadcasts the new DAG head (a CID) via PubSub. Other peers receive the broadcast and attempt to fetch the corresponding block data through the DAG syncer (bitswap).
+
+The fetch is subject to a configurable timeout (`DAGSyncerTimeout`, default 5 minutes). If the block cannot be retrieved within that window, the head is skipped. This is safe — the CRDT will converge on later syncs.
+
+## Head Processing Errors
+
+### What it looks like
+
+At `debug` log level you may see:
+
+```
+DEBUG  go-ds-crdt/crdt.go  error processing new head: error getting root delta priority: context deadline exceeded
+```
+
+This means the node received a broadcast announcing a new CRDT head but could not fetch the block data from any peer before the timeout expired.
+
+### Common causes
+
+| Cause | Description |
+| :--- | :--- |
+| **Peer departed** | The broadcasting peer went offline between sending the gossip message and the fetcher requesting the block. |
+| **NAT / firewall** | The node can receive PubSub gossip but cannot establish a direct bitswap connection to the block holder (check relay and hole-punching). |
+| **Small / unstable network** | In a small cluster, if the only peer holding a block disconnects, the block becomes temporarily unfetchable. |
+| **Overloaded peer** | The peer holding the block is too slow to respond within the timeout. |
+
+### Rate-limited warning
+
+Individual head processing errors are logged at `debug` level to avoid log noise. If the error rate exceeds **100 occurrences per minute**, a single warning is emitted:
+
+```
+WARN  go-ds-crdt/crdt.go  high rate of head processing errors: 142 in the last minute
+```
+
+This warning indicates a sustained connectivity problem. Investigate:
+
+1. **Network health** — Are peers reachable? Check libp2p connection counts and relay status.
+2. **Peer churn** — Are nodes joining and leaving too frequently? Review the [tombstone mechanism](/docs/advanced/crdt-tombstones) for how departures are handled.
+3. **Resource pressure** — Is the node under CPU or memory pressure, causing slow block processing?
+
+### Adjusting log level
+
+To see individual head processing errors, set `loglevel: debug` in your config:
+
+```yaml
+loglevel: debug
+```
+
+Or via environment variable: `OF_LOGLEVEL=debug`.

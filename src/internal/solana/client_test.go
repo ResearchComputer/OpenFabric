@@ -2,6 +2,7 @@ package solana
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -432,5 +433,267 @@ func TestTokenAccountsResponseErrorStruct(t *testing.T) {
 	}
 	if resp.Error.Message != "Invalid params" {
 		t.Errorf("Expected error message 'Invalid params', got %s", resp.Error.Message)
+	}
+}
+
+func TestGetBalance_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"value":5000000000}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	balance, err := client.GetBalance(ctx, "11111111111111111111111111111112")
+	if err != nil {
+		t.Fatalf("GetBalance returned unexpected error: %v", err)
+	}
+	if balance != 5000000000 {
+		t.Errorf("GetBalance = %d, want 5000000000", balance)
+	}
+}
+
+func TestGetBalance_InvalidPubkey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"value":0}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	_, err := client.GetBalance(ctx, "invalid-key")
+	if err == nil {
+		t.Fatal("Expected error for invalid pubkey, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid public key") {
+		t.Errorf("Expected 'invalid public key' error, got: %v", err)
+	}
+}
+
+func TestGetBalance_RPCError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	_, err := client.GetBalance(ctx, "11111111111111111111111111111112")
+	if err == nil {
+		t.Fatal("Expected RPC error, got nil")
+	}
+	if !strings.Contains(err.Error(), "solana rpc error") {
+		t.Errorf("Expected solana rpc error, got: %v", err)
+	}
+}
+
+func TestGetBalanceSOL_ConvertsProperly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"value":2000000000}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	sol, err := client.GetBalanceSOL(ctx, "11111111111111111111111111111112")
+	if err != nil {
+		t.Fatalf("GetBalanceSOL returned unexpected error: %v", err)
+	}
+	if sol != 2.0 {
+		t.Errorf("GetBalanceSOL = %f, want 2.0", sol)
+	}
+}
+
+func TestGetTokenBalance_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"result": {
+				"value": [{
+					"account": {
+						"data": {
+							"parsed": {
+								"info": {
+									"tokenAmount": {
+										"amount": "5000000",
+										"decimals": 6,
+										"uiAmount": 5.0
+									}
+								}
+							}
+						}
+					}
+				}]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	rawAmount, uiAmount, err := client.GetTokenBalance(ctx, "11111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+	if err != nil {
+		t.Fatalf("GetTokenBalance returned unexpected error: %v", err)
+	}
+	if rawAmount != "5000000" {
+		t.Errorf("GetTokenBalance rawAmount = %s, want 5000000", rawAmount)
+	}
+	if uiAmount != 5.0 {
+		t.Errorf("GetTokenBalance uiAmount = %f, want 5.0", uiAmount)
+	}
+}
+
+func TestGetTokenBalance_NoTokenAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"result": {
+				"value": []
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	rawAmount, uiAmount, err := client.GetTokenBalance(ctx, "11111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+	if err != nil {
+		t.Fatalf("GetTokenBalance returned unexpected error: %v", err)
+	}
+	if rawAmount != "0" {
+		t.Errorf("GetTokenBalance rawAmount = %s, want \"0\"", rawAmount)
+	}
+	if uiAmount != 0.0 {
+		t.Errorf("GetTokenBalance uiAmount = %f, want 0.0", uiAmount)
+	}
+}
+
+func TestRequestAirdrop_Success(t *testing.T) {
+	expectedSig := "5VERv8NMhJruPvbLXbNx4HPnBiEynvyAYLmRfkaoYpBJAMwUZcW8Y8S6jN7x5gXKcV42rXFk6Y5Qq8Bh2f8RBYGS"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"` + expectedSig + `"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	sig, err := client.RequestAirdrop(ctx, "11111111111111111111111111111112", 1000000000)
+	if err != nil {
+		t.Fatalf("RequestAirdrop returned unexpected error: %v", err)
+	}
+	if sig != expectedSig {
+		t.Errorf("RequestAirdrop = %s, want %s", sig, expectedSig)
+	}
+}
+
+func TestRequestAirdrop_InvalidPubkey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":""}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx := context.Background()
+
+	_, err := client.RequestAirdrop(ctx, "invalid-key", 1000000000)
+	if err == nil {
+		t.Fatal("Expected error for invalid pubkey, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid public key") {
+		t.Errorf("Expected 'invalid public key' error, got: %v", err)
+	}
+}
+
+func TestBuildTransferMessage_Length(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("Failed to generate ed25519 key: %v", err)
+	}
+	blockhash := make([]byte, 32)
+	msg := buildTransferMessage(pub, pub, blockhash, 1000)
+
+	if len(msg) == 0 {
+		t.Fatal("buildTransferMessage returned empty message")
+	}
+
+	// Expected length: 3 (header) + 96 (3 x 32-byte keys) + 32 (blockhash)
+	// + 1 (instruction count) + 1 (program_id_index) + 1 (num_accounts)
+	// + 2 (account indices) + 1 (data_len) + 12 (instruction data) = 149
+	expectedLen := 3 + 96 + 32 + 1 + 1 + 1 + 2 + 1 + 12
+	if len(msg) != expectedLen {
+		t.Errorf("buildTransferMessage length = %d, want %d", len(msg), expectedLen)
+	}
+
+	// Verify consistency: calling with same inputs produces same output
+	msg2 := buildTransferMessage(pub, pub, blockhash, 1000)
+	if len(msg) != len(msg2) {
+		t.Errorf("buildTransferMessage not consistent: len %d vs %d", len(msg), len(msg2))
+	}
+	for i := range msg {
+		if msg[i] != msg2[i] {
+			t.Errorf("buildTransferMessage not consistent at byte %d: %d vs %d", i, msg[i], msg2[i])
+			break
+		}
+	}
+}
+
+func TestSerializeTransaction_Format(t *testing.T) {
+	sig := make([]byte, 64)
+	for i := range sig {
+		sig[i] = byte(i)
+	}
+	message := []byte("test message payload")
+
+	tx := serializeTransaction(sig, message)
+
+	// First byte should be 0x01 (1 signature)
+	if tx[0] != 0x01 {
+		t.Errorf("serializeTransaction first byte = 0x%02x, want 0x01", tx[0])
+	}
+
+	// Bytes 1..64 should be the signature
+	for i := 0; i < 64; i++ {
+		if tx[1+i] != sig[i] {
+			t.Errorf("serializeTransaction sig byte %d = 0x%02x, want 0x%02x", i, tx[1+i], sig[i])
+			break
+		}
+	}
+
+	// Remaining bytes should be the message
+	msgStart := 1 + 64
+	remaining := tx[msgStart:]
+	if string(remaining) != string(message) {
+		t.Errorf("serializeTransaction message = %q, want %q", remaining, message)
+	}
+
+	// Total length = 1 + 64 + len(message)
+	expectedLen := 1 + 64 + len(message)
+	if len(tx) != expectedLen {
+		t.Errorf("serializeTransaction length = %d, want %d", len(tx), expectedLen)
 	}
 }

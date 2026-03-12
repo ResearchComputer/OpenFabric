@@ -3,6 +3,7 @@
   "pages": [
     "security",
     "crdt-tombstones",
+    "crdt-internals",
     "benchmark",
     "performance-optimization"
   ]

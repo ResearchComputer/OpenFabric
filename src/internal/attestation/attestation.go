@@ -32,7 +32,7 @@ type BuildInfo struct {
 // Generate a keypair with:
 //
 //	go run ./internal/attestation/cmd/keygen
-const maintainerPubKeyHex = ""
+const maintainerPubKeyHex = "df45c7c4dd4450cd0f296ea6250c60e8a0dad2f459dbf5908e38977e45098d8b"
 
 var (
 	pubKey     ed25519.PublicKey
