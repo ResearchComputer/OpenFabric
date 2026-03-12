@@ -189,7 +189,7 @@ func (s *MetricsScraper) scrapeTarget(baseURL string) ([]*dto.MetricFamily, erro
 
 func parseMetrics(r io.Reader, header http.Header) ([]*dto.MetricFamily, error) {
 	mediaType := expfmt.ResponseFormat(header)
-	if mediaType == expfmt.FmtUnknown {
+	if mediaType == expfmt.NewFormat(expfmt.TypeUnknown) {
 		mediaType = expfmt.NewFormat(expfmt.TypeTextPlain)
 	}
 
