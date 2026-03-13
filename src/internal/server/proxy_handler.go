@@ -309,6 +309,19 @@ func scoreCandidates(candidateIDs []string) []weightedCandidate {
 	return result
 }
 
+// excludePeers returns the candidates slice with any peer ID present in the
+// excluded map removed. It is used to implement retry-with-peer-exclusion so
+// that a failed request is not retried against the same worker.
+func excludePeers(candidates []string, excluded map[string]bool) []string {
+	var result []string
+	for _, c := range candidates {
+		if !excluded[c] {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
 // filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
 func filterByTrust(candidates []string, minTrust int) []string {
 	var filtered []string

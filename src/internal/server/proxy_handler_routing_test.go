@@ -310,3 +310,21 @@ func TestWeightedSelectionSingleCandidate(t *testing.T) {
 		t.Fatal("should pick the only candidate")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// excludePeers
+// ---------------------------------------------------------------------------
+
+func TestExcludePeer(t *testing.T) {
+	candidates := []string{"p1", "p2", "p3"}
+	excluded := map[string]bool{"p1": true}
+	filtered := excludePeers(candidates, excluded)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2, got %d", len(filtered))
+	}
+	for _, c := range filtered {
+		if c == "p1" {
+			t.Fatal("p1 should be excluded")
+		}
+	}
+}
