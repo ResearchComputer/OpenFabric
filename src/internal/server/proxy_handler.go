@@ -322,6 +322,18 @@ func excludePeers(candidates []string, excluded map[string]bool) []string {
 	return result
 }
 
+// shouldShedLoad returns true when the head node should reject a request due to
+// insufficient worker availability. It uses probabilistic load shedding: the
+// acceptance rate is proportional to available/expected workers, so requests
+// are rejected with probability (1 - available/expected).
+func shouldShedLoad(available, expected int) bool {
+	if expected <= 0 || available >= expected {
+		return false
+	}
+	acceptRate := float64(available) / float64(expected)
+	return rand.Float64() > acceptRate
+}
+
 // filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
 func filterByTrust(candidates []string, minTrust int) []string {
 	var filtered []string
@@ -404,6 +416,17 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 				})
 				return
 			}
+		}
+	}
+
+	// Admission control: probabilistically reject requests when the number of
+	// available workers is below the configured expected count.
+	if viper.GetBool("scalability.admission_control") {
+		expected := viper.GetInt("scalability.expected_workers")
+		if expected > 0 && shouldShedLoad(len(candidates), expected) {
+			c.Header("Retry-After", "5")
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service degraded, try again later"})
+			return
 		}
 	}
 

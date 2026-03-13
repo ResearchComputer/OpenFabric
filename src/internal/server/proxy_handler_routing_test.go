@@ -328,3 +328,25 @@ func TestExcludePeer(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// shouldShedLoad (admission control)
+// ---------------------------------------------------------------------------
+
+func TestAdmissionControlAllowsWhenHealthy(t *testing.T) {
+	if shouldShedLoad(10, 10) {
+		t.Fatal("should not shed when all workers available")
+	}
+}
+
+func TestAdmissionControlShedsWhenDegraded(t *testing.T) {
+	shedCount := 0
+	for i := 0; i < 1000; i++ {
+		if shouldShedLoad(1, 100) {
+			shedCount++
+		}
+	}
+	if shedCount < 900 {
+		t.Fatalf("expected ~990 shed, got %d", shedCount)
+	}
+}
