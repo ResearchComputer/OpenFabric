@@ -67,14 +67,15 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 					break
 				}
 				host.ConnManager().TagPeer(msg.ReceivedFrom, "keep", 100)
-				// Update LastSeen when we receive a message from a peer
+				// Only update peers already in the table — new peers are
+				// added via the CRDT PutHook which carries the full record
+				// (including build attestation).
 				p, gerr := GetPeerFromTable(msg.ReceivedFrom.String())
 				if gerr != nil {
-					p = Peer{ID: msg.ReceivedFrom.String()}
-					common.Logger.Debugf("Adding peer: [%s] triggered by msg received", msg.ReceivedFrom.String())
-				} else {
-					common.Logger.Debugf("Updating peer: [%s] triggered by msg received", msg.ReceivedFrom.String())
+					common.Logger.Debugf("Ignoring msg from unknown peer [%s]; waiting for CRDT sync", msg.ReceivedFrom.String())
+					continue
 				}
+				common.Logger.Debugf("Updating peer: [%s] triggered by msg received", msg.ReceivedFrom.String())
 				p.LastSeen = time.Now().Unix()
 				p.Connected = true
 				if b, merr := json.Marshal(p); merr == nil {
@@ -104,6 +105,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		common.ReportError(err, "Error while creating pubsub broadcaster")
 		opts := crdt.DefaultOptions()
 		opts.Logger = common.Logger
+		opts.DAGSyncerTimeout = 30 * time.Second // reduced from 5min to prevent cascading blockage
 		if viper.GetBool("scalability.crdt_tuned") {
 			opts.RebroadcastInterval = viper.GetDuration("crdt.tuned_rebroadcast_interval") // default 60s
 			opts.NumWorkers = viper.GetInt("crdt.tuned_workers")                            // default 16

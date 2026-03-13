@@ -243,12 +243,10 @@ func MarkSelfAsBootstrap() {
 		store, _ := GetCRDTStore()
 		host, _ := GetP2PNode(nil)
 		key := ds.NewKey(host.ID().String())
-		peer := Peer{
-			ID:            host.ID().String(),
-			PublicAddress: viper.GetString("public-addr"),
-			Connected:     true,
-		}
-		value, err := json.Marshal(peer)
+		// Use the global myself which carries build attestation.
+		myself.PublicAddress = viper.GetString("public-addr")
+		myself.Connected = true
+		value, err := json.Marshal(myself)
 		UpdateNodeTableHook(key, value)
 		common.ReportError(err, "Error while marshalling peer")
 		if err := store.Put(ctx, key, value); err != nil {

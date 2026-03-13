@@ -1,14 +1,19 @@
 name: ocf-2-head
+seed: "0"
 port: "8092"
 tcpport: "43905"
 udpport: "59820"
 public-addr: "152.67.64.117"
 mode: full
-loglevel: info
+loglevel: debug
 cleanslate: false
 
 security:
-  require_signed_binary: true
+  require_signed_binary: false
 
 solana:
   skip_verification: true
+
+bootstrap:
+  sources:
+    - "/ip4/140.238.223.116/tcp/43905/p2p/QmafRyc9ef1KKKMfG973aApDKCEEjnhf89dZDckgUeSMbB"

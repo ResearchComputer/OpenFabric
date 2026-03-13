@@ -620,10 +620,10 @@ func (store *Datastore) handleBlock(ctx context.Context, c cid.Cid) error {
 		return fmt.Errorf("error checking for known block %s: %w", c, err)
 	}
 	if isProcessed {
-		store.logger.Debugf("%s is known. Skip walking tree", c)
 		return nil
 	}
 
+	store.logger.Debugf("handleBlock: processing NEW block %s via handleBranch", c)
 	return store.handleBranch(ctx, c, c)
 }
 
@@ -706,14 +706,19 @@ func (store *Datastore) sendNewJobs(ctx context.Context, session *sync.WaitGroup
 
 	goodDeltas := make(map[cid.Cid]struct{})
 
+	common.Logger.Debugf("sendNewJobs: fetching %d children for root=%s rootPrio=%d: %v", len(children), root, rootPrio, children)
+
 	var err error
 loop:
 	for deltaOpt := range ng.GetDeltas(cctx, children) {
 		// we abort whenever we a delta comes back in error.
 		if deltaOpt.err != nil {
+			common.Logger.Debugf("sendNewJobs: error fetching delta for root=%s: %v", root, deltaOpt.err)
 			err = fmt.Errorf("error getting delta: %w", deltaOpt.err)
 			break
 		}
+		common.Logger.Debugf("sendNewJobs: got delta for block=%s elems=%d tombs=%d prio=%d",
+			deltaOpt.node.Cid(), len(deltaOpt.delta.GetElements()), len(deltaOpt.delta.GetTombstones()), deltaOpt.delta.GetPriority())
 		goodDeltas[deltaOpt.node.Cid()] = struct{}{}
 
 		session.Add(1)

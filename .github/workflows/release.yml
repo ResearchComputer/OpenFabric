@@ -105,7 +105,7 @@ jobs:
             matrix:
                 include:
                     - dockerfile: ./docker/dispatcher/Dockerfile
-                      image: researchcomputer/ocf
+                      image: eth-easl/opentela
                       platform: linux/amd64
 
         permissions:
@@ -150,7 +150,7 @@ jobs:
               id: meta
               uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
               with:
-                  images: ghcr.io/researchcomputer/ocf
+                  images: ghcr.io/eth-easl/opentela
                   tags: |
                       type=ref,event=tag
 

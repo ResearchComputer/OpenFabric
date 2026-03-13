@@ -151,19 +151,19 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 			// On (re)connections, re-announce local services
 			go ReannounceLocalServices()
 
-			// Mark peer as connected in node table immediately
+			// Mark peer as connected in node table — only update existing peers.
+			// New peers are added via the CRDT PutHook which carries the full
+			// record (including build attestation).
 			go func(pid peer.ID) {
-				// Avoid updating self
 				if pid == host.ID() {
 					return
 				}
 				p, err := GetPeerFromTable(pid.String())
 				if err != nil {
-					p = Peer{ID: pid.String()}
-					common.Logger.Debugf("Adding peer [%s] on connect", pid.String())
-				} else {
-					common.Logger.Debugf("Updating peer [%s] on connect", pid.String())
+					common.Logger.Debugf("Ignoring connect for unknown peer [%s]; waiting for CRDT sync", pid.String())
+					return
 				}
+				common.Logger.Debugf("Updating peer [%s] on connect", pid.String())
 				p.Connected = true
 				p.LastSeen = time.Now().Unix()
 				if b, e := json.Marshal(p); e == nil {
@@ -175,17 +175,18 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		},
 		DisconnectedF: func(n network.Network, c network.Conn) {
 			common.Logger.Debugf("Disconnected from peer: %s  conns=%d", c.RemotePeer(), len(n.Conns()))
-			// Mark peer as disconnected in node table immediately
+			// Mark peer as disconnected — only update existing peers.
 			go func(pid peer.ID) {
 				if pid == host.ID() {
 					return
 				}
 				p, err := GetPeerFromTable(pid.String())
 				if err != nil {
-					p = Peer{ID: pid.String()}
+					common.Logger.Debugf("Ignoring disconnect for unknown peer [%s]", pid.String())
+					return
 				}
 				p.Connected = false
-				common.Logger.Debugf("Removing peer [%s] on disconnect", pid.String())
+				common.Logger.Debugf("Marking peer [%s] disconnected", pid.String())
 				// keep LastSeen as last known good; do not bump here
 				if b, e := json.Marshal(p); e == nil {
 					UpdateNodeTableHook(datastore.NewKey(pid.String()), b)
@@ -382,28 +383,7 @@ func isTransientNetworkError(err error) bool {
 }
 
 func newResourceManager() network.ResourceManager {
-	scalingLimits := rcmgr.ScalingLimitConfig{
-		SystemBaseLimit: rcmgr.BaseLimit{
-			Conns:           2048,
-			ConnsInbound:    1024,
-			ConnsOutbound:   1024,
-			Streams:         8192,
-			StreamsInbound:  4096,
-			StreamsOutbound: 4096,
-			Memory:          1 << 30, // 1GB
-		},
-		PeerBaseLimit: rcmgr.BaseLimit{
-			Conns:           8,
-			ConnsInbound:    4,
-			ConnsOutbound:   4,
-			Streams:         64,
-			StreamsInbound:  32,
-			StreamsOutbound: 32,
-			Memory:          16 << 20, // 16MB per peer
-		},
-	}
-	// Scale(memory int64, numFD int)
-	limiter := rcmgr.NewFixedLimiter(scalingLimits.Scale(2<<30, 1024))
+	limiter := rcmgr.NewFixedLimiter(rcmgr.DefaultLimits.AutoScale())
 	rm, err := rcmgr.NewResourceManager(limiter)
 	if err != nil {
 		common.Logger.Errorf("Failed to create resource manager, falling back to null (NO RESOURCE LIMITS): %v", err)
