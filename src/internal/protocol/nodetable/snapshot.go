@@ -126,10 +126,20 @@ func (s *NodeTableSnapshot) ApplyEvent(e NodeEvent) {
 		}
 
 	case EventSWIMSuspect:
-		if p, ok := s.Peers[e.PeerID]; ok {
-			p.Suspect = true
-			p.LastSeen = e.Timestamp
+		p, ok := s.Peers[e.PeerID]
+		if !ok {
+			// Suspect before Join: create peer in suspect state so that
+			// a later Join event correctly finds it already suspected.
+			p = &SnapshotPeer{
+				ID:        string(e.PeerID),
+				PeerID:    e.PeerID,
+				Connected: true,
+				LastSeen:  e.Timestamp,
+			}
+			s.Peers[e.PeerID] = p
 		}
+		p.Suspect = true
+		p.LastSeen = e.Timestamp
 
 	case EventSWIMDead, EventCRDTDelete:
 		delete(s.Peers, e.PeerID)
@@ -182,7 +192,7 @@ func (s *NodeTableSnapshot) RebuildIndexes() {
 	s.ByRole = make(map[string][]*SnapshotPeer)
 
 	for _, p := range s.Peers {
-		if !p.Connected {
+		if !p.Connected || p.Suspect {
 			continue
 		}
 		for _, svc := range p.Services {
