@@ -1,11 +1,4 @@
----
-name: deploy-test
-description: Use when deploying OpenTela to the two-node test environment (ocf-1, ocf-2). Builds a signed binary and deploys a two-head-node mesh with dynamic bootstrap injection.
----
-
-# Deploy to Test Environment
-
-Deploy a signed OpenTela binary to the two-head-node test mesh (ocf-1, ocf-2).
+Deploy a signed OpenTela binary to the two-head-node test mesh (ocf-1, ocf-2). Follow each step below in order.
 
 ## Hosts
 
