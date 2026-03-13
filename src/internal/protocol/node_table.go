@@ -7,6 +7,8 @@ import (
 	"opentela/internal/attestation"
 	"opentela/internal/common"
 	"opentela/internal/platform"
+	"opentela/internal/protocol/nodetable"
+	"opentela/internal/protocol/swim"
 	"opentela/internal/wallet"
 	"sync"
 	"time"
@@ -17,6 +19,108 @@ import (
 
 var dntOnce sync.Once
 var myself Peer
+
+var (
+	scalableNodeTable *nodetable.NodeTable
+	nodeTableWriter   *nodetable.Writer
+	swimOnce          sync.Once
+	swimInstance      *swim.SWIM
+)
+
+// InitScalableNodeTable sets up the new COW node table and SWIM.
+// Called from server.go when scalability.swim_enabled=true.
+func InitScalableNodeTable() {
+	swimOnce.Do(func() {
+		scalableNodeTable = nodetable.NewNodeTable()
+		nodeTableWriter = nodetable.NewWriter(scalableNodeTable)
+		nodeTableWriter.Start()
+	})
+}
+
+func GetScalableSnapshot() *nodetable.NodeTableSnapshot {
+	if scalableNodeTable == nil {
+		return nil
+	}
+	return scalableNodeTable.Snapshot()
+}
+
+func GetNodeTableWriter() *nodetable.Writer {
+	return nodeTableWriter
+}
+
+// StartSWIM initializes and runs the SWIM membership protocol.
+// Must be called after InitScalableNodeTable() and GetP2PNode().
+func StartSWIM(ctx context.Context) {
+	host, _ := GetP2PNode(nil)
+	eventCh := make(chan swim.MemberEvent, 1024)
+
+	cfg := swim.Config{
+		ProbeInterval:        viper.GetDuration("swim.probe_interval"),
+		ProbeTimeout:         viper.GetDuration("swim.probe_timeout"),
+		IndirectProbeTimeout: viper.GetDuration("swim.indirect_probe_timeout"),
+		IndirectProbes:       viper.GetInt("swim.indirect_probes"),
+		SuspectTimeout:       viper.GetDuration("swim.suspect_timeout"),
+		RetransmitMult:       viper.GetInt("swim.retransmit_mult"),
+	}
+
+	transport := swim.NewLibP2PTransport(host, cfg.ProbeTimeout)
+	swimInstance = swim.NewSWIM(host.ID(), cfg, transport, eventCh)
+	swim.RegisterHandler(host, swimInstance)
+
+	// Seed SWIM from existing libp2p connections
+	for _, conn := range host.Network().Conns() {
+		swimInstance.AddMember(conn.RemotePeer())
+	}
+
+	// Forward SWIM events to node table writer
+	go func() {
+		for ev := range eventCh {
+			var eventType nodetable.EventType
+			switch ev.Status {
+			case swim.StatusJoin:
+				eventType = nodetable.EventSWIMJoin
+			case swim.StatusAlive:
+				eventType = nodetable.EventSWIMAlive
+			case swim.StatusSuspect:
+				eventType = nodetable.EventSWIMSuspect
+			case swim.StatusDead:
+				eventType = nodetable.EventSWIMDead
+			}
+
+			ne := nodetable.NodeEvent{
+				Type:      eventType,
+				PeerID:    ev.Peer,
+				Timestamp: time.Now().Unix(),
+			}
+
+			// Parse metadata if present
+			if len(ev.Meta) > 0 {
+				var meta swim.Metadata
+				if err := meta.Unmarshal(ev.Meta); err == nil {
+					pd := &nodetable.PeerData{
+						IdentityGroups: meta.IdentityGroups,
+						ActiveRequests: meta.ActiveRequests,
+						RegionHint:     meta.RegionHint,
+					}
+					// Convert RoleType to []string
+					switch meta.Role {
+					case swim.RoleWorker:
+						pd.Role = []string{"worker"}
+					case swim.RoleHead:
+						pd.Role = []string{"head"}
+					}
+					ne.PeerData = pd
+				}
+			}
+
+			nodeTableWriter.Send(ne)
+		}
+	}()
+
+	// Run SWIM protocol
+	go swimInstance.Run(ctx)
+	common.Logger.Info("SWIM membership protocol started")
+}
 
 const (
 	CONNECTED    string = "connected"

@@ -105,6 +105,32 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetDefault("metrics.worker_metrics_path", "/metrics")
 	viper.SetDefault("metrics.max_concurrent_scrapes", 10)
 
+	// SWIM membership protocol parameters
+	viper.SetDefault("swim.probe_interval", "500ms")
+	viper.SetDefault("swim.probe_timeout", "500ms")
+	viper.SetDefault("swim.indirect_probe_timeout", "1s")
+	viper.SetDefault("swim.indirect_probes", 3)
+	viper.SetDefault("swim.suspect_timeout", "5s")
+	viper.SetDefault("swim.retransmit_mult", 3)
+	viper.SetDefault("swim.metadata_max_bytes", 256)
+
+	// Production logging mode: reduces log volume via sampling (opt-in)
+	viper.SetDefault("production_logging", false)
+
+	// Scalability feature flags (all default to false for safe rollout)
+	viper.SetDefault("scalability.swim_enabled", false)
+	viper.SetDefault("scalability.crdt_tuned", false)
+	viper.SetDefault("scalability.weighted_routing", false)
+	viper.SetDefault("scalability.admission_control", false)
+	viper.SetDefault("scalability.expected_workers", 0) // 0 = auto (disabled)
+
+	// CRDT tuned values (used when scalability.crdt_tuned=true)
+	viper.SetDefault("crdt.tuned_gossipsub_d", 10)
+	viper.SetDefault("crdt.tuned_gossipsub_dlo", 4)
+	viper.SetDefault("crdt.tuned_gossipsub_dhi", 16)
+	viper.SetDefault("crdt.tuned_rebroadcast_interval", "60s")
+	viper.SetDefault("crdt.tuned_workers", 16)
+
 	// Don't forget to read config either from cfgFile or from home directory!
 	if cfgFile != "" {
 		// Use config file from the flag.

@@ -41,9 +41,15 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		ipfs, err = ipfslite.New(ctx, store, nil, host, &dht, nil)
 		common.ReportError(err, "Error while creating ipfs lite node")
 		pubsubParams := pubsub.DefaultGossipSubParams()
-		pubsubParams.D = 128
-		pubsubParams.Dlo = 16
-		pubsubParams.Dhi = 256
+		if viper.GetBool("scalability.crdt_tuned") {
+			pubsubParams.D = viper.GetInt("crdt.tuned_gossipsub_d")     // default 10
+			pubsubParams.Dlo = viper.GetInt("crdt.tuned_gossipsub_dlo") // default 4
+			pubsubParams.Dhi = viper.GetInt("crdt.tuned_gossipsub_dhi") // default 16
+		} else {
+			pubsubParams.D = 128
+			pubsubParams.Dlo = 16
+			pubsubParams.Dhi = 256
+		}
 		psub, err := pubsub.NewGossipSub(ctx, host, pubsub.WithGossipSubParams(pubsubParams))
 		common.ReportError(err, "Error while creating pubsub")
 
@@ -77,26 +83,33 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			}
 		}()
 
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if err := topic.Publish(ctx, []byte("ping")); err != nil {
-						common.Logger.Warn("Error while publishing ping: ", err)
+		if !viper.GetBool("scalability.swim_enabled") {
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						if err := topic.Publish(ctx, []byte("ping")); err != nil {
+							common.Logger.Warn("Error while publishing ping: ", err)
+						}
+						time.Sleep(20 * time.Second)
 					}
-					time.Sleep(20 * time.Second)
 				}
-			}
-		}()
+			}()
+		}
 		psubCtx, pcancel := context.WithCancel(ctx)
 		cancelSubscriptions = pcancel
 		pubsubBC, err := crdt.NewPubSubBroadcaster(psubCtx, psub, pubsubTopic)
 		common.ReportError(err, "Error while creating pubsub broadcaster")
 		opts := crdt.DefaultOptions()
 		opts.Logger = common.Logger
-		opts.RebroadcastInterval = 5 * time.Second
+		if viper.GetBool("scalability.crdt_tuned") {
+			opts.RebroadcastInterval = viper.GetDuration("crdt.tuned_rebroadcast_interval") // default 60s
+			opts.NumWorkers = viper.GetInt("crdt.tuned_workers")                            // default 16
+		} else {
+			opts.RebroadcastInterval = 5 * time.Second
+		}
 		opts.PutHook = func(k ds.Key, v []byte) {
 			var peer Peer
 			err := json.Unmarshal(v, &peer)

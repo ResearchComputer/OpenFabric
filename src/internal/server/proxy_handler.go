@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -63,10 +64,10 @@ func getGlobalTransport() *http.Transport {
 		node, _ := protocol.GetP2PNode(nil)
 		globalTransport = &http.Transport{
 			ResponseHeaderTimeout: 10 * time.Minute, // Allow up to 10 minutes for response headers
-			IdleConnTimeout:       90 * time.Second, // Keep connections alive for 90 seconds
+			IdleConnTimeout:       60 * time.Second, // Keep connections alive for 60 seconds
 			DisableKeepAlives:     false,            // Enable keep-alives for better performance
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
+			MaxIdleConns:          512,              // Support large peer sets
+			MaxIdleConnsPerHost:   4,                // Limit per-host to avoid head-of-line blocking
 		}
 		globalTransport.RegisterProtocol("libp2p", p2phttp.NewTransport(node))
 	})
@@ -262,6 +263,78 @@ func selectCandidates(providers []protocol.Peer, serviceName string, body []byte
 	return candidates
 }
 
+// weightedCandidate pairs a peer ID with a routing score.
+type weightedCandidate struct {
+	peerID string
+	score  float64
+}
+
+// weightedRandomSelect picks a peer using weighted-random selection proportional
+// to each candidate's score. Falls back to uniform random if all scores are zero.
+func weightedRandomSelect(candidates []weightedCandidate) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0].peerID
+	}
+
+	totalWeight := 0.0
+	for _, c := range candidates {
+		totalWeight += c.score
+	}
+	if totalWeight <= 0 {
+		return candidates[rand.Intn(len(candidates))].peerID
+	}
+
+	r := rand.Float64() * totalWeight
+	cumulative := 0.0
+	for _, c := range candidates {
+		cumulative += c.score
+		if r <= cumulative {
+			return c.peerID
+		}
+	}
+	return candidates[len(candidates)-1].peerID
+}
+
+// scoreCandidates assigns scores to candidate peer IDs. Currently all peers
+// receive an equal default score of 1.0; this function is the extension point
+// for richer scoring (latency, load, trust, etc.) in the future.
+func scoreCandidates(candidateIDs []string) []weightedCandidate {
+	result := make([]weightedCandidate, 0, len(candidateIDs))
+	for _, id := range candidateIDs {
+		score := 1.0 // Default score for non-scalable mode
+		result = append(result, weightedCandidate{peerID: id, score: score})
+	}
+	return result
+}
+
+// excludePeers returns the candidates slice with any peer ID present in the
+// excluded map removed. It is used to implement retry-with-peer-exclusion so
+// that a failed request is not retried against the same worker.
+func excludePeers(candidates []string, excluded map[string]bool) []string {
+	var result []string
+	for _, c := range candidates {
+		if !excluded[c] {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// shouldShedLoad returns true when the head node should reject a request due to
+// insufficient worker availability. It uses probabilistic load shedding: the
+// acceptance rate is proportional to available/expected workers, so requests
+// are rejected with probability (1 - available/expected).
+func shouldShedLoad(available, expected int) bool {
+	if expected <= 0 || available >= expected {
+		return false
+	}
+	acceptRate := float64(available) / float64(expected)
+	return rand.Float64() > acceptRate
+}
+
 // filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
 func filterByTrust(candidates []string, minTrust int) []string {
 	var filtered []string
@@ -287,14 +360,36 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 
-	// Create a copy of the request body to preserve it for streaming
-	// We MUST read body here to inspect IdentityGroup
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	// If the caller provides X-Otela-Identity-Group, we can skip parsing the
+	// request body for routing purposes and forward it verbatim. When the
+	// header is absent we fall through to the body-parse path so that
+	// selectCandidates can extract the identity group from the JSON body.
+	identityGroupHeader := c.GetHeader("X-Otela-Identity-Group")
+
+	var bodyBytes []byte
+	if identityGroupHeader != "" {
+		// Build a synthetic JSON body from the header for selectCandidates matching.
+		// The header format is "key=value" (e.g. "model=Qwen3-8B"). selectCandidates
+		// parses the body for the identity group key, so we construct {"key":"value"}.
+		parts := strings.SplitN(identityGroupHeader, "=", 2)
+		if len(parts) == 2 {
+			obj := map[string]string{parts[0]: parts[1]}
+			if b, err := json.Marshal(obj); err == nil {
+				bodyBytes = b
+			}
+		}
+		// Body is left untouched for forwarding (reverse proxy streams from c.Request.Body).
+	} else {
+		// Create a copy of the request body to preserve it for streaming
+		// We MUST read body here to inspect IdentityGroup
+		var err error
+		bodyBytes, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	c.Request = c.Request.WithContext(ctx)
 
 	serviceName := c.Param("service")
@@ -333,14 +428,29 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		}
 	}
 
-	// randomly select one of the candidates
-	// here's where we can implement a load balancing algorithm
-	randomIndex := rand.Intn(len(candidates))
+	// Admission control: probabilistically reject requests when the number of
+	// available workers is below the configured expected count.
+	if viper.GetBool("scalability.admission_control") {
+		expected := viper.GetInt("scalability.expected_workers")
+		if expected > 0 && shouldShedLoad(len(candidates), expected) {
+			c.Header("Retry-After", "5")
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service degraded, try again later"})
+			return
+		}
+	}
+
+	// Select one of the candidates using weighted or uniform random selection.
+	var targetPeer string
+	if viper.GetBool("scalability.weighted_routing") {
+		weighted := scoreCandidates(candidates)
+		targetPeer = weightedRandomSelect(weighted)
+	} else {
+		randomIndex := rand.Intn(len(candidates))
+		targetPeer = candidates[randomIndex]
+	}
 
 	// Re-construct body for forwarding since we read it
 	// (Already done above: c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)))
-
-	targetPeer := candidates[randomIndex]
 	// replace the request path with the _service path
 	requestPath = "/v1/_service/" + serviceName + requestPath
 

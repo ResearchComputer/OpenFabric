@@ -112,7 +112,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.DefaultTransports,
 		libp2p.Identity(priv),
 		// libp2p.PrivateNetwork(psk),
-		libp2p.ResourceManager(&network.NullResourceManager{}),
+		libp2p.ResourceManager(newResourceManager()),
 		// libp2p.ConnectionManager(connmgr),
 		libp2p.NATPortMap(),
 		libp2p.ListenAddrStrings(
@@ -379,6 +379,37 @@ func isTransientNetworkError(err error) bool {
 	}
 
 	return false
+}
+
+func newResourceManager() network.ResourceManager {
+	scalingLimits := rcmgr.ScalingLimitConfig{
+		SystemBaseLimit: rcmgr.BaseLimit{
+			Conns:           2048,
+			ConnsInbound:    1024,
+			ConnsOutbound:   1024,
+			Streams:         8192,
+			StreamsInbound:  4096,
+			StreamsOutbound: 4096,
+			Memory:          1 << 30, // 1GB
+		},
+		PeerBaseLimit: rcmgr.BaseLimit{
+			Conns:           8,
+			ConnsInbound:    4,
+			ConnsOutbound:   4,
+			Streams:         64,
+			StreamsInbound:  32,
+			StreamsOutbound: 32,
+			Memory:          16 << 20, // 16MB per peer
+		},
+	}
+	// Scale(memory int64, numFD int)
+	limiter := rcmgr.NewFixedLimiter(scalingLimits.Scale(2<<30, 1024))
+	rm, err := rcmgr.NewResourceManager(limiter)
+	if err != nil {
+		common.Logger.Errorf("Failed to create resource manager, falling back to null (NO RESOURCE LIMITS): %v", err)
+		return &network.NullResourceManager{}
+	}
+	return rm
 }
 
 func newDHT(ctx context.Context, h host.Host, ds datastore.Batching) (*dualdht.DHT, error) {

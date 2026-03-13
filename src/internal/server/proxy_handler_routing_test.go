@@ -279,3 +279,74 @@ func TestSelectCandidates_ProviderNotAddedTwice(t *testing.T) {
 	assert.Len(t, got, 1)
 	assert.Equal(t, "peer-a", got[0])
 }
+
+// ---------------------------------------------------------------------------
+// weightedRandomSelect
+// ---------------------------------------------------------------------------
+
+func TestWeightedSelection(t *testing.T) {
+	candidates := []weightedCandidate{
+		{peerID: "p1", score: 0.9},
+		{peerID: "p2", score: 0.1},
+	}
+	// Run 1000 selections — p1 should be picked much more often
+	counts := map[string]int{}
+	for i := 0; i < 1000; i++ {
+		pick := weightedRandomSelect(candidates)
+		counts[pick]++
+	}
+	// p1 should get ~90% of selections
+	if counts["p1"] < 700 {
+		t.Fatalf("p1 should be picked ~90%% of time, got %d/1000", counts["p1"])
+	}
+}
+
+func TestWeightedSelectionSingleCandidate(t *testing.T) {
+	candidates := []weightedCandidate{
+		{peerID: "p1", score: 1.0},
+	}
+	pick := weightedRandomSelect(candidates)
+	if pick != "p1" {
+		t.Fatal("should pick the only candidate")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// excludePeers
+// ---------------------------------------------------------------------------
+
+func TestExcludePeer(t *testing.T) {
+	candidates := []string{"p1", "p2", "p3"}
+	excluded := map[string]bool{"p1": true}
+	filtered := excludePeers(candidates, excluded)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2, got %d", len(filtered))
+	}
+	for _, c := range filtered {
+		if c == "p1" {
+			t.Fatal("p1 should be excluded")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// shouldShedLoad (admission control)
+// ---------------------------------------------------------------------------
+
+func TestAdmissionControlAllowsWhenHealthy(t *testing.T) {
+	if shouldShedLoad(10, 10) {
+		t.Fatal("should not shed when all workers available")
+	}
+}
+
+func TestAdmissionControlShedsWhenDegraded(t *testing.T) {
+	shedCount := 0
+	for i := 0; i < 1000; i++ {
+		if shouldShedLoad(1, 100) {
+			shedCount++
+		}
+	}
+	if shedCount < 900 {
+		t.Fatalf("expected ~990 shed, got %d", shedCount)
+	}
+}

@@ -20,11 +20,21 @@ var tombstoneCompactorOnce sync.Once
 
 func startTombstoneCompactor(store *crdt.Datastore) {
 	tombstoneCompactorOnce.Do(func() {
-		retention := readDurationSetting("crdt.tombstone_retention", defaultTombstoneRetention)
-		interval := readDurationSetting("crdt.tombstone_compaction_interval", defaultTombstoneCompactionInterval)
-		batch := viper.GetInt("crdt.tombstone_compaction_batch")
-		if batch <= 0 {
-			batch = defaultTombstoneCompactionBatch
+		var retention, interval time.Duration
+		var batch int
+
+		if viper.GetBool("scalability.crdt_tuned") {
+			retention = 6 * time.Hour
+			interval = 10 * time.Minute
+			batch = 4096
+			common.Logger.Info("Tombstone compaction using tuned parameters (6h/10m/4096)")
+		} else {
+			retention = readDurationSetting("crdt.tombstone_retention", defaultTombstoneRetention)
+			interval = readDurationSetting("crdt.tombstone_compaction_interval", defaultTombstoneCompactionInterval)
+			batch = viper.GetInt("crdt.tombstone_compaction_batch")
+			if batch <= 0 {
+				batch = defaultTombstoneCompactionBatch
+			}
 		}
 
 		if retention <= 0 {
