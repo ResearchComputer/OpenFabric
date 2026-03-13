@@ -13,7 +13,17 @@ func init() {
 }
 
 func InitLogger() {
-	config := zap.NewDevelopmentConfig()
+	var config zap.Config
+	if viper.GetBool("production_logging") {
+		config = zap.NewProductionConfig()
+		config.Sampling = &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 10,
+		}
+	} else {
+		config = zap.NewDevelopmentConfig()
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	}
 	var level zapcore.Level
 	if viper.IsSet("loglevel") {
 		err := level.UnmarshalText([]byte(viper.GetString("loglevel")))
@@ -33,7 +43,6 @@ func InitLogger() {
 		config.Level.SetLevel(zapcore.InfoLevel)
 	}
 	// fmt.Printf("Log level set to %s\n", config.Level.Level().String())
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	zapLogger, err := config.Build(zap.AddStacktrace(zapcore.ErrorLevel))
 	// defer func() { _ = zapLogger.Sync() }()
 	if err != nil {

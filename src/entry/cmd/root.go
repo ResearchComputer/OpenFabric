@@ -114,6 +114,9 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetDefault("swim.retransmit_mult", 3)
 	viper.SetDefault("swim.metadata_max_bytes", 256)
 
+	// Production logging mode: reduces log volume via sampling (opt-in)
+	viper.SetDefault("production_logging", false)
+
 	// Scalability feature flags (all default to false for safe rollout)
 	viper.SetDefault("scalability.swim_enabled", false)
 	viper.SetDefault("scalability.crdt_tuned", false)
