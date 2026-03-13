@@ -344,24 +344,137 @@ func TestSWIMSelfRefutation(t *testing.T) {
 func TestSWIMHandlePingReq(t *testing.T) {
 	transport := &mockTransport{}
 	eventCh := make(chan MemberEvent, 10)
-	s := NewSWIM(peer.ID("self"), testConfig(), transport, eventCh)
+	s := NewSWIM(peer.ID("relay"), testConfig(), transport, eventCh)
 	defer s.Close()
 
 	s.AddMember(peer.ID("target"))
 
-	// Receive a PingReq: asking self to ping "target"
+	// Receive a PingReq from "requester": asking relay to ping "target"
 	s.HandleMessage(peer.ID("requester"), &Message{
 		Type:   MsgPingReq,
 		Seq:    42,
 		Target: peer.ID("target"),
 	})
 
+	// Relay should have sent a Ping to "target" with a new local seq
 	pings := transport.getPings()
 	if len(pings) != 1 {
 		t.Fatalf("expected 1 forwarded ping, got %d", len(pings))
 	}
 	if pings[0].to != peer.ID("target") {
 		t.Fatalf("forwarded ping to wrong peer: %s", pings[0].to)
+	}
+	localSeq := pings[0].seq
+
+	// Now simulate "target" responding with an Ack for the local seq
+	s.HandleMessage(peer.ID("target"), &Message{
+		Type: MsgAck,
+		Seq:  localSeq,
+	})
+
+	// Relay should have forwarded an Ack back to the original requester
+	// with the original sequence number (42)
+	acks := transport.getAcks()
+	if len(acks) != 1 {
+		t.Fatalf("expected 1 forwarded ack, got %d", len(acks))
+	}
+	if acks[0].to != peer.ID("requester") {
+		t.Fatalf("ack forwarded to wrong peer: got %s, want requester", acks[0].to)
+	}
+	if acks[0].seq != 42 {
+		t.Fatalf("ack has wrong seq: got %d, want 42", acks[0].seq)
+	}
+}
+
+func TestSWIMIndirectProbeSuccess(t *testing.T) {
+	// Full indirect probe round-trip: A probes T, times out, sends PingReq
+	// to B, B pings T, T acks, B forwards ack to A, A resolves the probe.
+	cfg := testConfig()
+	cfg.IndirectProbes = 1
+
+	transportA := &mockTransport{}
+	eventCh := make(chan MemberEvent, 10)
+	nodeA := NewSWIM(peer.ID("A"), cfg, transportA, eventCh)
+	defer nodeA.Close()
+
+	transportB := &mockTransport{}
+	nodeB := NewSWIM(peer.ID("B"), cfg, transportB, make(chan MemberEvent, 10))
+	defer nodeB.Close()
+
+	nodeA.AddMember(peer.ID("T"))
+	nodeA.AddMember(peer.ID("B"))
+	nodeB.AddMember(peer.ID("T"))
+
+	// Force A to probe T: remove B, probe, add B back
+	nodeA.RemoveMember(peer.ID("B"))
+	nodeA.probeOnce()
+	nodeA.AddMember(peer.ID("B"))
+
+	pingsA := transportA.getPings()
+	if len(pingsA) != 1 || pingsA[0].to != peer.ID("T") {
+		t.Fatalf("expected A to ping T, got %v", pingsA)
+	}
+	originalSeq := pingsA[0].seq
+
+	// Let A's direct probe time out
+	time.Sleep(cfg.ProbeTimeout + 20*time.Millisecond)
+	nodeA.processPendingProbes()
+
+	// A should have sent a PingReq to B
+	pingReqs := transportA.getPingReqs()
+	if len(pingReqs) != 1 {
+		t.Fatalf("expected 1 ping-req from A, got %d", len(pingReqs))
+	}
+	if pingReqs[0].to != peer.ID("B") {
+		t.Fatalf("ping-req sent to wrong relay: %s", pingReqs[0].to)
+	}
+
+	// Simulate B receiving the PingReq
+	nodeB.HandleMessage(peer.ID("A"), &Message{
+		Type:   MsgPingReq,
+		Seq:    pingReqs[0].seq,
+		Target: peer.ID("T"),
+	})
+
+	// B should have pinged T with a new local seq
+	pingsB := transportB.getPings()
+	if len(pingsB) != 1 || pingsB[0].to != peer.ID("T") {
+		t.Fatalf("expected B to ping T, got %v", pingsB)
+	}
+
+	// Simulate T acking B
+	nodeB.HandleMessage(peer.ID("T"), &Message{
+		Type: MsgAck,
+		Seq:  pingsB[0].seq,
+	})
+
+	// B should have forwarded an Ack to A with the original seq
+	acksB := transportB.getAcks()
+	if len(acksB) != 1 {
+		t.Fatalf("expected 1 forwarded ack from B, got %d", len(acksB))
+	}
+	if acksB[0].to != peer.ID("A") {
+		t.Fatalf("ack forwarded to wrong node: got %s, want A", acksB[0].to)
+	}
+	if acksB[0].seq != originalSeq {
+		t.Fatalf("forwarded ack has wrong seq: got %d, want %d", acksB[0].seq, originalSeq)
+	}
+
+	// Simulate A receiving the forwarded Ack
+	nodeA.HandleMessage(peer.ID("B"), &Message{
+		Type: MsgAck,
+		Seq:  originalSeq,
+	})
+
+	// A should have resolved the pending probe — T is still alive
+	nodeA.mu.RLock()
+	pending := len(nodeA.pendingProbes)
+	nodeA.mu.RUnlock()
+	if pending != 0 {
+		t.Fatalf("expected 0 pending probes after indirect ack, got %d", pending)
+	}
+	if status := nodeA.GetStatus(peer.ID("T")); status != StatusAlive {
+		t.Fatalf("expected T to be alive after indirect probe success, got %d", status)
 	}
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -372,7 +373,10 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		// parses the body for the identity group key, so we construct {"key":"value"}.
 		parts := strings.SplitN(identityGroupHeader, "=", 2)
 		if len(parts) == 2 {
-			bodyBytes = []byte(`{"` + parts[0] + `":"` + parts[1] + `"}`)
+			obj := map[string]string{parts[0]: parts[1]}
+			if b, err := json.Marshal(obj); err == nil {
+				bodyBytes = b
+			}
 		}
 		// Body is left untouched for forwarding (reverse proxy streams from c.Request.Body).
 	} else {

@@ -39,6 +39,15 @@ type pendingProbe struct {
 	deadline         time.Time
 	indirectSent     bool
 	indirectDeadline time.Time
+	startTime        time.Time // for probe duration metrics
+}
+
+// pendingRelay tracks a ping sent on behalf of another node (indirect probe).
+// When the Ack arrives for localSeq, we forward it back to the requester
+// using their original sequence number.
+type pendingRelay struct {
+	requester   peer.ID
+	originalSeq uint64
 }
 
 // SWIM implements the SWIM failure detection state machine.
@@ -54,6 +63,7 @@ type SWIM struct {
 	incarnation   uint64
 	seq           uint64
 	pendingProbes map[uint64]*pendingProbe
+	pendingRelays map[uint64]*pendingRelay // localSeq → relay info
 
 	cancel context.CancelFunc
 }
@@ -68,6 +78,7 @@ func NewSWIM(self peer.ID, config Config, transport Transport, eventCh chan<- Me
 		disseminator:  NewDisseminator(config.RetransmitMult, 2),
 		members:       make(map[peer.ID]*memberState),
 		pendingProbes: make(map[uint64]*pendingProbe),
+		pendingRelays: make(map[uint64]*pendingRelay),
 	}
 }
 
@@ -79,6 +90,7 @@ func (s *SWIM) AddMember(pid peer.ID) {
 		status: StatusAlive,
 	}
 	s.disseminator.UpdateN(len(s.members) + 1) // +1 for self
+	s.updateMemberGauge()
 }
 
 // RemoveMember removes a peer from the membership list.
@@ -88,6 +100,7 @@ func (s *SWIM) RemoveMember(pid peer.ID) {
 	delete(s.members, pid)
 	n := len(s.members) + 1
 	s.disseminator.UpdateN(n)
+	s.updateMemberGauge()
 }
 
 // GetStatus returns the current membership status of a peer, or 0 if unknown.
@@ -137,9 +150,11 @@ func (s *SWIM) probeOnce() {
 
 	s.seq++
 	seq := s.seq
+	now := time.Now()
 	s.pendingProbes[seq] = &pendingProbe{
-		target:   target,
-		deadline: time.Now().Add(s.config.ProbeTimeout),
+		target:    target,
+		deadline:  now.Add(s.config.ProbeTimeout),
+		startTime: now,
 	}
 
 	s.mu.Unlock()
@@ -196,7 +211,14 @@ func (s *SWIM) processPendingProbes() {
 			Peer:   pp.target,
 			Status: StatusSuspect,
 		})
+		if !pp.startTime.IsZero() {
+			swimProbeDuration.WithLabelValues("suspect").Observe(time.Since(pp.startTime).Seconds())
+		}
+		swimProbeTotal.WithLabelValues("suspect").Inc()
 		delete(s.pendingProbes, seq)
+	}
+	if len(toSuspect) > 0 {
+		s.updateMemberGauge()
 	}
 
 	// Prepare indirect probes
@@ -266,9 +288,13 @@ func (s *SWIM) processSuspects() {
 	for _, ev := range dead {
 		delete(s.members, ev.Peer)
 		s.disseminator.Enqueue(ev)
+		swimProbeTotal.WithLabelValues("dead").Inc()
 	}
 
 	n := len(s.members) + 1
+	if len(dead) > 0 {
+		s.updateMemberGauge()
+	}
 	s.mu.Unlock()
 
 	if len(dead) > 0 {
@@ -293,15 +319,39 @@ func (s *SWIM) HandleMessage(from peer.ID, msg *Message) {
 		_ = s.transport.SendAck(from, msg.Seq, events)
 
 	case MsgAck:
-		// Resolve pending probe
 		s.mu.Lock()
-		delete(s.pendingProbes, msg.Seq)
-		s.mu.Unlock()
+		// Check if this Ack is for a relayed indirect probe.
+		if relay, ok := s.pendingRelays[msg.Seq]; ok {
+			delete(s.pendingRelays, msg.Seq)
+			s.mu.Unlock()
+			// Forward the Ack back to the original requester with their seq.
+			events := s.disseminator.GetPiggyback(5)
+			_ = s.transport.SendAck(relay.requester, relay.originalSeq, events)
+		} else {
+			// Resolve our own pending probe and record metrics.
+			pp := s.pendingProbes[msg.Seq]
+			delete(s.pendingProbes, msg.Seq)
+			s.mu.Unlock()
+			if pp != nil && !pp.startTime.IsZero() {
+				swimProbeDuration.WithLabelValues("ack").Observe(time.Since(pp.startTime).Seconds())
+			}
+			swimProbeTotal.WithLabelValues("ack").Inc()
+		}
 
 	case MsgPingReq:
-		// Forward a ping to the target on behalf of the requester
+		// Forward a ping to the target on behalf of the requester, using a
+		// new local sequence number so that the Ack can be distinguished
+		// from our own probes and forwarded back.
+		s.mu.Lock()
+		s.seq++
+		localSeq := s.seq
+		s.pendingRelays[localSeq] = &pendingRelay{
+			requester:   from,
+			originalSeq: msg.Seq,
+		}
+		s.mu.Unlock()
 		events := s.disseminator.GetPiggyback(5)
-		_ = s.transport.SendPing(msg.Target, msg.Seq, events)
+		_ = s.transport.SendPing(msg.Target, localSeq, events)
 	}
 
 	// Process piggybacked membership events
@@ -317,6 +367,7 @@ func (s *SWIM) processEvents(events []MemberEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	changed := false
 	for _, ev := range events {
 		if ev.Peer == s.self {
 			// Self-refutation: if someone suspects or declares us dead
@@ -340,6 +391,7 @@ func (s *SWIM) processEvents(events []MemberEvent) {
 					incarnation: ev.Incarnation,
 				}
 				s.disseminator.UpdateN(len(s.members) + 1)
+				changed = true
 			}
 			continue
 		}
@@ -357,20 +409,26 @@ func (s *SWIM) processEvents(events []MemberEvent) {
 			ms.status = StatusAlive
 			ms.incarnation = ev.Incarnation
 			ms.suspectTime = time.Time{}
+			changed = true
 		case StatusSuspect:
 			ms.status = StatusSuspect
 			ms.incarnation = ev.Incarnation
 			ms.suspectTime = time.Now()
+			changed = true
 		case StatusDead:
 			delete(s.members, ev.Peer)
 			s.disseminator.UpdateN(len(s.members) + 1)
 			s.disseminator.Enqueue(ev)
+			changed = true
 			// Emit dead event
 			select {
 			case s.eventCh <- ev:
 			default:
 			}
 		}
+	}
+	if changed {
+		s.updateMemberGauge()
 	}
 }
 
@@ -395,6 +453,22 @@ func (s *SWIM) Run(ctx context.Context) {
 			s.processSuspects()
 		}
 	}
+}
+
+// updateMemberGauge sets the Prometheus gauge for membership counts.
+// Must be called with s.mu held.
+func (s *SWIM) updateMemberGauge() {
+	var alive, suspect float64
+	for _, ms := range s.members {
+		switch ms.status {
+		case StatusAlive:
+			alive++
+		case StatusSuspect:
+			suspect++
+		}
+	}
+	swimMemberCount.WithLabelValues("alive").Set(alive)
+	swimMemberCount.WithLabelValues("suspect").Set(suspect)
 }
 
 // Close stops the SWIM protocol loop.

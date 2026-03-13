@@ -1,7 +1,6 @@
 package nodetable
 
 import (
-	"sync"
 	"sync/atomic"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -50,7 +49,6 @@ type NodeTableSnapshot struct {
 // NodeTable is the scalable node table with lock-free reads.
 type NodeTable struct {
 	snapshot atomic.Pointer[NodeTableSnapshot]
-	mu       sync.Mutex // Serializes writers
 }
 
 // NewNodeTable creates a new node table with an empty snapshot.

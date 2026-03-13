@@ -24,10 +24,10 @@ endif
 
 # Dependency versions
 GOTESTSUM_VERSION ?= 0.4.2
-GOLANGCI_VERSION ?= 1.61.0
+GOLANGCI_VERSION ?= 2.6.1
 # Default flags for golangci-lint
 GOLANGCI_FLAGS ?= --timeout=5m
-LINT_PKGS ?= ./internal/common/... ./entry/... ./bin/...
+LINT_PKGS ?= ./...
 
 GOLANG_VERSION ?= 1.14
 
@@ -177,7 +177,7 @@ bin/golangci-lint: bin/golangci-lint-${GOLANGCI_VERSION}
 	@ln -sf golangci-lint-${GOLANGCI_VERSION} bin/golangci-lint
 bin/golangci-lint-${GOLANGCI_VERSION}:
 	@mkdir -p bin
-	GOBIN=$(abspath bin) go install github.com/golangci/golangci-lint/cmd/golangci-lint@v${GOLANGCI_VERSION}
+	GOBIN=$(abspath bin) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v${GOLANGCI_VERSION}
 	@mv bin/golangci-lint $@
 
 .PHONY: lint
