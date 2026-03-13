@@ -7,6 +7,7 @@ import (
 	"opentela/internal/attestation"
 	"opentela/internal/common"
 	"opentela/internal/platform"
+	"opentela/internal/protocol/nodetable"
 	"opentela/internal/wallet"
 	"sync"
 	"time"
@@ -17,6 +18,33 @@ import (
 
 var dntOnce sync.Once
 var myself Peer
+
+var (
+	scalableNodeTable *nodetable.NodeTable
+	nodeTableWriter   *nodetable.Writer
+	swimOnce          sync.Once
+)
+
+// InitScalableNodeTable sets up the new COW node table and SWIM.
+// Called from server.go when scalability.swim_enabled=true.
+func InitScalableNodeTable() {
+	swimOnce.Do(func() {
+		scalableNodeTable = nodetable.NewNodeTable()
+		nodeTableWriter = nodetable.NewWriter(scalableNodeTable)
+		nodeTableWriter.Start()
+	})
+}
+
+func GetScalableSnapshot() *nodetable.NodeTableSnapshot {
+	if scalableNodeTable == nil {
+		return nil
+	}
+	return scalableNodeTable.Snapshot()
+}
+
+func GetNodeTableWriter() *nodetable.Writer {
+	return nodeTableWriter
+}
 
 const (
 	CONNECTED    string = "connected"

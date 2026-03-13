@@ -77,19 +77,21 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			}
 		}()
 
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if err := topic.Publish(ctx, []byte("ping")); err != nil {
-						common.Logger.Warn("Error while publishing ping: ", err)
+		if !viper.GetBool("scalability.swim_enabled") {
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						if err := topic.Publish(ctx, []byte("ping")); err != nil {
+							common.Logger.Warn("Error while publishing ping: ", err)
+						}
+						time.Sleep(20 * time.Second)
 					}
-					time.Sleep(20 * time.Second)
 				}
-			}
-		}()
+			}()
+		}
 		psubCtx, pcancel := context.WithCancel(ctx)
 		cancelSubscriptions = pcancel
 		pubsubBC, err := crdt.NewPubSubBroadcaster(psubCtx, psub, pubsubTopic)
