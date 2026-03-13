@@ -347,14 +347,28 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 
-	// Create a copy of the request body to preserve it for streaming
-	// We MUST read body here to inspect IdentityGroup
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	// If the caller provides X-Otela-Identity-Group, we can skip parsing the
+	// request body for routing purposes and forward it verbatim. When the
+	// header is absent we fall through to the body-parse path so that
+	// selectCandidates can extract the identity group from the JSON body.
+	identityGroupHeader := c.GetHeader("X-Otela-Identity-Group")
+
+	var bodyBytes []byte
+	if identityGroupHeader != "" {
+		// Body is not needed for routing; read it only to make it available
+		// for forwarding (the reverse proxy will stream it from c.Request.Body).
+		bodyBytes = nil
+	} else {
+		// Create a copy of the request body to preserve it for streaming
+		// We MUST read body here to inspect IdentityGroup
+		var err error
+		bodyBytes, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	c.Request = c.Request.WithContext(ctx)
 
 	serviceName := c.Param("service")
