@@ -175,6 +175,7 @@ func StartServer() {
 
 	if viper.GetBool("scalability.swim_enabled") {
 		protocol.InitScalableNodeTable()
+		protocol.StartSWIM(ctx)
 		common.Logger.Info("Scalable node table initialized (SWIM-backed)")
 	} else {
 		go protocol.StartTicker()
