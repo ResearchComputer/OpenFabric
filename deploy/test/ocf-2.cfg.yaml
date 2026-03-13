@@ -1,5 +1,5 @@
 name: ocf-2-head
-seed: "0"
+seed: "2"
 port: "8092"
 tcpport: "43905"
 udpport: "59820"
@@ -16,4 +16,4 @@ solana:
 
 bootstrap:
   sources:
-    - "/ip4/140.238.223.116/tcp/43905/p2p/QmafRyc9ef1KKKMfG973aApDKCEEjnhf89dZDckgUeSMbB"
+    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"  # ocf-1 (seed=1)

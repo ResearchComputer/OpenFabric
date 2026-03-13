@@ -70,26 +70,26 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		common.Logger.Error("Error while creating connection manager: ", err)
 	}
 	var priv crypto.PrivKey
-	// try to load the private key from file
 	if seed == 0 {
-		// try to load from the file
+		// seed=0: always generate a fresh random identity (no persistence)
+		common.Logger.Debug("seed=0: generating ephemeral random key")
+		priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// seed!=0: use persisted key file for stable identity across restarts.
+		// On first run, generate from seed and save; subsequent runs load from file.
 		priv = loadKeyFromFile()
 		if priv == nil {
-			common.Logger.Debug("No existing private key found, generating new key")
-			r := rand.Reader
+			common.Logger.Debugf("No existing key file, generating from seed=%d", seed)
+			r := mrand.New(mrand.NewSource(seed))
 			priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, r)
 			if err != nil {
 				return nil, err
 			}
 			writeKeyToFile(priv)
 		}
-	} else {
-		r := mrand.New(mrand.NewSource(seed))
-		priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, r)
-		if err != nil {
-			return nil, err
-		}
-		writeKeyToFile(priv)
 	}
 	if err != nil {
 		return nil, err
