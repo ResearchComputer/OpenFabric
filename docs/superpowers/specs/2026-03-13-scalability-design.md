@@ -12,7 +12,7 @@ OpenTela is a decentralized distributed computing platform using libp2p, CRDT-ba
 - Node table protected by a single-slot semaphore (`tableUpdateSem = make(chan struct{}, 1)`), serializing all reads and writes including crypto verification
 - `NullResourceManager` for libp2p — no connection, stream, or memory limits
 - GossipSub D=128 with 5s CRDT rebroadcast — O(N*D) traffic scaling
-- 20s ping broadcast over PubSub to all mesh peers
+- 20s ping published via GossipSub (D=128, effectively flooding the mesh)
 
 **Additional concerns:**
 - CRDT worker pool fixed at 5 with 5-minute timeout
@@ -20,7 +20,7 @@ OpenTela is a decentralized distributed computing platform using libp2p, CRDT-ba
 - O(N) maintenance ticker every 30s with nested semaphore acquisitions
 - HTTP connection pool (100 max) undersized for 1000 targets
 - Random load balancing with no health/load awareness
-- Badger DB using default options, no tuning for write-heavy CRDT workload
+- Badger DB using default options via `go-ds-badger` wrapper, no tuning for write-heavy CRDT workload
 
 ## 2. Deployment Assumptions
 
@@ -28,6 +28,7 @@ OpenTela is a decentralized distributed computing platform using libp2p, CRDT-ba
 - **Consistency:** Sub-5s convergence (ideal), graceful degradation to 10-30s under extreme load.
 - **Backward compatibility:** Clean break. All nodes upgrade together.
 - **Churn:** Highly dynamic — nodes join and leave frequently (spot instances, volunteer computing).
+- **Network conditions:** Heterogeneous — mix of datacenter (sub-ms RTT), WAN (10-50ms RTT), and volunteer/consumer networks (50-500ms RTT, occasional spikes to seconds).
 
 ## 3. Architecture Overview
 
@@ -58,10 +59,10 @@ Three-layer separation of concerns:
 
 | Concern | Current | Proposed |
 |---------|---------|----------|
-| Liveness detection | 20s ping broadcast over PubSub to all mesh peers | SWIM protocol: probe random peer, indirect probe via k peers. O(log N) messages |
+| Liveness detection | 20s ping via GossipSub (D=128, flooding mesh) | SWIM protocol: probe random peer, indirect probe via k peers. O(log N) messages |
 | State propagation | Every peer update -> CRDT delta -> 5s rebroadcast to 128 peers | CRDT only for service metadata changes. Rebroadcast 60s |
 | Node table access | Semaphore(1), scan on every request | atomic.Pointer, copy-on-write snapshot. Readers never block |
-| Failure detection | 30s ticker iterates all peers | SWIM suspicion: suspect -> confirm dead in ~3-5s |
+| Failure detection | 30s ticker iterates all peers | SWIM suspicion: suspect -> confirm dead in ~5-10s |
 | Churn handling | Full CRDT delta per join/leave + 24h tombstone | Membership event (tiny) + CRDT put/delete only for service metadata |
 
 ### What stays the same
@@ -76,16 +77,25 @@ Three-layer separation of concerns:
 
 SWIM achieves O(log N) convergence with constant per-node message load. Each node sends the same number of messages whether there are 10 or 10,000 peers.
 
+### Bootstrap & Discovery
+
+SWIM requires an initial member list. Integration with existing discovery:
+
+1. **Initial seeding:** On startup, the node connects to bootstrap peers via DHT (existing mechanism). Once connected, it sends a SWIM `Join` message to bootstrap peers. They respond with a partial member list (random subset of known alive members).
+2. **Ongoing discovery:** Kademlia DHT continues running for peer address resolution. SWIM handles membership state (alive/suspect/dead). DHT provides "how to reach a peer"; SWIM provides "is this peer alive."
+3. **Bootstrap failure:** If all bootstrap peers are unreachable, the node retries with exponential backoff (existing `startAutoReconnect` logic). SWIM probing begins once at least one peer is known.
+4. **Member list synchronization:** On join, a new node requests a full member list from its first SWIM contact. This is a one-time transfer, not ongoing — subsequent updates arrive via piggybacked events.
+
 ### Protocol mechanics
 
 **Probe cycle** (runs every `T` interval, default 500ms):
 
 1. Pick a random peer from the known member list
 2. Send `ping` directly over a libp2p stream
-3. If ACK within timeout (200ms): peer is alive, done
+3. If ACK within timeout (configurable, default 500ms): peer is alive, done
 4. If no ACK: send `ping-req` to `k` random peers (default k=3), asking them to probe the target
-5. If no indirect ACK within timeout (500ms): mark peer as **suspect**
-6. Suspect state persists for configurable window (default 3s). If no refutation: declare **dead**, broadcast leave event
+5. If no indirect ACK within timeout (configurable, default 1s): mark peer as **suspect**
+6. Suspect state persists for configurable window (default 5s). If no refutation: declare **dead**, broadcast leave event
 
 **Dissemination via piggybacking:**
 
@@ -105,21 +115,26 @@ MemberEvent { peer PeerID, status Join|Alive|Suspect|Dead, incarnation uint64, m
 ```
 
 - `incarnation`: monotonically increasing per peer. A peer refutes `Suspect` by incrementing incarnation and broadcasting `Alive`. Prevents flapping.
-- `metadata`: carries lightweight info (role, identity group names) — enough for basic routing without waiting for full CRDT sync.
+- `metadata`: max 256 bytes. Fixed schema: `{role uint8, identityGroups []string (truncated to fit), activeRequests uint16, regionHint uint16}`. Carried on `Join` and `Alive` events only (not every probe). See Section 7 for how routing uses this data.
 
 ### Parameters
+
+All SWIM parameters are configurable via `cfg.yaml` under `swim.*`:
 
 | Parameter | Default | Rationale |
 |-----------|---------|-----------|
 | Probe interval (`T`) | 500ms | 1000 nodes * 1 probe/500ms = 2000 probes/sec network-wide |
-| Probe timeout | 200ms | Generous for datacenter; adjust for WAN |
+| Probe timeout | 500ms | Safe for WAN; reduce to 200ms in datacenter-only deployments |
+| Indirect probe timeout | 1s | Allows for two network hops |
 | Indirect probes (`k`) | 3 | Balances false-positive rate vs. message overhead |
-| Suspect timeout | 3s | Time before declaring dead. Allows refutation |
+| Suspect timeout | 5s | Tolerates GC pauses and consumer network spikes. Configurable up to 30s for high-latency environments |
 | Retransmit limit | `3 * log(N)` | ~30 retransmits at 1000 nodes |
+
+**False positive analysis:** With probe timeout=500ms, indirect timeout=1s, suspect timeout=5s, a node must be unreachable for 6.5s continuously to be declared dead. In datacenter environments, false positives are near zero. On consumer networks with occasional 1-5s spikes, the indirect probe path (k=3 different network paths) provides resilience. Only sustained unreachability triggers dead status.
 
 ### What this removes
 
-- 20s ping broadcast over PubSub (`crdt.go:80-92`)
+- 20s ping published via GossipSub (`crdt.go:80-92`)
 - 30s maintenance ticker scanning all peers (`clock.go:28-75`)
 - Per-peer reconnect attempts with 5s timeout in ticker
 - 1-minute reconnection scheduler (`clock.go:22-26`)
@@ -128,7 +143,7 @@ MemberEvent { peer PeerID, status Join|Alive|Suspect|Dead, incarnation uint64, m
 
 | Metric | Current | SWIM |
 |--------|---------|------|
-| Detection time | 30-60s | 3-5s |
+| Detection time | 30-60s | 5-10s (configurable) |
 | Messages per node per second | O(D) ~ 128 | O(1) = 2 probes/sec |
 | Total network messages/sec at 1000 nodes | ~6,400 pings + gossip | ~2,000 probes + piggyback |
 
@@ -146,7 +161,7 @@ With SWIM handling liveness, CRDT becomes focused on durable state only.
 | Hardware info (GPUs, memory) | Yes | Set on join, rarely changes |
 | Liveness/connected status | No (SWIM) | High frequency |
 | LastSeen timestamps | No (SWIM) | Derived from probe responses |
-| Load metrics | No (SWIM metadata or scraper) | Changes too frequently for CRDT |
+| Load metrics | No (SWIM metadata) | Changes too frequently for CRDT |
 
 ### Parameter changes
 
@@ -160,20 +175,44 @@ With SWIM handling liveness, CRDT becomes focused on durable state only.
 | MaxBatchDeltaSize | 1MB | 2MB | Larger batches, fewer commits |
 | Compaction batch | 512 | 4096 | High churn = many tombstones |
 | Compaction interval | 1h | 10min | Faster cleanup |
-| Tombstone retention | 24h | 2h | SWIM handles liveness; anti-entropy catches missed deletions |
+| Tombstone retention | 24h | 6h | See tombstone safety analysis below |
+
+### Tombstone retention analysis
+
+Reducing tombstone retention from 24h carries a resurrection risk: a node offline longer than the retention window may miss a deletion and re-introduce stale data via anti-entropy sync.
+
+**6h retention rationale:**
+- With SWIM handling liveness (not CRDT), the primary tombstone concern is deleted service registrations and usage records, not peer liveness.
+- A node offline for >6h in a high-churn volunteer environment is likely dead and will re-register fresh on rejoin.
+- Anti-entropy sync (see below) includes tombstone awareness to prevent resurrection.
+- Maximum safe offline duration: **6 hours**. Nodes offline longer must perform a full state reset on rejoin (request complete state from a peer, discarding local CRDT state).
+
+**Forced reset on rejoin:** If SWIM detects a node that was previously declared dead rejoining after >6h (tracked via last-known-dead timestamp), the CRDT layer triggers a full state pull from a healthy peer rather than merging local state. This prevents tombstone-expired deletions from being resurrected.
 
 ### Anti-entropy sync (new)
 
 Periodic consistency repair without gossip traffic increase:
 
 1. Every 60s, pick a random peer
-2. Exchange Bloom filter digests of current CRDT key set
-3. Each side identifies keys the other is missing
-4. Send missing deltas point-to-point
+2. Exchange **Merkle tree digests** of current CRDT key set (more precise than Bloom filters for bidirectional sync)
+3. For each differing subtree, exchange the actual keys
+4. Each side categorizes differences:
+   - Key present locally, absent remotely: check if key has a local tombstone → if yes, it was deleted, do not send. If no tombstone, send delta to remote.
+   - Key absent locally, present remotely: request delta from remote.
+   - Key present on both with different values: use CRDT merge semantics (higher priority wins).
+5. Send missing/updated deltas point-to-point (libp2p stream, not PubSub)
 
-A Bloom filter for ~10,000 keys is ~12KB at 1% false positive rate.
+**Key set enumeration:** Maintained incrementally — the Merkle tree is updated on each CRDT put/delete, not rebuilt by scanning Badger. Tree nodes are cached in memory (~32 bytes per leaf, ~32KB for 1000 keys).
+
+**Deletion handling:** The Merkle tree includes tombstone entries (with expiry timestamp). During anti-entropy, a tombstone on one side prevents the other side from re-sending the deleted key. After tombstone expiry (6h), the forced-reset-on-rejoin mechanism (above) prevents resurrection.
+
+**Wire protocol:** `/opentela/antientropy/1.0.0` over libp2p streams. Messages: `DigestExchange{treeLevel int, hashes [][]byte}`, `KeyExchange{keys []string, values [][]byte}`, `DeltaTransfer{deltas []CRDTDelta}`.
 
 ### Badger DB tuning
+
+**Note:** The current codebase uses `github.com/ipfs/go-ds-badger` wrapper (`crdt.go:38`). This wrapper exposes a subset of raw Badger options. Implementation must verify which options are available through the wrapper API. If insufficient, migrate to `go-ds-badger4` or use raw Badger directly with a thin datastore adapter.
+
+Target tuning (subject to wrapper API availability):
 
 ```go
 opts.ValueLogFileSize = 64 << 20    // 64MB (default 1GB too large)
@@ -215,6 +254,19 @@ type NodeTableSnapshot struct {
 
 **Write path:** Acquire mutex, clone current snapshot, apply events to clone, atomic store new pointer. Old snapshots GC'd when readers release them.
 
+### Snapshot clone cost analysis
+
+At 1000 peers with ~3 services each:
+- `Peers` map: 1000 entries, each pointer (8 bytes) + key (38 bytes for PeerID) = ~46KB
+- `ByService`, `ByIdentity`, `ByRole`: ~3000 total index entries, each pointer = ~24KB
+- Peer structs themselves: ~1KB each = ~1MB (shared via pointers, not deep-copied)
+
+**Total clone cost:** ~70KB of map metadata copied per write. The `Peer` structs are immutable — new writes create new `Peer` values, old snapshots retain pointers to old values. This is a shallow clone of maps, not a deep copy of all peer data.
+
+**Clone duration:** Map cloning at 70KB is <100us on modern hardware. At 10 writes/sec (batched), that's <1ms/sec spent cloning — negligible.
+
+**GC pressure:** At most 2-3 concurrent snapshots exist (current + 1-2 in-flight reader goroutines). Each snapshot's map overhead is ~70KB. Total overhead: <500KB. The `Peer` structs are shared across snapshots and only GC'd when no snapshot references them.
+
 ### Pre-built indexes
 
 | Query | Current | Proposed |
@@ -223,7 +275,9 @@ type NodeTableSnapshot struct {
 | Peers for identity group | O(N*M) scan under lock | `snapshot.ByIdentity["model=Qwen3-8B"]` — O(1) |
 | All connected peers | O(N) scan under lock | Pre-filtered at write time |
 
-### Event sources
+### Event sources and join sequence
+
+The node table receives updates from two sources:
 
 ```
 SWIM membership event              CRDT state change
@@ -242,6 +296,14 @@ SWIM membership event              CRDT state change
                           v
                 New snapshot atomically published
 ```
+
+**Node join sequence:**
+
+1. **T=0:** SWIM detects new peer via `Join` event. Node table creates entry with `status=alive` and SWIM metadata (role, identity groups from metadata field). **Peer is now routable** using SWIM metadata if identity group matches.
+2. **T=0 to T~5s:** CRDT sync begins. New peer publishes its full service registrations, attestations, hardware info via CRDT.
+3. **T~5s+:** CRDT update arrives. Node table entry updated with full service metadata, attestation verification status, hardware info. **Full routing with all signals now available.**
+
+During the gap (step 1-2), the routing layer uses SWIM metadata for identity group matching. This provides basic routing within seconds of join. The `ByIdentity` index is populated from SWIM metadata first, then enriched by CRDT data.
 
 **Event batching:** Writer goroutine drains the event channel and applies a batch every 100ms (or immediately if channel has >50 events). One clone + rebuild per batch.
 
@@ -269,8 +331,8 @@ score(peer) = w1 * availabilityScore
 |--------|--------|--------|
 | Availability | SWIM: alive=1.0, suspect=0.2 | 0.4 |
 | Latency | libp2p peerstore RTT | 0.3 |
-| Load | SWIM metadata piggyback (active request count) | 0.2 |
-| Locality | Same datacenter/region hint in metadata | 0.1 |
+| Load | SWIM metadata: `activeRequests` field (uint16, updated on Alive events) | 0.2 |
+| Locality | SWIM metadata: `regionHint` field | 0.1 |
 
 Weighted random (not strict best) avoids thundering herd.
 
@@ -282,24 +344,29 @@ Weighted random (not strict best) avoids thundering herd.
 
 No retry on 4xx or success. Max 1 retry.
 
-### Request body streaming
+### Identity group routing optimization
 
-Replace full body buffering with `io.TeeReader` — parse first few KB for model field, stream body to proxy simultaneously.
+Current code reads the full request body to extract the `model` field for identity group matching (`proxy_handler.go:292`). Two improvements:
+
+1. **Preferred: Routing hint header.** Clients set `X-Otela-Identity-Group: model=Qwen3-8B` header. If present, skip body parsing entirely. This is the recommended path for all API clients.
+2. **Fallback: Bounded body parse.** If no header is present, read first 8KB of body to find the `model` field. If not found within 8KB, fall back to URL-based routing. Document that the `model` field must appear in the first 8KB of the JSON request body for automatic routing to work.
 
 ### Connection pool scaling
 
 | Parameter | Current | Proposed |
 |-----------|---------|----------|
-| MaxIdleConns | 100 | 0 (unlimited) |
+| MaxIdleConns | 100 | 512 |
 | MaxIdleConnsPerHost | 10 | 4 |
 | IdleConnTimeout | 90s | 60s |
+
+512 idle connections provides coverage for ~500 active targets while remaining bounded. Combined with the resource manager's 2048 total connection limit (Section 8), this prevents file descriptor exhaustion.
 
 ## 8. Resource Management & Backpressure
 
 ### libp2p Resource Manager
 
 ```go
-limiter := rcmgr.NewFixedLimiter(rcmgr.ScalingLimitConfig{
+scalingLimits := rcmgr.ScalingLimitConfig{
     SystemBaseLimit: rcmgr.BaseLimit{
         Conns:           2048,
         ConnsInbound:    1024,
@@ -318,7 +385,9 @@ limiter := rcmgr.NewFixedLimiter(rcmgr.ScalingLimitConfig{
         StreamsOutbound: 32,
         Memory:          16 << 20,    // 16MB per peer
     },
-}.Scale(1024, 2 << 30))
+}
+// Scale(memory int64, numFD int) — 2GB memory budget, 1024 file descriptors
+limiter := rcmgr.NewFixedLimiter(scalingLimits.Scale(2 << 30, 1024))
 ```
 
 ### Connection pruning (tied to SWIM)
@@ -357,7 +426,35 @@ cfg.Sampling = &zap.SamplingConfig{
 }
 ```
 
-## 9. Migration & Implementation Strategy
+## 9. Observability
+
+### Metrics
+
+All metrics prefixed with `otela_` and registered with Prometheus.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `otela_swim_probe_duration_seconds` | Histogram | `result` (ack/timeout/indirect) | Probe round-trip time |
+| `otela_swim_probe_total` | Counter | `result` | Probe outcomes |
+| `otela_swim_member_count` | Gauge | `status` (alive/suspect/dead) | Current membership view |
+| `otela_swim_false_positive_total` | Counter | — | Peers declared dead that later rejoined within 60s |
+| `otela_swim_event_dissemination_rounds` | Histogram | `event_type` | Rounds to fully disseminate an event |
+| `otela_crdt_rebroadcast_size_bytes` | Histogram | — | Size of rebroadcast messages |
+| `otela_crdt_antientropy_keys_synced` | Counter | `direction` (sent/received) | Keys exchanged during anti-entropy |
+| `otela_crdt_antientropy_duration_seconds` | Histogram | — | Anti-entropy sync round-trip time |
+| `otela_crdt_tombstone_count` | Gauge | — | Current tombstone count |
+| `otela_crdt_compaction_duration_seconds` | Histogram | — | Compaction cycle duration |
+| `otela_nodetable_snapshot_clone_duration_seconds` | Histogram | — | Time to clone + rebuild snapshot |
+| `otela_nodetable_snapshot_generation` | Gauge | — | Current snapshot generation number |
+| `otela_nodetable_events_batched` | Histogram | — | Events per batch |
+| `otela_routing_peer_score` | Gauge | `peer`, `service` | Current routing score |
+| `otela_routing_retry_total` | Counter | `service`, `reason` | Retry attempts |
+| `otela_routing_candidate_pool_size` | Histogram | `service` | Candidates available per request |
+| `otela_rcmgr_connections` | Gauge | `direction` (inbound/outbound) | Active libp2p connections |
+| `otela_rcmgr_streams` | Gauge | `direction` | Active libp2p streams |
+| `otela_rcmgr_memory_bytes` | Gauge | `scope` (system/peer) | Memory used by libp2p |
+
+## 10. Migration & Implementation Strategy
 
 ### Build sequence
 
@@ -370,20 +467,22 @@ Phase 1: Foundation (no behavior change)
 Phase 2: Membership layer
   2a. SWIM protocol implementation (probe, ping-req, suspect/dead)
   2b. Event dissemination via piggyback
-  2c. Integration: SWIM events -> NodeTable.Apply()
-  2d. Remove old ping broadcaster + maintenance ticker
+  2c. Bootstrap integration (DHT seeding, member list sync)
+  2d. Integration: SWIM events -> NodeTable.Apply()
+  2e. Remove old ping broadcaster + maintenance ticker
 
 Phase 3: CRDT tuning
   3a. Reduce GossipSub parameters (D=8-12)
   3b. Increase rebroadcast interval to 60s
   3c. Strip liveness data out of CRDT (status, LastSeen)
-  3d. Bloom filter anti-entropy sync
+  3d. Merkle-tree anti-entropy sync with tombstone awareness
   3e. PutHook optimization (batch verify, cache attestations)
+  3f. Forced state reset on rejoin after >6h offline
 
 Phase 4: Routing improvements
   4a. Weighted load balancing
   4b. Request retry with peer exclusion
-  4c. Request body streaming (TeeReader)
+  4c. X-Otela-Identity-Group header + bounded body parse fallback
   4d. Connection pool scaling
   4e. Head node admission control
 
@@ -391,11 +490,31 @@ Phase 5: Hardening
   5a. Connection pruning tied to SWIM
   5b. Goroutine budgets / worker pools
   5c. Production logging config
-  5d. Metrics additions
+  5d. Metrics instrumentation (see Section 9)
   5e. Load testing at 100 / 500 / 1000 nodes
 ```
 
 **Phases 1 and 4 can be developed in parallel.** Same for Phases 3 and 4.
+
+### Feature flags & rollback
+
+Each phase is gated by a config flag under `scalability.*`:
+
+| Flag | Default | Controls |
+|------|---------|----------|
+| `scalability.swim_enabled` | false | Phase 2: SWIM membership (when false, falls back to existing ping+ticker) |
+| `scalability.crdt_tuned` | false | Phase 3: Tuned CRDT params (when false, uses current D=128, 5s rebroadcast) |
+| `scalability.weighted_routing` | false | Phase 4: Weighted LB (when false, uses random selection) |
+| `scalability.admission_control` | false | Phase 4e: Head node load shedding |
+
+**Rollback procedure:** Set the relevant flag to `false` and restart. The old code paths remain until the next major release after scale testing confirms stability. Feature flags are removed once the phase is validated at target scale.
+
+**Phase gate criteria:** Each phase must pass before enabling the next:
+- Phase 1: All existing tests pass, no performance regression on 10-node testbed
+- Phase 2: SWIM converges in <10s at 100 simulated nodes, false positive rate <0.1%
+- Phase 3: CRDT state converges within 120s at 100 nodes, no data loss after 6h offline+rejoin
+- Phase 4: P99 routing latency <5ms at 100 nodes under load
+- Phase 5: Stable for 24h at 1000 simulated nodes
 
 ### Testing strategy
 
@@ -410,10 +529,10 @@ Phase 5: Hardening
 
 | Metric | Current (projected) | After |
 |--------|---------------------|-------|
-| Liveness messages/sec (network) | ~6,400 (ping broadcast) | ~2,000 (SWIM probes) |
-| Failure detection time | 30-60s | 3-5s |
-| CRDT messages/sec | ~200K (5s rebroadcast * D=128) | ~500 (60s rebroadcast * D=10) |
-| Node table read latency | Unbounded (semaphore) | <100ns (atomic pointer load) |
+| Liveness messages/sec (network) | ~6,400 (N=1000 * D=128 / 20s) | ~2,000 (SWIM probes, 1 probe/500ms/node) |
+| Failure detection time | 30-60s | 5-10s |
+| CRDT messages/sec | ~25,600 (N=1000 * D=128 / 5s rebroadcast) | ~167 (N=1000 * D=10 / 60s rebroadcast) |
+| Node table read latency | Unbounded (semaphore contention) | <100ns (atomic pointer load) |
 | Routing lookup | O(N*M) scan under lock | O(1) index lookup, lock-free |
-| Memory per node | Unbounded | Capped at configured limits |
+| Memory per node | Unbounded (no resource limits) | Capped at configured limits |
 | Tombstone backlog | Grows unbounded under churn | Cleared every 10min, batch=4096 |
