@@ -1,0 +1,14 @@
+name: ocf-2-head
+port: "8092"
+tcpport: "43905"
+udpport: "59820"
+public-addr: "152.67.64.117"
+mode: full
+loglevel: info
+cleanslate: false
+
+security:
+  require_signed_binary: true
+
+solana:
+  skip_verification: true
