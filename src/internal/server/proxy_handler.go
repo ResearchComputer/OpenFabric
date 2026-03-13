@@ -63,10 +63,10 @@ func getGlobalTransport() *http.Transport {
 		node, _ := protocol.GetP2PNode(nil)
 		globalTransport = &http.Transport{
 			ResponseHeaderTimeout: 10 * time.Minute, // Allow up to 10 minutes for response headers
-			IdleConnTimeout:       90 * time.Second, // Keep connections alive for 90 seconds
+			IdleConnTimeout:       60 * time.Second, // Keep connections alive for 60 seconds
 			DisableKeepAlives:     false,            // Enable keep-alives for better performance
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
+			MaxIdleConns:          512,              // Support large peer sets
+			MaxIdleConnsPerHost:   4,                // Limit per-host to avoid head-of-line blocking
 		}
 		globalTransport.RegisterProtocol("libp2p", p2phttp.NewTransport(node))
 	})
