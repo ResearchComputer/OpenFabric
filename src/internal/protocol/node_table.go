@@ -88,8 +88,9 @@ func StartSWIM(ctx context.Context) {
 			}
 
 			ne := nodetable.NodeEvent{
-				Type:   eventType,
-				PeerID: ev.Peer,
+				Type:      eventType,
+				PeerID:    ev.Peer,
+				Timestamp: time.Now().Unix(),
 			}
 
 			// Parse metadata if present

@@ -89,10 +89,14 @@ func (m *Metadata) Marshal() ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > MaxMetadataBytes {
-		// Truncate identity groups to fit
-		for len(data) > MaxMetadataBytes && len(m.IdentityGroups) > 1 {
-			m.IdentityGroups = m.IdentityGroups[:len(m.IdentityGroups)-1]
-			data, err = json.Marshal(m)
+		// Truncate identity groups on a copy to avoid mutating the receiver.
+		igs := make([]string, len(m.IdentityGroups))
+		copy(igs, m.IdentityGroups)
+		tmp := *m
+		tmp.IdentityGroups = igs
+		for len(data) > MaxMetadataBytes && len(tmp.IdentityGroups) > 1 {
+			tmp.IdentityGroups = tmp.IdentityGroups[:len(tmp.IdentityGroups)-1]
+			data, err = json.Marshal(&tmp)
 			if err != nil {
 				return nil, err
 			}

@@ -367,9 +367,14 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 	var bodyBytes []byte
 	if identityGroupHeader != "" {
-		// Body is not needed for routing; read it only to make it available
-		// for forwarding (the reverse proxy will stream it from c.Request.Body).
-		bodyBytes = nil
+		// Build a synthetic JSON body from the header for selectCandidates matching.
+		// The header format is "key=value" (e.g. "model=Qwen3-8B"). selectCandidates
+		// parses the body for the identity group key, so we construct {"key":"value"}.
+		parts := strings.SplitN(identityGroupHeader, "=", 2)
+		if len(parts) == 2 {
+			bodyBytes = []byte(`{"` + parts[0] + `":"` + parts[1] + `"}`)
+		}
+		// Body is left untouched for forwarding (reverse proxy streams from c.Request.Body).
 	} else {
 		// Create a copy of the request body to preserve it for streaming
 		// We MUST read body here to inspect IdentityGroup
