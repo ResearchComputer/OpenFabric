@@ -279,3 +279,34 @@ func TestSelectCandidates_ProviderNotAddedTwice(t *testing.T) {
 	assert.Len(t, got, 1)
 	assert.Equal(t, "peer-a", got[0])
 }
+
+// ---------------------------------------------------------------------------
+// weightedRandomSelect
+// ---------------------------------------------------------------------------
+
+func TestWeightedSelection(t *testing.T) {
+	candidates := []weightedCandidate{
+		{peerID: "p1", score: 0.9},
+		{peerID: "p2", score: 0.1},
+	}
+	// Run 1000 selections — p1 should be picked much more often
+	counts := map[string]int{}
+	for i := 0; i < 1000; i++ {
+		pick := weightedRandomSelect(candidates)
+		counts[pick]++
+	}
+	// p1 should get ~90% of selections
+	if counts["p1"] < 700 {
+		t.Fatalf("p1 should be picked ~90%% of time, got %d/1000", counts["p1"])
+	}
+}
+
+func TestWeightedSelectionSingleCandidate(t *testing.T) {
+	candidates := []weightedCandidate{
+		{peerID: "p1", score: 1.0},
+	}
+	pick := weightedRandomSelect(candidates)
+	if pick != "p1" {
+		t.Fatal("should pick the only candidate")
+	}
+}

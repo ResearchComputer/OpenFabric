@@ -262,6 +262,53 @@ func selectCandidates(providers []protocol.Peer, serviceName string, body []byte
 	return candidates
 }
 
+// weightedCandidate pairs a peer ID with a routing score.
+type weightedCandidate struct {
+	peerID string
+	score  float64
+}
+
+// weightedRandomSelect picks a peer using weighted-random selection proportional
+// to each candidate's score. Falls back to uniform random if all scores are zero.
+func weightedRandomSelect(candidates []weightedCandidate) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0].peerID
+	}
+
+	totalWeight := 0.0
+	for _, c := range candidates {
+		totalWeight += c.score
+	}
+	if totalWeight <= 0 {
+		return candidates[rand.Intn(len(candidates))].peerID
+	}
+
+	r := rand.Float64() * totalWeight
+	cumulative := 0.0
+	for _, c := range candidates {
+		cumulative += c.score
+		if r <= cumulative {
+			return c.peerID
+		}
+	}
+	return candidates[len(candidates)-1].peerID
+}
+
+// scoreCandidates assigns scores to candidate peer IDs. Currently all peers
+// receive an equal default score of 1.0; this function is the extension point
+// for richer scoring (latency, load, trust, etc.) in the future.
+func scoreCandidates(candidateIDs []string) []weightedCandidate {
+	result := make([]weightedCandidate, 0, len(candidateIDs))
+	for _, id := range candidateIDs {
+		score := 1.0 // Default score for non-scalable mode
+		result = append(result, weightedCandidate{peerID: id, score: score})
+	}
+	return result
+}
+
 // filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
 func filterByTrust(candidates []string, minTrust int) []string {
 	var filtered []string
@@ -333,14 +380,18 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		}
 	}
 
-	// randomly select one of the candidates
-	// here's where we can implement a load balancing algorithm
-	randomIndex := rand.Intn(len(candidates))
+	// Select one of the candidates using weighted or uniform random selection.
+	var targetPeer string
+	if viper.GetBool("scalability.weighted_routing") {
+		weighted := scoreCandidates(candidates)
+		targetPeer = weightedRandomSelect(weighted)
+	} else {
+		randomIndex := rand.Intn(len(candidates))
+		targetPeer = candidates[randomIndex]
+	}
 
 	// Re-construct body for forwarding since we read it
 	// (Already done above: c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)))
-
-	targetPeer := candidates[randomIndex]
 	// replace the request path with the _service path
 	requestPath = "/v1/_service/" + serviceName + requestPath
 
