@@ -3,7 +3,36 @@ package nodetable
 import (
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+var (
+	snapshotCloneDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "otela_nodetable_snapshot_clone_duration_seconds",
+			Help:    "Time to clone and rebuild node table snapshot",
+			Buckets: prometheus.DefBuckets,
+		},
+	)
+	snapshotGeneration = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "otela_nodetable_snapshot_generation",
+			Help: "Current snapshot generation number",
+		},
+	)
+	eventsBatched = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "otela_nodetable_events_batched",
+			Help:    "Number of events per batch",
+			Buckets: []float64{1, 5, 10, 25, 50, 100, 250, 500},
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(snapshotCloneDuration, snapshotGeneration, eventsBatched)
+}
 
 const (
 	batchInterval = 100 * time.Millisecond
@@ -92,6 +121,7 @@ func (w *Writer) drainAndApply(batch []NodeEvent) {
 }
 
 func (w *Writer) applyBatch(batch []NodeEvent) {
+	start := time.Now()
 	current := w.nt.Snapshot()
 	next := current.Clone()
 	for _, e := range batch {
@@ -100,4 +130,8 @@ func (w *Writer) applyBatch(batch []NodeEvent) {
 	next.RebuildIndexes()
 	next.Generation++
 	w.nt.Store(next)
+
+	snapshotCloneDuration.Observe(time.Since(start).Seconds())
+	snapshotGeneration.Set(float64(next.Generation))
+	eventsBatched.Observe(float64(len(batch)))
 }
