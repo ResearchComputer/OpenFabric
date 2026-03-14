@@ -47,18 +47,6 @@ const api = {
 // ============================================================================
 
 /**
- * Escape a string for safe insertion into HTML.
- */
-function escapeHTML(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-}
-
-/**
  * Truncate a peer ID for display.
  * If longer than 16 chars, show first 8 + "…" + last 4.
  */
@@ -157,15 +145,16 @@ function renderStats(stats, systemStats) {
     memVal.textContent = '\u2014';
   }
 
-  // GPU
+  // GPU — hide the card entirely when no GPU data
+  const gpuCard = document.getElementById('stat-gpu');
   const gpuVal = document.querySelector('#stat-gpu .stat-value');
   if (systemStats?.gpu?.length > 0) {
+    gpuCard.classList.remove('hidden');
     const g = systemStats.gpu[0];
-    // Strip common vendor prefix for brevity
     const name = (g.name ?? '').replace(/^NVIDIA\s+/, '');
     gpuVal.textContent = `${name} ${g.temperature}\u00B0C`;
   } else {
-    gpuVal.textContent = 'N/A';
+    gpuCard.classList.add('hidden');
   }
 }
 
@@ -336,11 +325,18 @@ function renderPeers(data) {
     empty.classList.add('hidden');
     data.peers.forEach((peer) => {
       const li = document.createElement('li');
+      li.className = 'flex items-center justify-between';
       const id = typeof peer === 'string' ? peer : (peer.id ?? peer.peer_id ?? JSON.stringify(peer));
       const span = document.createElement('span');
       span.title = id;
       span.textContent = truncateId(id);
       li.appendChild(span);
+      // Status badge
+      const status = typeof peer === 'object' ? (peer.status ?? peer.connectedness ?? 'connected') : 'connected';
+      const badge = document.createElement('span');
+      badge.className = `badge ${statusBadgeClass(status)}`;
+      badge.textContent = status;
+      li.appendChild(badge);
       list.appendChild(li);
     });
   } else {
@@ -360,8 +356,14 @@ function renderBootstraps(data) {
     empty.classList.add('hidden');
     data.bootstraps.forEach((addr) => {
       const li = document.createElement('li');
-      li.textContent = addr;
-      li.title = addr;
+      li.className = 'flex items-center justify-between';
+      const span = document.createElement('span');
+      span.textContent = addr;
+      span.title = addr;
+      li.appendChild(span);
+      const dot = document.createElement('span');
+      dot.className = 'health-dot healthy';
+      li.appendChild(dot);
       list.appendChild(li);
     });
   } else {
