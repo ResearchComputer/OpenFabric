@@ -197,10 +197,19 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		},
 	})
 
-	// Start a background auto-reconnector that watches connectivity
-	go startAutoReconnect(ctx, host)
+	// NOTE: auto-reconnect is started later by StartAutoReconnect() after
+	// bitswap/CRDT are initialized, so that connection notifications reach
+	// bitswap's peer manager.
 
 	return host, nil
+}
+
+// StartAutoReconnect launches the background auto-reconnector. Must be called
+// AFTER bitswap/CRDT are initialized so that connection events reach bitswap.
+func StartAutoReconnect() {
+	host, _ := GetP2PNode(nil)
+	ctx := context.Background()
+	go startAutoReconnect(ctx, host)
 }
 
 // startAutoReconnect periodically checks if we lost connectivity and attempts to reconnect to bootstraps with backoff.

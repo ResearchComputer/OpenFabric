@@ -697,10 +697,14 @@ func (store *Datastore) sendNewJobs(ctx context.Context, session *sync.WaitGroup
 
 	// Special case for root
 	if rootPrio == 0 {
+		fetchStart := time.Now()
 		prio, err := ng.GetPriority(cctx, children[0])
+		fetchDur := time.Since(fetchStart)
 		if err != nil {
+			common.Logger.Debugf("sendNewJobs: root priority fetch failed for %s after %s: %s", children[0], fetchDur, err)
 			return fmt.Errorf("error getting root delta priority: %w", err)
 		}
+		common.Logger.Debugf("sendNewJobs: root priority fetch OK for %s in %s (prio=%d)", children[0], fetchDur, prio)
 		rootPrio = prio
 	}
 

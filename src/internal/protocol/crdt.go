@@ -146,11 +146,25 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 
 		crdtStore, err = crdt.New(store, ds.NewKey(pubsubKey), ipfs, pubsubBC, opts)
 		common.ReportError(err, "Error while creating crdt store")
+
+		// Close any pre-existing connections so that when we re-bootstrap,
+		// bitswap's notification handler (registered inside crdt.New → bitswap.New)
+		// will fire and learn about the peers.
+		for _, p := range host.Network().Peers() {
+			if p == host.ID() {
+				continue
+			}
+			_ = host.Network().ClosePeer(p)
+		}
+
 		addsInfo, err := peer.AddrInfosFromP2pAddrs(getDefaultBootstrapPeers(nil, mode)...)
 		common.ReportError(err, "Error while getting bootstrap peers")
 		ipfs.Bootstrap(addsInfo)
 		common.ReportError(err, "Error while starting ticker")
-		// h.ConnManager().TagPeer(inf.ID, "keep", 100)
+
+		// Now start auto-reconnect — bitswap is ready to receive connection events.
+		StartAutoReconnect()
+
 		startTombstoneCompactor(crdtStore)
 	})
 	return crdtStore, cancelSubscriptions
