@@ -42,8 +42,10 @@ func StartTicker() {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					addrInfo := libpeer.AddrInfo{ID: peer_id, Addrs: host.Peerstore().Addrs(peer_id)}
 					if len(addrInfo.Addrs) == 0 {
-						p.Connected = false
-						disconnected++
+						// No known addresses — peer may only be mesh-reachable
+						// via relay. Preserve Connected set by PubSub handler.
+						cancel()
+						continue
 					} else if err := host.Connect(ctx, addrInfo); err != nil {
 						common.Logger.With("err", err).Warnf("Failed to dial peer %s; marking disconnected", peer_id)
 						p.Connected = false
@@ -89,9 +91,13 @@ func StartTicker() {
 		if len(connectedPeers) == 0 {
 			common.Logger.Warnf("Low connection count detected: only %d connected peers", len(connectedPeers))
 			Reconnect()
-			// best-effort re-announce our services after trying to reconnect
-			ReannounceLocalServices()
 		}
+
+		// Always re-announce services so that after DAG sync the
+		// service data gets a high enough CRDT priority to propagate.
+		// Without this, a fresh node's initial low-priority Put is
+		// never superseded once the DAG catches up.
+		ReannounceLocalServices()
 
 		// Cleanup: remove peers that have been disconnected for a long time
 		// Define staleness threshold

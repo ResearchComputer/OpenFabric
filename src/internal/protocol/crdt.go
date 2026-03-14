@@ -67,19 +67,22 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 					break
 				}
 				host.ConnManager().TagPeer(msg.ReceivedFrom, "keep", 100)
+				// Use message author (original publisher), not ReceivedFrom
+				// (forwarding peer). In relay topologies GetFrom() is the worker.
+				authorID := msg.GetFrom()
 				// Only update peers already in the table — new peers are
 				// added via the CRDT PutHook which carries the full record
 				// (including build attestation).
-				p, gerr := GetPeerFromTable(msg.ReceivedFrom.String())
+				p, gerr := GetPeerFromTable(authorID.String())
 				if gerr != nil {
-					common.Logger.Debugf("Ignoring msg from unknown peer [%s]; waiting for CRDT sync", msg.ReceivedFrom.String())
+					common.Logger.Debugf("Ignoring msg from unknown peer [%s]; waiting for CRDT sync", authorID.String())
 					continue
 				}
-				common.Logger.Debugf("Updating peer: [%s] triggered by msg received", msg.ReceivedFrom.String())
+				common.Logger.Debugf("Updating peer: [%s] triggered by msg received", authorID.String())
 				p.LastSeen = time.Now().Unix()
 				p.Connected = true
 				if b, merr := json.Marshal(p); merr == nil {
-					UpdateNodeTableHook(ds.NewKey(msg.ReceivedFrom.String()), b)
+					UpdateNodeTableHook(ds.NewKey(authorID.String()), b)
 				}
 			}
 		}()

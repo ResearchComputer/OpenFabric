@@ -885,12 +885,28 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 
 		if isHead {
 			// reached one of the current heads. Replace it with
-			// the tip of this branch
-			err := store.heads.Replace(ctx, child, root, rootPrio)
-			if err != nil {
-				return nil, fmt.Errorf("error replacing head: %s->%s: %w", child, root, err)
+			// the tip of this branch, but only if the new height
+			// is at least as high. Never lower the head height —
+			// doing so causes priority regression where later
+			// store.Put() deltas get a lower priority than earlier
+			// ones, causing CRDT setValue() to silently drop them.
+			_, existingHeight, _ := store.heads.IsHead(ctx, child)
+			if rootPrio >= existingHeight {
+				err := store.heads.Replace(ctx, child, root, rootPrio)
+				if err != nil {
+					return nil, fmt.Errorf("error replacing head: %s->%s: %w", child, root, err)
+				}
+				addedAsHead = true
+			} else {
+				// The existing head is at a higher height; keep it
+				// and add the new root as an additional head.
+				if !addedAsHead {
+					if err := store.heads.Add(ctx, root, rootPrio); err != nil {
+						return nil, fmt.Errorf("error adding head: %s: %w", root, err)
+					}
+					addedAsHead = true
+				}
 			}
-			addedAsHead = true
 
 			// If this head was already processed, continue this
 			// protects the case when something is a head but was

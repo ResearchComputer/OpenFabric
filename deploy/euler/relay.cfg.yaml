@@ -1,0 +1,19 @@
+name: euler-relay
+seed: "99"
+port: "18092"
+tcpport: "18905"
+udpport: "18820"
+mode: full
+loglevel: debug
+cleanslate: true
+
+security:
+  require_signed_binary: false
+
+solana:
+  skip_verification: true
+
+bootstrap:
+  sources:
+    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"  # ocf-1
+    - "/ip4/152.67.64.117/tcp/43905/p2p/Qmf8AY2HccRM9uLrR9qQdjwBM46qstT7dEFmfFX6RWD4AA"  # ocf-2
