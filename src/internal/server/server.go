@@ -9,6 +9,7 @@ import (
 	"opentela/internal/protocol"
 	solanaclient "opentela/internal/solana"
 	"opentela/internal/wallet"
+	"opentela/plugins/webui"
 	"os/signal"
 	"syscall"
 	"time"
@@ -172,6 +173,14 @@ func StartServer() {
 
 	// Prometheus metrics
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Web UI dashboard
+	staticFS, err := webui.Static()
+	if err != nil {
+		common.Logger.Warn("Failed to load webui assets: %v", err)
+	} else {
+		r.StaticFS("/ui", http.FS(staticFS))
+	}
 
 	if viper.GetBool("scalability.swim_enabled") {
 		protocol.InitScalableNodeTable()
