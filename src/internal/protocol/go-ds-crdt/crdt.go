@@ -710,7 +710,15 @@ func (store *Datastore) sendNewJobs(ctx context.Context, session *sync.WaitGroup
 
 	goodDeltas := make(map[cid.Cid]struct{})
 
-	common.Logger.Debugf("sendNewJobs: fetching %d children for root=%s rootPrio=%d: %v", len(children), root, rootPrio, children)
+	const maxChildrenPreview = 5
+	previewChildren := children
+	if len(children) > maxChildrenPreview {
+		previewChildren = children[:maxChildrenPreview]
+	}
+	common.Logger.Debugf(
+		"sendNewJobs: fetching %d children for root=%s rootPrio=%d (showing first %d children): %v",
+		len(children), root, rootPrio, len(previewChildren), previewChildren,
+	)
 
 	var err error
 loop:
