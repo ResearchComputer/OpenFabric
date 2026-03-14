@@ -881,7 +881,7 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 	for _, l := range links {
 		child := l.Cid
 
-		isHead, _, err := store.heads.IsHead(ctx, child)
+		isHead, existingHeight, err := store.heads.IsHead(ctx, child)
 		if err != nil {
 			return nil, fmt.Errorf("error checking if %s is head: %w", child, err)
 		}
@@ -898,7 +898,6 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 			// doing so causes priority regression where later
 			// store.Put() deltas get a lower priority than earlier
 			// ones, causing CRDT setValue() to silently drop them.
-			_, existingHeight, _ := store.heads.IsHead(ctx, child)
 			if rootPrio >= existingHeight {
 				err := store.heads.Replace(ctx, child, root, rootPrio)
 				if err != nil {
