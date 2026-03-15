@@ -6,8 +6,8 @@
 
 set -euo pipefail
 
-EULER_USER="xiayao"
-EULER_HOST="euler.ethz.ch"
+EULER_USER="${EULER_USER:-xiayao}"
+EULER_HOST="${EULER_HOST:-euler.ethz.ch}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 

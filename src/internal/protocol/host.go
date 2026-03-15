@@ -36,6 +36,7 @@ import (
 var P2PNode *host.Host
 var ddht *dualdht.DHT
 var hostOnce sync.Once
+var autoReconnectOnce sync.Once
 var MyID string
 
 const (
@@ -206,10 +207,12 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 
 // StartAutoReconnect launches the background auto-reconnector. Must be called
 // AFTER bitswap/CRDT are initialized so that connection events reach bitswap.
-func StartAutoReconnect() {
-	host, _ := GetP2PNode(nil)
-	ctx := context.Background()
-	go startAutoReconnect(ctx, host)
+// The provided context controls the lifetime of the auto-reconnect loop.
+func StartAutoReconnect(ctx context.Context) {
+	autoReconnectOnce.Do(func() {
+		host, _ := GetP2PNode(nil)
+		go startAutoReconnect(ctx, host)
+	})
 }
 
 // startAutoReconnect periodically checks if we lost connectivity and attempts to reconnect to bootstraps with backoff.

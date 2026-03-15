@@ -710,7 +710,15 @@ func (store *Datastore) sendNewJobs(ctx context.Context, session *sync.WaitGroup
 
 	goodDeltas := make(map[cid.Cid]struct{})
 
-	common.Logger.Debugf("sendNewJobs: fetching %d children for root=%s rootPrio=%d: %v", len(children), root, rootPrio, children)
+	const maxChildrenPreview = 5
+	previewChildren := children
+	if len(children) > maxChildrenPreview {
+		previewChildren = children[:maxChildrenPreview]
+	}
+	common.Logger.Debugf(
+		"sendNewJobs: fetching %d children for root=%s rootPrio=%d (showing first %d children): %v",
+		len(children), root, rootPrio, len(previewChildren), previewChildren,
+	)
 
 	var err error
 loop:
@@ -873,7 +881,7 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 	for _, l := range links {
 		child := l.Cid
 
-		isHead, _, err := store.heads.IsHead(ctx, child)
+		isHead, existingHeight, err := store.heads.IsHead(ctx, child)
 		if err != nil {
 			return nil, fmt.Errorf("error checking if %s is head: %w", child, err)
 		}
@@ -890,7 +898,6 @@ func (store *Datastore) processNode(ctx context.Context, ng *crdtNodeGetter, roo
 			// doing so causes priority regression where later
 			// store.Put() deltas get a lower priority than earlier
 			// ones, causing CRDT setValue() to silently drop them.
-			_, existingHeight, _ := store.heads.IsHead(ctx, child)
 			if rootPrio >= existingHeight {
 				err := store.heads.Replace(ctx, child, root, rootPrio)
 				if err != nil {

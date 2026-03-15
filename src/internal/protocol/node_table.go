@@ -243,6 +243,10 @@ func MarkSelfAsBootstrap() {
 		store, _ := GetCRDTStore()
 		host, _ := GetP2PNode(nil)
 		key := ds.NewKey(host.ID().String())
+		// Ensure the global `myself` has at least a stable ID before marshalling.
+		if myself.ID == "" {
+			myself.ID = host.ID().String()
+		}
 		// Use the global myself which carries build attestation.
 		myself.PublicAddress = viper.GetString("public-addr")
 		myself.Connected = true
