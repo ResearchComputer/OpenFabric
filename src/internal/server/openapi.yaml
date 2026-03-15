@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
-  title: OpenComputeFramework API
-  description: API documentation for the OpenComputeFramework service registry and P2P network
+  title: OpenTela API
+  description: API documentation for the OpenTela service registry and P2P network
   version: 1.0.0
 servers:
   - url: http://localhost:8092
     description: Local development server
-  - url: https://api.ocf.example.com
+  - url: https://api.otela.example.com
     description: Production server
 
 paths:

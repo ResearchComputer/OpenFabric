@@ -44,7 +44,7 @@ Consumer Wallet ──(OTELA tokens)──> Provider Wallet
 
 - **Name:** OpenTela
 - **Symbol:** OTELA
-- **Mint Address:** `BAYyKYocgUgWHcs25Sar15x9XY9iYdtnKurBoVXJD1bU`
+- **Mint Address:** `EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR`
 - **Decimals:** 9
 - **Status:** Already deployed
 
@@ -207,13 +207,9 @@ billing:
   dispute_threshold_pct: 10
 
 solana:
-  rpc_endpoint: "https://api.mainnet-beta.solana.com"
-  priority_fee: 1000  # microlamports
-
-otela_token:
-  mint_address: "BAYyKYocgUgWHcs25Sar15x9XY9iYdtnKurBoVXJD1bU"
-  decimals: 9
-  symbol: "OTELA"
+  rpc: "https://api.mainnet-beta.solana.com"
+  mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR"
+  skip_verification: false
 
 rates:
   default_per_1000_tokens: 1000  # Base units

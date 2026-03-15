@@ -1,0 +1,18 @@
+[project]
+name = "otela-proxy"
+version = "0.1.0"
+description = "OpenAI-compatible FastAPI proxy for OpenTela"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+otela-proxy = "proxy.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

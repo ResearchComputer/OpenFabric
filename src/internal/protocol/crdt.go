@@ -166,7 +166,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		common.ReportError(err, "Error while starting ticker")
 
 		// Now start auto-reconnect — bitswap is ready to receive connection events.
-		StartAutoReconnect()
+		StartAutoReconnect(ctx)
 
 		startTombstoneCompactor(crdtStore)
 	})

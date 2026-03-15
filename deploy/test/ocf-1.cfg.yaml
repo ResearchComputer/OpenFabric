@@ -17,4 +17,4 @@ solana:
 bootstrap:
   sources:
     - "/ip4/152.67.64.117/tcp/43905/p2p/Qmf8AY2HccRM9uLrR9qQdjwBM46qstT7dEFmfFX6RWD4AA"  # ocf-2 (seed=2)
-    - "/ip4/129.132.93.88/tcp/18905/p2p/QmV4B8rADS7ygMQ37tSNQnDHX9ujmYEZBEDVSkkxavvxnZ"  # euler relay
+    - "/ip4/129.132.93.93/tcp/18905/p2p/QmV4B8rADS7ygMQ37tSNQnDHX9ujmYEZBEDVSkkxavvxnZ"  # euler relay on eu-login-18

@@ -467,7 +467,8 @@ These can also be set via CLI flags or environment variables (prefixed with `OF_
 
 - All files under `accounts/` are `chmod 0600`.
 - The `accounts.json` registry is updated whenever a wallet is created or imported.
-- Legacy data from `~/.ocf/` is migrated automatically on first access.
+- Legacy wallet data from `~/.ocf/` is migrated automatically on first access.
+- Node data (keys and CRDT databases) is stored separately under `~/.ocfcore/`.
 
 ---
 

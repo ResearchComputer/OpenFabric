@@ -3,10 +3,10 @@ module opentela
 go 1.25.0
 
 require (
-	github.com/axiomhq/axiom-go v0.28.0
+	github.com/axiomhq/axiom-go v0.31.0
 	github.com/buger/jsonparser v1.1.1
 	github.com/dgraph-io/badger/v4 v4.9.1
-	github.com/gin-gonic/gin v1.11.0
+	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/hsanjuan/ipfs-lite v1.8.6
 	github.com/ipfs/boxo v0.37.0
@@ -35,7 +35,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
-	golang.org/x/time v0.14.0
+	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -179,6 +179,7 @@ require (
 	github.com/whyrusleeping/chunker v0.0.0-20181014151217-fe64bd25879f // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0 // indirect
 	go.opentelemetry.io/otel v1.40.0 // indirect
@@ -196,7 +197,7 @@ require (
 	golang.org/x/arch v0.24.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260213145524-e0ab670178e1 // indirect

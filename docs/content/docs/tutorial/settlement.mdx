@@ -67,25 +67,15 @@ export OF_BILLING_ENABLED=true
 | `billing.max_interval_minutes` | `OF_BILLING_MAX_INTERVAL_MINUTES` | `60` | Maximum time between settlements |
 | `billing.dispute_threshold_pct` | `OF_BILLING_DISPUTE_THRESHOLD_PCT` | `10` | Percentage difference that flags a dispute |
 
-## Step 2: Configure the OTELA token
+## Step 2: Configure the OTELA token and Solana RPC
 
-The settlement system needs to know which SPL token to use for payments. The default configuration points to the OTELA token on devnet:
-
-```yaml
-otela_token:
-  mint_address: "BAYyKYocgUgWHcs25Sar15x9XY9iYdtnKurBoVXJD1bU"
-  decimals: 9
-  symbol: "OTELA"
-```
-
-If you are running on a different cluster or using a custom token, update the `mint_address` and `decimals` accordingly.
-
-## Step 3: Configure the Solana RPC endpoint
+The settlement system uses the SPL token mint configured under `solana.mint`. The default points to the OTELA token:
 
 ```yaml
 solana:
-  rpc_endpoint: "https://api.devnet.solana.com"
-  priority_fee: 1000  # microlamports (optional, for faster confirmation)
+  rpc: "https://api.mainnet-beta.solana.com"   # or https://api.devnet.solana.com for testing
+  mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR"  # OTELA SPL token mint
+  skip_verification: false
 ```
 
 For testing, use the devnet endpoint. For production, use a mainnet-beta endpoint or a dedicated RPC provider.
@@ -131,7 +121,7 @@ Wallet: 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
 RPC:    https://api.devnet.solana.com
 
   SOL balance: 1.500000000 SOL
-  Token (BAYyKYocgUgWHcs25Sar15x9XY9iYdtnKurBoVXJD1bU): 50000 (50000.000000000)
+  Token (EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR): 50000 (50000.000000000)
 ```
 
 The consumer wallet also needs a small amount of SOL for transaction fees (~0.000005 SOL per transfer) and potentially for creating Associated Token Accounts (~0.002 SOL per new provider).
@@ -209,10 +199,10 @@ Payment records are stored by transaction signature in the CRDT under `/billing/
 
 For end-to-end testing without real funds:
 
-1. Point `solana.rpc_endpoint` to `https://api.devnet.solana.com`
+1. Point `solana.rpc` to `https://api.devnet.solana.com`
 2. Request SOL from the faucet: `./otela wallet airdrop 2`
 3. Deploy or use an existing test SPL token on devnet
-4. Update `otela_token.mint_address` to the test token's mint
+4. Update `solana.mint` to the test token's mint
 5. Start the cluster and send requests — settlements will appear in the logs
 
 ---
@@ -227,16 +217,11 @@ billing:
   max_interval_minutes: 60
   dispute_threshold_pct: 10
 
-# Solana connection
+# Solana connection and token
 solana:
-  rpc_endpoint: "https://api.devnet.solana.com"
-  priority_fee: 1000
-
-# OTELA token
-otela_token:
-  mint_address: "BAYyKYocgUgWHcs25Sar15x9XY9iYdtnKurBoVXJD1bU"
-  decimals: 9
-  symbol: "OTELA"
+  rpc: "https://api.devnet.solana.com"
+  mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR"
+  skip_verification: false
 
 # Provider rates
 rates:
