@@ -1,0 +1,23 @@
+[project]
+name = "otela-cli"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "base58>=2.1.1",
+    "httpx>=0.28.1",
+    "paramiko>=4.0.0",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+    "solana>=0.36.11",
+    "solders>=0.27.1",
+    "typer>=0.24.1",
+]
+
+[project.scripts]
+otela-cli = "otela_cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
