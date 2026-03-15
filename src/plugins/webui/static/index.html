@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenTela Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="flex items-center gap-3">
+      <span class="header-brand">OpenTela</span>
+      <span id="health-dot" class="health-dot unknown"></span>
+      <span id="refresh-spinner" class="refresh-spinner"></span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="peer-id" class="text-sm text-muted">—</span>
+      <span id="node-version" class="badge badge-gray">v—</span>
+    </div>
+  </header>
+
+  <!-- Error Banner -->
+  <div id="error-banner" class="banner banner-error hidden">
+    Connection lost — retrying...
+  </div>
+
+  <!-- Main Content -->
+  <main class="main flex flex-col gap-6">
+
+    <!-- Stats Strip -->
+    <section>
+      <div id="stats-strip" class="grid grid-cols-5 gap-4">
+
+        <div class="stat-card" id="stat-connected-peers">
+          <div class="stat-value">—</div>
+          <div class="stat-label">Connected Peers</div>
+        </div>
+
+        <div class="stat-card" id="stat-total-peers">
+          <div class="stat-value">—</div>
+          <div class="stat-label">Total Peers</div>
+        </div>
+
+        <div class="stat-card" id="stat-cpu">
+          <div class="stat-value">—</div>
+          <div class="stat-label">CPU Cores / Goroutines</div>
+        </div>
+
+        <div class="stat-card" id="stat-memory">
+          <div class="stat-value">—</div>
+          <div class="stat-label">Memory Allocated</div>
+        </div>
+
+        <div class="stat-card" id="stat-gpu">
+          <div class="stat-value">—</div>
+          <div class="stat-label">GPU</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Node Table -->
+    <section>
+      <h2 class="section-title">Node Table</h2>
+      <div class="card overflow-x-auto p-0">
+        <table class="table" id="node-table">
+          <thead>
+            <tr>
+              <th>Peer ID</th>
+              <th>Services</th>
+              <th>Status</th>
+              <th>Role</th>
+              <th>Latency</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody id="node-table-body">
+            <!-- Populated by app.js -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Two-column grid for panels -->
+    <div class="grid grid-cols-2 gap-4">
+
+      <!-- Peers Panel -->
+      <section>
+        <h2 class="section-title">Peer Connectivity</h2>
+        <div class="card" id="peers-panel">
+          <ul class="peer-list" id="peers-list">
+            <!-- Populated by app.js -->
+          </ul>
+          <p class="text-sm text-muted text-center p-4" id="peers-empty">No peer data</p>
+        </div>
+      </section>
+
+      <!-- Bootstrap Nodes Panel -->
+      <section>
+        <h2 class="section-title">Bootstrap Nodes</h2>
+        <div class="card" id="bootstraps-panel">
+          <ul class="peer-list" id="bootstraps-list">
+            <!-- Populated by app.js -->
+          </ul>
+          <p class="text-sm text-muted text-center p-4" id="bootstraps-empty">No bootstrap data</p>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="flex items-center gap-2">
+      <button id="refresh-toggle" class="btn btn-outline text-xs">Auto-refresh: On</button>
+      <select id="refresh-interval" class="btn btn-outline text-xs">
+        <option value="5">5s</option>
+        <option value="10" selected>10s</option>
+        <option value="30">30s</option>
+      </select>
+    </div>
+    <span id="last-refresh" class="text-sm text-muted">Last refresh: —</span>
+    <span class="text-sm text-muted">Powered by OpenTela</span>
+  </footer>
+
+</body>
+</html>

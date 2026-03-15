@@ -62,7 +62,10 @@ func snapshotLocalServices() []Service {
 func RegisterLocalServices() {
 	serviceName := viper.GetString("service.name")
 	servicePort := viper.GetString("service.port")
-	if serviceName == "llm" && servicePort != "" {
+	if serviceName == "" || servicePort == "" {
+		return
+	}
+	if serviceName == "llm" {
 		// register the service by first fetch available models on the port
 		err := healthCheckRemote(servicePort, 6000)
 		if err != nil {
@@ -71,7 +74,23 @@ func RegisterLocalServices() {
 		}
 		common.Logger.Debug("LLM service healthy")
 		registerLLMService(servicePort)
+		return
 	}
+	// Generic service: health-check then register with the configured name.
+	err := healthCheckRemote(servicePort, 6000)
+	if err != nil {
+		common.Logger.Errorf("could not health check service %s: %v", serviceName, err)
+		return
+	}
+	identityGroup := viper.GetStringSlice("service.identity_group")
+	service := Service{
+		Name:          serviceName,
+		Status:        "connected",
+		Host:          "localhost",
+		Port:          servicePort,
+		IdentityGroup: identityGroup,
+	}
+	provideService(service)
 }
 
 func healthCheckRemote(port string, maxTries int) error {
@@ -146,7 +165,9 @@ func provideService(service Service) {
 	}
 }
 
-// ReannounceLocalServices re-publishes this node's service entry, used after reconnects
+// ReannounceLocalServices re-publishes this node's service entry, used after reconnects.
+// It merges services from the in-memory localServices list with any services already
+// in the node table (e.g. those registered via the HTTP API) to avoid overwriting them.
 func ReannounceLocalServices() {
 	host, _ := GetP2PNode(nil)
 	ctx := context.Background()
@@ -154,7 +175,23 @@ func ReannounceLocalServices() {
 	key := ds.NewKey(host.ID().String())
 	// refresh hardware and services
 	myself.Hardware.GPUs = platform.GetGPUInfo()
-	myself.Service = snapshotLocalServices()
+	// Start from localServices (the authoritative in-memory set) and merge
+	// any extra services present in the current node table entry so that
+	// services registered through other paths (e.g. HTTP API) are not lost.
+	merged := snapshotLocalServices()
+	if existing, err := GetPeerFromTable(host.ID().String()); err == nil {
+		seen := make(map[string]struct{})
+		for _, s := range merged {
+			seen[s.Name+"|"+s.Host+"|"+s.Port] = struct{}{}
+		}
+		for _, s := range existing.Service {
+			k := s.Name + "|" + s.Host + "|" + s.Port
+			if _, ok := seen[k]; !ok {
+				merged = append(merged, s)
+			}
+		}
+	}
+	myself.Service = merged
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}

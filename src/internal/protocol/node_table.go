@@ -226,6 +226,10 @@ func UpdateNodeTable(peer Peer) {
 			peer.ProviderID = existingPeer.ProviderID
 		}
 	}
+	// Track services in localServices so ReannounceLocalServices preserves them.
+	for _, svc := range peer.Service {
+		addLocalService(svc)
+	}
 	if viper.GetString("public-addr") != "" {
 		peer.PublicAddress = viper.GetString("public-addr")
 	}
