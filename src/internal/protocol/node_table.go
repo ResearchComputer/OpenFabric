@@ -304,7 +304,8 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	}
 
 	// If enforcement is on, reject peers without a valid signed build.
-	if viper.GetBool("security.require_signed_binary") && !peer.SignedBuild {
+	// Always trust ourselves — a node should never reject its own entry.
+	if viper.GetBool("security.require_signed_binary") && !peer.SignedBuild && peer.ID != MyID {
 		common.Logger.Warnf("Rejecting peer [%s]: no valid build attestation (security.require_signed_binary=true)", peer.ID)
 		return
 	}

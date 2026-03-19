@@ -5,7 +5,43 @@ import (
 	"testing"
 
 	ds "github.com/ipfs/go-datastore"
+	"github.com/spf13/viper"
 )
+
+func TestUpdateNodeTableHook_SelfTrust(t *testing.T) {
+	// Save and restore state.
+	oldMyID := MyID
+	oldVal := viper.GetBool("security.require_signed_binary")
+	defer func() {
+		MyID = oldMyID
+		viper.Set("security.require_signed_binary", oldVal)
+	}()
+
+	_ = GetAllPeers()
+	viper.Set("security.require_signed_binary", true)
+
+	// An unsigned remote peer should be rejected.
+	remote := Peer{ID: "remote-peer", PublicAddress: "1.2.3.4"}
+	b, _ := json.Marshal(remote)
+	UpdateNodeTableHook(ds.NewKey("remote-peer"), b)
+	_, err := GetPeerFromTable("remote-peer")
+	if err == nil {
+		t.Fatal("expected unsigned remote peer to be rejected")
+	}
+
+	// The local node (matching MyID) should always be accepted, even unsigned.
+	MyID = "self-node"
+	self := Peer{ID: "self-node", PublicAddress: "5.6.7.8"}
+	b, _ = json.Marshal(self)
+	UpdateNodeTableHook(ds.NewKey("self-node"), b)
+	got, err := GetPeerFromTable("self-node")
+	if err != nil {
+		t.Fatalf("expected self to be accepted even without signed build, got: %v", err)
+	}
+	if got.PublicAddress != "5.6.7.8" {
+		t.Fatalf("unexpected peer: %+v", got)
+	}
+}
 
 func TestUpdateNodeTableHookAndGetPeer(t *testing.T) {
 	_ = GetAllPeers()

@@ -151,7 +151,9 @@ func srcRoot(t *testing.T) string {
 
 func buildBinary(t *testing.T, srcDir string) {
 	t.Helper()
-	cmd := exec.Command("make", "build")
+	// Clear GOARGS (test-only flags like -count leak via Makefile's `export`)
+	// and force CGO_ENABLED=0 so the binary is statically linked for Alpine.
+	cmd := exec.Command("make", "build", "GOARGS=", "CGO_ENABLED=0")
 	cmd.Dir = srcDir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "make build failed:\n%s", out)
@@ -191,6 +193,7 @@ func startNode(t *testing.T, name string, index int, cmd []string) nodeInfo {
 		"run", "-d",
 		"--name", fullName,
 		"--network", networkName,
+		"-e", "OF_SECURITY_REQUIRE_SIGNED_BINARY=false",
 		"-p", fmt.Sprintf("127.0.0.1:%d:%s", hostPort, httpPort),
 		imageName,
 	}
@@ -249,6 +252,24 @@ func nodeTable(t *testing.T, n nodeInfo) map[string]peerEntry {
 
 func firstPeerID(t *testing.T, n nodeInfo) string {
 	t.Helper()
+	// Use /v1/dnt/peers_status which reads from the libp2p peerstore
+	// (available immediately) rather than the CRDT table (populated
+	// asynchronously after gossip).
+	url := fmt.Sprintf("http://127.0.0.1:%d/v1/dnt/peers_status", n.hostPort)
+	resp, err := http.Get(url)
+	if err == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var status struct {
+			Peers []struct {
+				ID string `json:"id"`
+			} `json:"peers"`
+		}
+		if json.Unmarshal(body, &status) == nil && len(status.Peers) > 0 {
+			return status.Peers[0].ID
+		}
+	}
+	// Fallback to node table.
 	table := nodeTable(t, n)
 	for _, p := range table {
 		return p.ID
