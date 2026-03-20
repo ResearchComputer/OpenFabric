@@ -1,0 +1,20 @@
+all:
+  vars:
+    ansible_user: ubuntu
+    api_port: 8092
+    tcp_port: 43905
+    udp_port: 59820
+    mode: full
+    loglevel: debug
+    cleanslate: false
+    require_signed_binary: false
+    solana_skip_verification: true
+  hosts:
+    ocf-1:
+      ansible_host: 140.238.223.116
+      node_name: ocf-1-head
+      seed: "1"
+    ocf-2:
+      ansible_host: 152.67.64.117
+      node_name: ocf-2-head
+      seed: "2"
