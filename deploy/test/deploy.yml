@@ -1,0 +1,212 @@
+---
+# Play 1: Build signed binary on the control machine
+- name: Build signed binary
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check BUILD_SIGN_KEY is set
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'BUILD_SIGN_KEY') | length > 0
+        fail_msg: "BUILD_SIGN_KEY is not set. Export it before running: export BUILD_SIGN_KEY=<key>"
+
+    - name: Run make build-signed
+      ansible.builtin.command:
+        cmd: make build-signed
+        chdir: "{{ playbook_dir }}/../../src"
+      environment:
+        BUILD_SIGN_KEY: "{{ lookup('env', 'BUILD_SIGN_KEY') }}"
+      register: build_result
+      changed_when: true
+      timeout: 120
+
+    - name: Show build output
+      ansible.builtin.debug:
+        var: build_result.stdout_lines
+
+# Play 2: Deploy binary and systemd unit to all hosts
+- name: Deploy to all hosts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Create config directory
+      ansible.builtin.file:
+        path: ~/.config/opentela
+        state: directory
+        mode: "0755"
+
+    - name: Copy binary
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../src/build/entry"
+        dest: /home/ubuntu/ocf
+        mode: "0755"
+
+    - name: Deploy systemd unit
+      ansible.builtin.template:
+        src: templates/otela.service.j2
+        dest: /etc/systemd/system/otela.service
+        mode: "0644"
+      become: true
+
+    - name: Enable otela service
+      ansible.builtin.systemd:
+        name: otela
+        enabled: true
+        daemon_reload: true
+      become: true
+
+    - name: Stop otela service
+      ansible.builtin.systemd:
+        name: otela
+        state: stopped
+      become: true
+      failed_when: false
+
+# Play 3: Discover bootstrap multiaddrs (serial, one host at a time)
+- name: Discover bootstraps
+  hosts: all
+  serial: 1
+  gather_facts: false
+  tasks:
+    - name: Deploy discovery config (cleanslate=true, no peers)
+      ansible.builtin.template:
+        src: templates/cfg.yaml.j2
+        dest: ~/.config/opentela/cfg.yaml
+        mode: "0644"
+      vars:
+        cleanslate_override: true
+
+    - name: Deploy discovery systemd unit (cleanslate=true)
+      ansible.builtin.template:
+        src: templates/otela.service.j2
+        dest: /etc/systemd/system/otela.service
+        mode: "0644"
+      become: true
+      vars:
+        cleanslate: true
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true
+
+    - name: Start otela for bootstrap discovery
+      ansible.builtin.systemd:
+        name: otela
+        state: started
+      become: true
+
+    - name: Poll for bootstrap multiaddr
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ api_port }}/v1/dnt/bootstraps"
+        return_content: true
+      register: bootstrap_response
+      until: bootstrap_response.status == 200 and bootstrap_response.json.bootstraps | length > 0
+      retries: 15
+      delay: 2
+      delegate_to: localhost
+
+    - name: Extract own bootstrap multiaddr
+      ansible.builtin.set_fact:
+        my_bootstrap: >-
+          {{ bootstrap_response.json.bootstraps
+             | select('search', ansible_host)
+             | first }}
+
+    - name: Show discovered bootstrap
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ my_bootstrap }}"
+
+    - name: Stop otela after discovery
+      ansible.builtin.systemd:
+        name: otela
+        state: stopped
+      become: true
+
+# Play 4: Deploy final configs with peer bootstraps and start (serial)
+- name: Deploy final configs and start
+  hosts: all
+  serial: 1
+  gather_facts: false
+  tasks:
+    - name: Build peer bootstrap list
+      ansible.builtin.set_fact:
+        peer_bootstraps: >-
+          {{ groups['all']
+             | reject('equalto', inventory_hostname)
+             | map('extract', hostvars, 'my_bootstrap')
+             | list }}
+
+    - name: Deploy final config
+      ansible.builtin.template:
+        src: templates/cfg.yaml.j2
+        dest: ~/.config/opentela/cfg.yaml
+        mode: "0644"
+
+    - name: Deploy final systemd unit
+      ansible.builtin.template:
+        src: templates/otela.service.j2
+        dest: /etc/systemd/system/otela.service
+        mode: "0644"
+      become: true
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true
+
+    - name: Start otela
+      ansible.builtin.systemd:
+        name: otela
+        state: started
+      become: true
+
+    - name: Wait for API to respond
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ api_port }}/v1/dnt/bootstraps"
+        return_content: true
+      register: start_response
+      until: start_response.status == 200
+      retries: 15
+      delay: 2
+      delegate_to: localhost
+
+# Play 5: Verify all nodes see each other in the mesh
+- name: Verify mesh
+  hosts: all
+  gather_facts: false
+  vars:
+    expected_peers: "{{ groups['all'] | length - 1 }}"
+  tasks:
+    - block:
+        - name: Poll peer table until mesh is formed
+          ansible.builtin.uri:
+            url: "http://{{ ansible_host }}:{{ api_port }}/v1/dnt/table"
+            return_content: true
+          register: table_response
+          until: >-
+            table_response.status == 200 and
+            table_response.json | dict2items | list | length >= (expected_peers | int)
+          retries: 30
+          delay: 2
+          delegate_to: localhost
+
+        - name: Show peer table
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }} sees {{ table_response.json | dict2items | list | length }} connected peers"
+
+      rescue:
+        - name: Fetch logs on failure
+          ansible.builtin.command:
+            cmd: journalctl -u otela -n 50 --no-pager
+          become: true
+          register: logs
+
+        - name: Show logs
+          ansible.builtin.debug:
+            var: logs.stdout_lines
+
+        - name: Fail with message
+          ansible.builtin.fail:
+            msg: "Mesh verification failed on {{ inventory_hostname }}. See logs above."
