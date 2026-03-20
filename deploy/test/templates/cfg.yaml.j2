@@ -1,0 +1,23 @@
+name: {{ node_name }}
+seed: "{{ seed }}"
+port: "{{ api_port }}"
+tcpport: "{{ tcp_port }}"
+udpport: "{{ udp_port }}"
+public-addr: "{{ ansible_host }}"
+mode: {{ mode }}
+loglevel: {{ loglevel }}
+cleanslate: {{ cleanslate_override | default(cleanslate) | lower }}
+
+security:
+  require_signed_binary: {{ require_signed_binary | lower }}
+
+solana:
+  skip_verification: {{ solana_skip_verification | lower }}
+
+{% if peer_bootstraps is defined and peer_bootstraps | length > 0 %}
+bootstrap:
+  sources:
+{% for addr in peer_bootstraps %}
+    - "{{ addr }}"
+{% endfor %}
+{% endif %}

@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenTela Test Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/ocf start --cleanslate={{ cleanslate | lower }}
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
