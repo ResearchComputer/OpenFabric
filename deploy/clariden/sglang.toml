@@ -1,0 +1,17 @@
+image = "lmsysorg/sglang:latest"
+
+mounts = [
+  "/users/xyao:/users/xyao",
+  "/iopsstor/scratch/cscs/xyao:/iopsstor/scratch/cscs/xyao",
+  "/capstor:/capstor",
+]
+
+workdir = "/users/xyao"
+
+[env]
+HF_HOME="/capstor/store/cscs/swissai/a09/xyao/models"
+HF_TOKEN=""
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda12"

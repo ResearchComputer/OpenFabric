@@ -11,8 +11,7 @@ import (
 
 	ds "github.com/ipfs/go-datastore"
 	"github.com/jasonlvhit/gocron"
-	"github.com/libp2p/go-libp2p/core/network"
-	libpeer "github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 )
 
 // var verificationKey = "ocf-verification-key"
@@ -28,52 +27,42 @@ func StartTicker() {
 	err = gocron.Every(30).Second().Do(func() {
 		host, _ := GetP2PNode(nil)
 		peers := host.Peerstore().Peers()
-		// updateMyself()
-		var reconnected = 0
+		var alive = 0
 		var disconnected = 0
 		for _, peer_id := range peers {
-			// check if peer is still connected
-			p, error := GetPeerFromTable(peer_id.String())
-			if error == nil {
-				if host.Network().Connectedness(peer_id) == network.Connected {
-					p.Connected = true
-				} else if peer_id != host.ID() && host.Network().Connectedness(peer_id) != network.Connected {
-					// try to dial the peer, if cannot dial, then mark it as disconnected
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					addrInfo := libpeer.AddrInfo{ID: peer_id, Addrs: host.Peerstore().Addrs(peer_id)}
-					if len(addrInfo.Addrs) == 0 {
-						// No known addresses — peer may only be mesh-reachable
-						// via relay. Preserve Connected set by PubSub handler.
-						cancel()
-						continue
-					} else if err := host.Connect(ctx, addrInfo); err != nil {
-						common.Logger.With("err", err).Warnf("Failed to dial peer %s; marking disconnected", peer_id)
-						p.Connected = false
-						disconnected++
-					} else {
-						// Successfully reconnected
-						common.Logger.Debugf("Reconnected to peer %s", peer_id)
-						p.Connected = true
-						reconnected++
-					}
-					cancel() // release context immediately after the dial attempt, not deferred to function return
-				}
-				// update last seen timestamp
-				p.LastSeen = time.Now().Unix()
-				value, err := json.Marshal(p)
-				if err == nil {
-					UpdateNodeTableHook(ds.NewKey(peer_id.String()), value)
-				} else {
-					common.Logger.Error("Error while marshalling peer: ", peer_id.String(), err)
-				}
+			if peer_id == host.ID() {
+				continue
+			}
+			p, err := GetPeerFromTable(peer_id.String())
+			if err != nil {
+				continue
+			}
+			// Active liveness check: ping the peer through whatever
+			// transport is available (direct or relay circuit).
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			res := <-ping.Ping(ctx, host, peer_id)
+			cancel()
+			if res.Error != nil {
+				common.Logger.Debugf("Ping failed for peer %s: %v", peer_id, res.Error)
+				p.Connected = false
+				disconnected++
+			} else {
+				p.Connected = true
+				alive++
+			}
+			p.LastSeen = time.Now().Unix()
+			value, err := json.Marshal(p)
+			if err == nil {
+				UpdateNodeTableHook(ds.NewKey(peer_id.String()), value)
+			} else {
+				common.Logger.Error("Error while marshalling peer: ", peer_id.String(), err)
 			}
 		}
 		if !process.HealthCheck() {
 			common.Logger.Error("Health check failed")
-			// exit myself
 			os.Exit(1)
 		}
-		common.Logger.Debugf("Verification Summary: %d un-reachable peers, %d re-connected peers", disconnected, reconnected)
+		common.Logger.Debugf("Verification Summary: %d alive peers, %d unreachable peers", alive, disconnected)
 	})
 	common.ReportError(err, "Error while creating verification ticker")
 
