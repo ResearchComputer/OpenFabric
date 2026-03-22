@@ -152,19 +152,22 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 			// On (re)connections, re-announce local services
 			go ReannounceLocalServices()
 
-			// Mark peer as connected in node table — only update existing peers.
-			// New peers are added via the CRDT PutHook which carries the full
-			// record (including build attestation).
+			// Mark peer as connected in node table.
+			// If the peer is unknown, create a minimal entry so it is tracked
+			// immediately. The full record (with build attestation) will
+			// overwrite this when the CRDT PutHook fires.
 			go func(pid peer.ID) {
 				if pid == host.ID() {
 					return
 				}
 				p, err := GetPeerFromTable(pid.String())
 				if err != nil {
-					common.Logger.Debugf("Ignoring connect for unknown peer [%s]; waiting for CRDT sync", pid.String())
-					return
+					// Peer not yet in table — create a minimal entry.
+					common.Logger.Debugf("Adding minimal entry for new peer [%s] on connect", pid.String())
+					p = Peer{ID: pid.String()}
+				} else {
+					common.Logger.Debugf("Updating peer [%s] on connect", pid.String())
 				}
-				common.Logger.Debugf("Updating peer [%s] on connect", pid.String())
 				p.Connected = true
 				p.LastSeen = time.Now().Unix()
 				if b, e := json.Marshal(p); e == nil {

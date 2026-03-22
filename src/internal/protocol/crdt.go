@@ -15,6 +15,7 @@ import (
 	ds "github.com/ipfs/go-datastore"
 	badger "github.com/ipfs/go-ds-badger"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/viper"
 )
@@ -70,12 +71,18 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 				// Use message author (original publisher), not ReceivedFrom
 				// (forwarding peer). In relay topologies GetFrom() is the worker.
 				authorID := msg.GetFrom()
-				// Only update peers already in the table — new peers are
-				// added via the CRDT PutHook which carries the full record
-				// (including build attestation).
 				p, gerr := GetPeerFromTable(authorID.String())
 				if gerr != nil {
-					common.Logger.Debugf("Ignoring msg from unknown peer [%s]; waiting for CRDT sync", authorID.String())
+					// Peer not yet in table. Create a minimal entry so it is
+					// tracked immediately. The full record (with build attestation)
+					// will overwrite this when the CRDT PutHook fires.
+					if host.Network().Connectedness(authorID) == network.Connected {
+						common.Logger.Debugf("Adding minimal entry for new peer [%s] from gossip", authorID.String())
+						p = Peer{ID: authorID.String(), Connected: true, LastSeen: time.Now().Unix()}
+						if b, merr := json.Marshal(p); merr == nil {
+							UpdateNodeTableHook(ds.NewKey(authorID.String()), b)
+						}
+					}
 					continue
 				}
 				common.Logger.Debugf("Updating peer: [%s] triggered by msg received", authorID.String())
@@ -151,7 +158,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		common.ReportError(err, "Error while creating crdt store")
 
 		// Close any pre-existing connections so that when we re-bootstrap,
-		// bitswap's notification handler (registered inside crdt.New → bitswap.New)
+		// bitswap's notification handler (registered inside crdt.New -> bitswap.New)
 		// will fire and learn about the peers.
 		for _, p := range host.Network().Peers() {
 			if p == host.ID() {
@@ -165,7 +172,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		ipfs.Bootstrap(addsInfo)
 		common.ReportError(err, "Error while starting ticker")
 
-		// Now start auto-reconnect — bitswap is ready to receive connection events.
+		// Now start auto-reconnect -- bitswap is ready to receive connection events.
 		StartAutoReconnect(ctx)
 
 		startTombstoneCompactor(crdtStore)
