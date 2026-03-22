@@ -80,17 +80,8 @@ resource "cloudflare_r2_bucket" "docs_cache" {
   name       = "opentela-docs-opennext-cache"
 }
 
-# DNS record for the docs site
-resource "cloudflare_dns_record" "docs" {
-  zone_id = var.cloudflare_zone_id
-  name    = "docs"
-  content = "opentela-docs.workers.dev"
-  type    = "CNAME"
-  proxied = true
-  ttl     = 1
-}
-
 # Bind docs.opentela.ai to the opentela-docs Worker
+# Note: This auto-creates a DNS record (AAAA 100::) — no separate DNS record needed.
 resource "cloudflare_workers_custom_domain" "docs" {
   account_id = var.cloudflare_account_id
   zone_id    = var.cloudflare_zone_id
