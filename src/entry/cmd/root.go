@@ -38,6 +38,7 @@ func init() {
 	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
 	startCmd.Flags().StringSlice("bootstrap.source", nil, "bootstrap source (HTTP URL, dnsaddr://host, or multiaddr). Repeatable")
 	startCmd.Flags().StringSlice("bootstrap.static", []string{
+		"https://bootstraps.opentela.ai/v1/dnt/bootstraps",
 		"http://140.238.223.116:8092/v1/dnt/bootstraps",
 		"http://152.67.64.117:8092/v1/dnt/bootstraps",
 	}, "static bootstrap sources (HTTP URL, dnsaddr://, or multiaddr). Repeatable")
