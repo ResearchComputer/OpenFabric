@@ -59,6 +59,12 @@ func StartTicker() {
 				alive++
 			}
 			p.LastSeen = time.Now().Unix()
+			// Liveness updates go to the in-memory node table only.
+			// Writing Connected/LastSeen to CRDT on every tick was the
+			// main source of DAG bloat (~12k writes/day), causing fresh
+			// nodes to spend minutes walking history before they could
+			// discover peers. Structural changes (join, leave, service
+			// registration) still go through CRDT.
 			value, err := json.Marshal(p)
 			if err == nil {
 				UpdateNodeTableHook(ds.NewKey(peer_id.String()), value)
@@ -74,30 +80,21 @@ func StartTicker() {
 	})
 	common.ReportError(err, "Error while creating verification ticker")
 
-	// Add resource monitoring every 2 minutes
+	// Periodic maintenance: stale peer cleanup and resource monitoring.
 	err = gocron.Every(2).Minutes().Do(func() {
 		GetResourceManagerStats()
 
-		// Also log current connection count for easy monitoring
 		connectedPeers := ConnectedPeers()
 		allPeers := AllPeers()
 		common.Logger.Debugf("Connection Summary: %d connected peers, %d total known peers",
 			len(connectedPeers), len(allPeers))
 
-		// Log if we have very few connections (potential issue)
 		if len(connectedPeers) == 0 {
 			common.Logger.Warnf("Low connection count detected: only %d connected peers", len(connectedPeers))
 			Reconnect()
 		}
 
-		// Always re-announce services so that after DAG sync the
-		// service data gets a high enough CRDT priority to propagate.
-		// Without this, a fresh node's initial low-priority Put is
-		// never superseded once the DAG catches up.
-		ReannounceLocalServices()
-
-		// Cleanup: remove peers that have been disconnected for a long time
-		// Define staleness threshold
+		// Cleanup: remove peers that have been disconnected for a long time.
 		staleAfter := 10 * time.Minute
 		table := *GetAllPeers()
 		now := time.Now().Unix()
@@ -108,7 +105,7 @@ func StartTicker() {
 					DeleteNodeTableHook(ds.NewKey(id))
 				}
 			}
-			// Also mark peers with very old LastSeen as disconnected
+			// Mark peers with very old LastSeen as disconnected (in-memory only).
 			if p.Connected && p.LastSeen > 0 && time.Unix(p.LastSeen, 0).Add(2*time.Minute).Before(time.Now()) {
 				p.Connected = false
 				value, err := json.Marshal(p)
@@ -116,7 +113,7 @@ func StartTicker() {
 					UpdateNodeTableHook(ds.NewKey(id), value)
 				}
 			}
-			// If LastSeen is zero, initialize it now
+			// Initialize LastSeen if zero (in-memory only).
 			if p.LastSeen == 0 {
 				p.LastSeen = now
 				value, err := json.Marshal(p)
