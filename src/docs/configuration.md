@@ -27,6 +27,7 @@ OpenTela reads configuration from a YAML file, environment variables, and CLI fl
 | `debug` | bool | `false` | Enable debug mode |
 | `loglevel` | string | `"info"` | Log level: `debug`, `info`, `warn`, `error` |
 | `cleanslate` | bool | `true` | Wipe local database on startup |
+| `role` | `OF_ROLE` | `worker` | Node role in the network. `worker` (default): serves workloads. `head`: dispatcher with public IP, receives client requests. `relay`: bridges network segments, auto-registers as bootstrap peer when `public-addr` is set. |
 
 ### Networking
 
@@ -47,6 +48,14 @@ OpenTela reads configuration from a YAML file, environment variables, and CLI fl
 | `bootstrap.sources` | []string | `[]` | Bootstrap sources: HTTP URLs, `dnsaddr://`, or multiaddrs |
 | `bootstrap.static` | []string | *(hardcoded)* | Static bootstrap node list (built-in fallback) |
 | `bootstrap.addr` | string | `""` | Single bootstrap address (legacy, prefer `sources`) |
+
+### Bootstrap Discovery
+
+New nodes discover the network by fetching bootstrap peer lists. The default
+configuration tries `https://bootstraps.opentela.ai/v1/dnt/bootstraps` first,
+falling back to direct IP addresses if DNS is unavailable (5s timeout per source).
+Any node with `public-addr` set (or `role: relay` with `public-addr`) will appear
+in the bootstrap list served by connected peers at `/v1/dnt/bootstraps`.
 
 ### Service Registration
 
