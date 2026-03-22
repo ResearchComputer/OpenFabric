@@ -465,8 +465,15 @@ func ConnectedBootstraps() []string {
 	fallbackPort := viper.GetString("tcpport")
 	for _, p := range *dnt {
 		if p.PublicAddress != "" {
-			common.Logger.Debugf("Peer %s addr=%s port=%s connectedness=%s", p.ID, p.PublicAddress, p.PublicPort, host.Network().Connectedness(peer.ID(p.ID)))
-			if host.Network().Connectedness(peer.ID(p.ID)) == network.Connected || host.ID().String() == p.ID {
+			pid, err := peer.Decode(p.ID)
+			if err != nil {
+				common.Logger.Debugf("Skipping peer %s: invalid peer ID: %v", p.ID, err)
+				continue
+			}
+			connected := host.Network().Connectedness(pid) == network.Connected
+			isSelf := host.ID() == pid
+			common.Logger.Debugf("Peer %s addr=%s port=%s connected=%v self=%v", p.ID, p.PublicAddress, p.PublicPort, connected, isSelf)
+			if connected || isSelf {
 				bootstrapAddr := BuildBootstrapAddr(p.PublicAddress, p.PublicPort, fallbackPort, p.ID)
 				bootstraps = append(bootstraps, bootstrapAddr)
 			}
