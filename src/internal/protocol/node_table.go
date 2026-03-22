@@ -170,6 +170,7 @@ type Peer struct {
 	LastSeen          int64               `json:"last_seen"`
 	Version           string              `json:"version"`
 	PublicAddress     string              `json:"public_address"`
+	PublicPort        string              `json:"public_port,omitempty"`
 	Hardware          common.HardwareSpec `json:"hardware"`
 	Connected         bool                `json:"connected"`
 	Load              []int               `json:"load"`
@@ -233,6 +234,7 @@ func UpdateNodeTable(peer Peer) {
 	if viper.GetString("public-addr") != "" {
 		peer.PublicAddress = viper.GetString("public-addr")
 	}
+	peer.PublicPort = viper.GetString("tcpport")
 	value, err := json.Marshal(peer)
 	common.ReportError(err, "Error while marshalling peer")
 	if err := store.Put(ctx, key, value); err != nil {

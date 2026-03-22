@@ -103,6 +103,34 @@ func TestNodeLeave(t *testing.T) {
 	}
 }
 
+func TestPublicPortStoredInPeer(t *testing.T) {
+	_ = GetAllPeers()
+
+	p1 := Peer{ID: "head-1", PublicAddress: "1.2.3.4", PublicPort: "43905", Connected: true}
+	b1, _ := json.Marshal(p1)
+	UpdateNodeTableHook(ds.NewKey("head-1"), b1)
+
+	p2 := Peer{ID: "relay-1", PublicAddress: "5.6.7.8", PublicPort: "18905", Connected: true}
+	b2, _ := json.Marshal(p2)
+	UpdateNodeTableHook(ds.NewKey("relay-1"), b2)
+
+	got1, err := GetPeerFromTable("head-1")
+	if err != nil {
+		t.Fatalf("expected head-1 in table: %v", err)
+	}
+	if got1.PublicPort != "43905" {
+		t.Fatalf("expected PublicPort=43905, got %s", got1.PublicPort)
+	}
+
+	got2, err := GetPeerFromTable("relay-1")
+	if err != nil {
+		t.Fatalf("expected relay-1 in table: %v", err)
+	}
+	if got2.PublicPort != "18905" {
+		t.Fatalf("expected PublicPort=18905, got %s", got2.PublicPort)
+	}
+}
+
 func TestNodeLeaveAndRejoin(t *testing.T) {
 	// 1. Peer joins
 	p := Peer{ID: "peer-rejoin", PublicAddress: "10.0.0.2", Status: CONNECTED, Connected: true}
