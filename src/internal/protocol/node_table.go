@@ -245,7 +245,7 @@ func UpdateNodeTable(peer Peer) {
 }
 
 func MarkSelfAsBootstrap() {
-	if viper.GetString("public-addr") != "" {
+	if viper.GetString("public-addr") != "" || viper.GetString("role") == "relay" {
 		common.Logger.Debug("Registering as bootstrap node")
 		ctx := context.Background()
 		store, _ := GetCRDTStore()
@@ -257,6 +257,7 @@ func MarkSelfAsBootstrap() {
 		}
 		// Use the global myself which carries build attestation.
 		myself.PublicAddress = viper.GetString("public-addr")
+		myself.PublicPort = viper.GetString("tcpport")
 		myself.Connected = true
 		value, err := json.Marshal(myself)
 		UpdateNodeTableHook(key, value)
@@ -515,6 +516,20 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	}
 
 	myself.Hardware.GPUs = platform.GetGPUInfo()
+
+	// Set role from config.
+	if role := viper.GetString("role"); role != "" {
+		myself.Role = []string{role}
+	}
+
+	// All nodes carry their own port so ConnectedBootstraps builds correct multiaddrs.
+	myself.PublicPort = viper.GetString("tcpport")
+
+	// Warn if relay has no public address — it won't be discoverable as a bootstrap.
+	if viper.GetString("role") == "relay" && myself.PublicAddress == "" {
+		common.Logger.Warn("Relay node has no public-addr set; it won't be discoverable as a bootstrap")
+	}
+
 	value, err := json.Marshal(myself)
 	common.ReportError(err, "Error while marshalling peer")
 	err = store.Put(ctx, key, value)

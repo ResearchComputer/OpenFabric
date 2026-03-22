@@ -131,6 +131,35 @@ func TestPublicPortStoredInPeer(t *testing.T) {
 	}
 }
 
+func TestRelayRoleAndPortStoredInPeer(t *testing.T) {
+	_ = GetAllPeers()
+
+	// Simulate a relay peer arriving via CRDT replication.
+	p := Peer{
+		ID:            "relay-node",
+		PublicAddress: "10.0.0.1",
+		PublicPort:    "18905",
+		Role:          []string{"relay"},
+		Connected:     true,
+	}
+	b, _ := json.Marshal(p)
+	UpdateNodeTableHook(ds.NewKey("relay-node"), b)
+
+	got, err := GetPeerFromTable("relay-node")
+	if err != nil {
+		t.Fatalf("expected relay-node in table: %v", err)
+	}
+	if len(got.Role) == 0 || got.Role[0] != "relay" {
+		t.Fatalf("expected role=[relay], got %v", got.Role)
+	}
+	if got.PublicAddress != "10.0.0.1" {
+		t.Fatalf("expected PublicAddress=10.0.0.1, got %s", got.PublicAddress)
+	}
+	if got.PublicPort != "18905" {
+		t.Fatalf("expected PublicPort=18905, got %s", got.PublicPort)
+	}
+}
+
 func TestNodeLeaveAndRejoin(t *testing.T) {
 	// 1. Peer joins
 	p := Peer{ID: "peer-rejoin", PublicAddress: "10.0.0.2", Status: CONNECTED, Connected: true}
