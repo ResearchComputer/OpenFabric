@@ -22,6 +22,7 @@ resource "cloudflare_dns_record" "bootstraps" {
   content  = each.value
   type     = "A"
   proxied  = true
+  ttl      = 1
 }
 
 # Origin Rule: override destination port to 8092 for bootstraps.opentela.ai
@@ -86,6 +87,7 @@ resource "cloudflare_dns_record" "docs" {
   content = "opentela-docs.workers.dev"
   type    = "CNAME"
   proxied = true
+  ttl     = 1
 }
 
 # Bind docs.opentela.ai to the opentela-docs Worker
