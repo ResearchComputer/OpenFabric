@@ -17,5 +17,4 @@ solana:
 
 bootstrap:
   sources:
-    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"  # ocf-1
-    - "/ip4/152.67.64.117/tcp/43905/p2p/Qmf8AY2HccRM9uLrR9qQdjwBM46qstT7dEFmfFX6RWD4AA"  # ocf-2
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
