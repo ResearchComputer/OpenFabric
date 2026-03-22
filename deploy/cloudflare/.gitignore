@@ -1,0 +1,7 @@
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Secrets
+terraform.tfvars
