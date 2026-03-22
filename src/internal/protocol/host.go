@@ -136,18 +136,52 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		}),
 	}
 
-	// Only force public reachability for nodes that are actually publicly
-	// reachable (head/relay with public-addr). Workers behind firewalls
-	// need libp2p to detect they're private so it makes relay reservations
-	// that allow other peers to reach them via circuit relay.
+	// hostRef is set after host creation so the autorelay peer source
+	// callback can access the host. We use a pointer-to-pointer because
+	// the callback closure captures hostRef, and we set *hostRef later.
+	var hostRef *host.Host
 	if viper.GetString("public-addr") != "" {
+		// Head/relay nodes with a known public address: force public
+		// reachability so they don't waste time with AutoNAT probes.
 		opts = append(opts, libp2p.ForceReachabilityPublic())
+	} else {
+		// Workers (no public-addr): force private reachability so libp2p
+		// automatically reserves slots on relay servers. Without this,
+		// AutoNAT may incorrectly report "public" (the relay CAN reach
+		// the worker directly) even though the worker is unreachable from
+		// the cloud.
+		opts = append(opts, libp2p.ForceReachabilityPrivate())
+		// AutoRelay discovers relay servers from connected peers and
+		// maintains active reservations so other nodes can reach us
+		// via /p2p/<relay>/p2p-circuit/p2p/<us>.
+		opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(
+			func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
+				ch := make(chan peer.AddrInfo, numPeers)
+				go func() {
+					defer close(ch)
+					if hostRef == nil {
+						return
+					}
+					h := *hostRef
+					for _, p := range h.Network().Peers() {
+						select {
+						case ch <- peer.AddrInfo{ID: p, Addrs: h.Peerstore().Addrs(p)}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+				return ch
+			},
+		))
 	}
 
 	host, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, err
 	}
+	// Set hostRef so the autorelay peer source callback can access the host.
+	hostRef = &host
 
 	// Log connection events for debugging
 	host.Network().Notify(&network.NotifyBundle{
