@@ -23,6 +23,8 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
+	relayClient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -524,6 +526,31 @@ func ConnectedBootstraps() []string {
 	}
 	bootstraps = common.DeduplicateStrings(bootstraps)
 	return bootstraps
+}
+
+// MakeRelayReservations reserves a slot on every connected peer's relay
+// service. This is required for relay v2: without a reservation, other peers
+// cannot connect to us through the relay (they get NO_RESERVATION).
+// Only runs for workers (nodes without public-addr).
+func MakeRelayReservations() {
+	if viper.GetString("public-addr") != "" {
+		return // head/relay nodes don't need relay reservations
+	}
+	h, _ := GetP2PNode(nil)
+	for _, p := range h.Network().Peers() {
+		if p == h.ID() {
+			continue
+		}
+		ai := peer.AddrInfo{ID: p, Addrs: h.Peerstore().Addrs(p)}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := relayClient.Reserve(ctx, h, ai)
+		cancel()
+		if err != nil {
+			common.Logger.Debugf("Relay reservation on %s failed: %v", p.String()[:12], err)
+		} else {
+			common.Logger.Infof("Relay reservation on %s succeeded", p.String()[:12])
+		}
+	}
 }
 
 // EnsureConnected ensures we have a libp2p connection to the target peer.

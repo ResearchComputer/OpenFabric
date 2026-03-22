@@ -175,6 +175,13 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		// Now start auto-reconnect -- bitswap is ready to receive connection events.
 		StartAutoReconnect(ctx)
 
+		// Workers: reserve relay slots so head nodes can reach us via circuit.
+		// Delay slightly to let bootstrap connections establish first.
+		go func() {
+			time.Sleep(10 * time.Second)
+			MakeRelayReservations()
+		}()
+
 		startTombstoneCompactor(crdtStore)
 	})
 	return crdtStore, cancelSubscriptions
@@ -189,6 +196,11 @@ func Reconnect() {
 	addsInfo, err := peer.AddrInfosFromP2pAddrs(getDefaultBootstrapPeers(nil, mode)...)
 	common.ReportError(err, "Error while getting bootstrap peers")
 	ipfs.Bootstrap(addsInfo)
+	// Re-establish relay reservations after reconnecting.
+	go func() {
+		time.Sleep(5 * time.Second)
+		MakeRelayReservations()
+	}()
 }
 
 func ClearCRDTStore() {
