@@ -98,3 +98,39 @@ func TestWaitFor_ZeroDuration(t *testing.T) {
 	result := waitFor(ctx, 0)
 	assert.True(t, result, "waitFor with zero duration should return true immediately")
 }
+
+func TestBuildBootstrapAddr(t *testing.T) {
+	tests := []struct {
+		name         string
+		publicAddr   string
+		publicPort   string
+		fallbackPort string
+		peerID       string
+		want         string
+	}{
+		{
+			name:         "uses peer port",
+			publicAddr:   "1.2.3.4",
+			publicPort:   "18905",
+			fallbackPort: "43905",
+			peerID:       "QmTest123",
+			want:         "/ip4/1.2.3.4/tcp/18905/p2p/QmTest123",
+		},
+		{
+			name:         "falls back when port empty",
+			publicAddr:   "5.6.7.8",
+			publicPort:   "",
+			fallbackPort: "43905",
+			peerID:       "QmTest456",
+			want:         "/ip4/5.6.7.8/tcp/43905/p2p/QmTest456",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildBootstrapAddr(tt.publicAddr, tt.publicPort, tt.fallbackPort, tt.peerID)
+			if got != tt.want {
+				t.Errorf("BuildBootstrapAddr() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -445,15 +445,26 @@ func AllPeers() []*PeerWithStatus {
 	return pinfos
 }
 
+// BuildBootstrapAddr constructs a multiaddr string for a bootstrap peer.
+// If publicPort is empty, fallbackPort is used (for un-upgraded peers).
+func BuildBootstrapAddr(publicAddr, publicPort, fallbackPort, peerID string) string {
+	port := publicPort
+	if port == "" {
+		port = fallbackPort
+	}
+	return "/ip4/" + publicAddr + "/tcp/" + port + "/p2p/" + peerID
+}
+
 func ConnectedBootstraps() []string {
 	var bootstraps = []string{}
 	dnt := GetAllPeers()
 	host, _ := GetP2PNode(nil)
+	fallbackPort := viper.GetString("tcpport")
 	for _, p := range *dnt {
 		if p.PublicAddress != "" {
-			common.Logger.Debugf("Peer %s addr=%s connectedness=%s", p.ID, p.PublicAddress, host.Network().Connectedness(peer.ID(p.ID)))
+			common.Logger.Debugf("Peer %s addr=%s port=%s connectedness=%s", p.ID, p.PublicAddress, p.PublicPort, host.Network().Connectedness(peer.ID(p.ID)))
 			if host.Network().Connectedness(peer.ID(p.ID)) == network.Connected || host.ID().String() == p.ID {
-				bootstrapAddr := "/ip4/" + p.PublicAddress + "/tcp/" + viper.GetString("tcpport") + "/p2p/" + p.ID
+				bootstrapAddr := BuildBootstrapAddr(p.PublicAddress, p.PublicPort, fallbackPort, p.ID)
 				bootstraps = append(bootstraps, bootstrapAddr)
 			}
 		}
