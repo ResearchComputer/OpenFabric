@@ -6,6 +6,7 @@ udpport: "18820"
 mode: full
 loglevel: debug
 cleanslate: true
+role: relay
 
 security:
   require_signed_binary: false

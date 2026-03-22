@@ -19,4 +19,5 @@ solana:
 
 bootstrap:
   sources:
-    - "/ip4/129.132.93.93/tcp/18905/p2p/QmV4B8rADS7ygMQ37tSNQnDHX9ujmYEZBEDVSkkxavvxnZ"  # euler relay on eu-login-18
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+    - "/ip4/129.132.93.93/tcp/18905/p2p/QmV4B8rADS7ygMQ37tSNQnDHX9ujmYEZBEDVSkkxavvxnZ"  # euler relay fallback

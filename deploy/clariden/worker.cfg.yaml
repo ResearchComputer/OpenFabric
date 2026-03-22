@@ -19,4 +19,5 @@ solana:
 
 bootstrap:
   sources:
-    - "/ip4/172.28.38.18/tcp/18905/p2p/QmNXYTKxCgREE5RKLk7cFwCGFmW66sb3T2CE8UUSHacW7g"  # clariden relay on login node
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+    - "/ip4/172.28.38.18/tcp/18905/p2p/QmNXYTKxCgREE5RKLk7cFwCGFmW66sb3T2CE8UUSHacW7g"  # clariden relay fallback

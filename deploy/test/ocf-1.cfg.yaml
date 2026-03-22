@@ -4,6 +4,7 @@ port: "8092"
 tcpport: "43905"
 udpport: "59820"
 public-addr: "140.238.223.116"
+role: head
 mode: full
 loglevel: debug
 cleanslate: false
