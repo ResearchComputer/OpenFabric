@@ -40,10 +40,18 @@ func StartTicker() {
 			// Active liveness check: ping the peer through whatever
 			// transport is available (direct or relay circuit).
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			res := <-ping.Ping(ctx, host, peer_id)
+			ch := ping.Ping(ctx, host, peer_id)
+			var reachable bool
+			select {
+			case res, ok := <-ch:
+				reachable = ok && res.Error == nil
+				if !reachable && ok && res.Error != nil {
+					common.Logger.Debugf("Ping failed for peer %s: %v", peer_id, res.Error)
+				}
+			case <-ctx.Done():
+			}
 			cancel()
-			if res.Error != nil {
-				common.Logger.Debugf("Ping failed for peer %s: %v", peer_id, res.Error)
+			if !reachable {
 				p.Connected = false
 				disconnected++
 			} else {

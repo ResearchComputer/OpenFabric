@@ -33,7 +33,6 @@ Worker code deployment is handled by `wrangler deploy` from `docs/`, not by Open
    ```bash
    # Find record IDs via Cloudflare dashboard or API
    tofu import cloudflare_r2_bucket.docs_cache <account_id>/opentela-docs-opennext-cache
-   tofu import cloudflare_dns_record.docs <zone_id>/<record_id>
    tofu import cloudflare_workers_custom_domain.docs <account_id>/docs.opentela.ai
    ```
 
