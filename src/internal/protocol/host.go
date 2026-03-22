@@ -130,11 +130,18 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoNATv2(),
 		libp2p.EnableRelayService(),
-		libp2p.ForceReachabilityPublic(),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			ddht, err = newDHT(ctx, h, ds)
 			return ddht, err
 		}),
+	}
+
+	// Only force public reachability for nodes that are actually publicly
+	// reachable (head/relay with public-addr). Workers behind firewalls
+	// need libp2p to detect they're private so it makes relay reservations
+	// that allow other peers to reach them via circuit relay.
+	if viper.GetString("public-addr") != "" {
+		opts = append(opts, libp2p.ForceReachabilityPublic())
 	}
 
 	host, err := libp2p.New(opts...)
