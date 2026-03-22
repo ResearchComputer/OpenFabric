@@ -458,6 +458,15 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	IngestEvents(event)
 
 	common.Logger.Debugf("Service forward: peer=%s path=%s", targetPeer, requestPath)
+
+	// Ensure we can reach the target peer. If not directly connected,
+	// this will try relay circuit addresses through connected relay nodes.
+	if err := protocol.EnsureConnected(ctx, targetPeer); err != nil {
+		common.Logger.Warnf("Cannot reach worker %s: %v", targetPeer, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "worker unreachable: " + err.Error()})
+		return
+	}
+
 	target := url.URL{
 		Scheme: "libp2p",
 		Host:   targetPeer,

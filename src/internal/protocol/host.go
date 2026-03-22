@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	mrand "math/rand"
 	"net"
 	"opentela/internal/common"
@@ -27,6 +28,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/multiformats/go-multiaddr"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
@@ -481,6 +483,53 @@ func ConnectedBootstraps() []string {
 	}
 	bootstraps = common.DeduplicateStrings(bootstraps)
 	return bootstraps
+}
+
+// EnsureConnected ensures we have a libp2p connection to the target peer.
+// If not directly connected, it tries to reach the peer through relay
+// circuit addresses using any connected relay node as the hop.
+func EnsureConnected(ctx context.Context, targetPeerID string) error {
+	h, _ := GetP2PNode(nil)
+	pid, err := peer.Decode(targetPeerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	// Already connected — nothing to do.
+	if h.Network().Connectedness(pid) == network.Connected {
+		return nil
+	}
+
+	// Try known addresses from the peerstore first.
+	if addrs := h.Peerstore().Addrs(pid); len(addrs) > 0 {
+		if err := h.Connect(ctx, peer.AddrInfo{ID: pid, Addrs: addrs}); err == nil {
+			return nil
+		}
+	}
+
+	// Not directly reachable — try relay circuit through every connected peer.
+	// Construct /p2p/<relay>/p2p-circuit/p2p/<target> addresses.
+	common.Logger.Debugf("Peer %s not directly reachable, trying relay circuits", targetPeerID)
+	for _, connPeer := range h.Network().Peers() {
+		if connPeer == pid || connPeer == h.ID() {
+			continue
+		}
+		// Build a relay circuit multiaddr through this connected peer.
+		relayAddr, mErr := multiaddr.NewMultiaddr("/p2p/" + connPeer.String() + "/p2p-circuit/p2p/" + pid.String())
+		if mErr != nil {
+			continue
+		}
+		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = h.Connect(connectCtx, peer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{relayAddr}})
+		cancel()
+		if err == nil {
+			common.Logger.Debugf("Connected to %s via relay %s", targetPeerID, connPeer.String())
+			return nil
+		}
+		common.Logger.Debugf("Relay circuit via %s failed: %v", connPeer.String()[:12], err)
+	}
+
+	return fmt.Errorf("cannot reach peer %s (direct or via relay)", targetPeerID)
 }
 
 // GetResourceManagerStats returns current resource usage statistics
