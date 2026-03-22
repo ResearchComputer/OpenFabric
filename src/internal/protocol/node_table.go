@@ -108,6 +108,8 @@ func StartSWIM(ctx context.Context) {
 						pd.Role = []string{"worker"}
 					case swim.RoleHead:
 						pd.Role = []string{"head"}
+					case swim.RoleRelay:
+						pd.Role = []string{"relay"}
 					}
 					ne.PeerData = pd
 				}

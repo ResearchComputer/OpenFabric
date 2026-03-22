@@ -53,6 +53,7 @@ func init() {
 	startCmd.Flags().String("solana.mint", defaultConfig.Solana.Mint, "SPL token mint to verify ownership")
 	startCmd.Flags().Bool("solana.skip_verification", defaultConfig.Solana.SkipVerification, "Skip Solana token ownership verification (use for testing only)")
 	startCmd.Flags().Bool("cleanslate", true, "Clean slate")
+	startCmd.Flags().String("role", "worker", "Node role (worker, head, relay)")
 	rootcmd.AddCommand(initCmd)
 	rootcmd.AddCommand(startCmd)
 	rootcmd.AddCommand(versionCmd)
@@ -96,6 +97,7 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetDefault("billing.max_interval_minutes", 60)
 	viper.SetDefault("billing.dispute_threshold_pct", 10)
 
+	viper.SetDefault("role", "worker")
 	viper.SetDefault("security.require_signed_binary", true)
 
 	// Metrics aggregation configuration (opt-in, disabled by default)

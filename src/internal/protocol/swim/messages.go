@@ -36,6 +36,7 @@ const (
 	RoleUnknown RoleType = 0
 	RoleWorker  RoleType = 1
 	RoleHead    RoleType = 2
+	RoleRelay   RoleType = 3
 )
 
 // MemberEvent is a membership state change piggy-backed on probes.
