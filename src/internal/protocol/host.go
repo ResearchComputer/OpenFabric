@@ -501,6 +501,19 @@ func BuildBootstrapAddr(publicAddr, publicPort, fallbackPort, peerID string) str
 	return "/ip4/" + publicAddr + "/tcp/" + port + "/p2p/" + peerID
 }
 
+const maxBootstrapAge int64 = 10 * 60 // 10 minutes
+
+// isRecentRelayPeer returns true when p has the "relay" role and was seen
+// within maxBootstrapAge seconds of now.  Extracted for unit-testability.
+func isRecentRelayPeer(p Peer) bool {
+	for _, r := range p.Role {
+		if r == "relay" {
+			return (time.Now().Unix() - p.LastSeen) < maxBootstrapAge
+		}
+	}
+	return false
+}
+
 func ConnectedBootstraps() []string {
 	var bootstraps = []string{}
 	dnt := GetAllPeers()
@@ -515,8 +528,9 @@ func ConnectedBootstraps() []string {
 			}
 			connected := host.Network().Connectedness(pid) == network.Connected
 			isSelf := host.ID() == pid
-			common.Logger.Debugf("Peer %s addr=%s port=%s connected=%v self=%v", p.ID, p.PublicAddress, p.PublicPort, connected, isSelf)
-			if connected || isSelf {
+			isRecentRelay := isRecentRelayPeer(p)
+			common.Logger.Debugf("Peer %s addr=%s port=%s connected=%v self=%v recentRelay=%v", p.ID, p.PublicAddress, p.PublicPort, connected, isSelf, isRecentRelay)
+			if connected || isSelf || isRecentRelay {
 				bootstrapAddr := BuildBootstrapAddr(p.PublicAddress, p.PublicPort, fallbackPort, p.ID)
 				bootstraps = append(bootstraps, bootstrapAddr)
 			}
