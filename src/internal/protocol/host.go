@@ -563,9 +563,9 @@ func IsDirectlyConnected(targetPeerID string) bool {
 }
 
 // FindRelayFor returns the peer ID of a connected peer that can relay
-// requests to the target. It checks the node table for peers connected
-// to both us and the target (i.e., peers that appear in the target's
-// gossip network). Returns empty string if no relay is found.
+// requests to the target. Prefers peers with role=relay since they
+// bridge network segments and are likely connected to the target.
+// Returns empty string if no relay is found.
 func FindRelayFor(targetPeerID string) string {
 	h, _ := GetP2PNode(nil)
 	targetPID, err := peer.Decode(targetPeerID)
@@ -573,16 +573,25 @@ func FindRelayFor(targetPeerID string) string {
 		return ""
 	}
 
-	// Check each connected peer — if it's connected to both us and
-	// the target, it can act as an HTTP relay hop.
+	// First pass: prefer peers with role=relay in the node table.
 	for _, p := range h.Network().Peers() {
 		if p == targetPID || p == h.ID() {
 			continue
 		}
-		// We're connected to this peer. It can relay if it's also
-		// connected to the target. We can't verify that directly,
-		// but any peer in the mesh that we're connected to can
-		// forward via its own /v1/p2p/ handler.
+		if peerInfo, err := GetPeerFromTable(p.String()); err == nil {
+			for _, r := range peerInfo.Role {
+				if r == "relay" {
+					return p.String()
+				}
+			}
+		}
+	}
+
+	// Second pass: any connected peer as fallback.
+	for _, p := range h.Network().Peers() {
+		if p == targetPID || p == h.ID() {
+			continue
+		}
 		return p.String()
 	}
 	return ""
