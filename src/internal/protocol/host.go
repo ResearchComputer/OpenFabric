@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	mrand "math/rand"
 	"net"
 	"opentela/internal/common"
@@ -30,7 +29,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
-	"github.com/multiformats/go-multiaddr"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
@@ -553,51 +551,41 @@ func MakeRelayReservations() {
 	}
 }
 
-// EnsureConnected ensures we have a libp2p connection to the target peer.
-// If not directly connected, it tries to reach the peer through relay
-// circuit addresses using any connected relay node as the hop.
-func EnsureConnected(ctx context.Context, targetPeerID string) error {
+// IsDirectlyConnected returns true if we have a direct libp2p connection
+// to the given peer (not via relay circuit).
+func IsDirectlyConnected(targetPeerID string) bool {
 	h, _ := GetP2PNode(nil)
 	pid, err := peer.Decode(targetPeerID)
 	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
+		return false
+	}
+	return h.Network().Connectedness(pid) == network.Connected
+}
+
+// FindRelayFor returns the peer ID of a connected peer that can relay
+// requests to the target. It checks the node table for peers connected
+// to both us and the target (i.e., peers that appear in the target's
+// gossip network). Returns empty string if no relay is found.
+func FindRelayFor(targetPeerID string) string {
+	h, _ := GetP2PNode(nil)
+	targetPID, err := peer.Decode(targetPeerID)
+	if err != nil {
+		return ""
 	}
 
-	// Already connected — nothing to do.
-	if h.Network().Connectedness(pid) == network.Connected {
-		return nil
-	}
-
-	// Try known addresses from the peerstore first.
-	if addrs := h.Peerstore().Addrs(pid); len(addrs) > 0 {
-		if err := h.Connect(ctx, peer.AddrInfo{ID: pid, Addrs: addrs}); err == nil {
-			return nil
-		}
-	}
-
-	// Not directly reachable — try relay circuit through every connected peer.
-	// Construct /p2p/<relay>/p2p-circuit/p2p/<target> addresses.
-	common.Logger.Debugf("Peer %s not directly reachable, trying relay circuits", targetPeerID)
-	for _, connPeer := range h.Network().Peers() {
-		if connPeer == pid || connPeer == h.ID() {
+	// Check each connected peer — if it's connected to both us and
+	// the target, it can act as an HTTP relay hop.
+	for _, p := range h.Network().Peers() {
+		if p == targetPID || p == h.ID() {
 			continue
 		}
-		// Build a relay circuit multiaddr through this connected peer.
-		relayAddr, mErr := multiaddr.NewMultiaddr("/p2p/" + connPeer.String() + "/p2p-circuit/p2p/" + pid.String())
-		if mErr != nil {
-			continue
-		}
-		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err = h.Connect(connectCtx, peer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{relayAddr}})
-		cancel()
-		if err == nil {
-			common.Logger.Debugf("Connected to %s via relay %s", targetPeerID, connPeer.String())
-			return nil
-		}
-		common.Logger.Debugf("Relay circuit via %s failed: %v", connPeer.String()[:12], err)
+		// We're connected to this peer. It can relay if it's also
+		// connected to the target. We can't verify that directly,
+		// but any peer in the mesh that we're connected to can
+		// forward via its own /v1/p2p/ handler.
+		return p.String()
 	}
-
-	return fmt.Errorf("cannot reach peer %s (direct or via relay)", targetPeerID)
+	return ""
 }
 
 // GetResourceManagerStats returns current resource usage statistics

@@ -459,18 +459,33 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 	common.Logger.Debugf("Service forward: peer=%s path=%s", targetPeer, requestPath)
 
-	// Ensure we can reach the target peer. If not directly connected,
-	// this will try relay circuit addresses through connected relay nodes.
-	if err := protocol.EnsureConnected(ctx, targetPeer); err != nil {
-		common.Logger.Warnf("Cannot reach worker %s: %v", targetPeer, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "worker unreachable: " + err.Error()})
-		return
-	}
-
-	target := url.URL{
-		Scheme: "libp2p",
-		Host:   targetPeer,
-		Path:   requestPath,
+	// Determine how to reach the target peer.
+	// If directly connected, forward via libp2p://<worker>/<path>.
+	// If not, find a relay hop and forward via libp2p://<relay>/v1/p2p/<worker>/<path>.
+	// The relay's P2PForwardHandler will then forward to the worker using its
+	// own direct libp2p connection.
+	var target url.URL
+	if protocol.IsDirectlyConnected(targetPeer) {
+		target = url.URL{
+			Scheme: "libp2p",
+			Host:   targetPeer,
+			Path:   requestPath,
+		}
+	} else {
+		relayPeer := protocol.FindRelayFor(targetPeer)
+		if relayPeer == "" {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "no relay found to reach worker " + targetPeer})
+			return
+		}
+		// Route through relay: relay receives the request and forwards
+		// via its /v1/p2p/<worker> handler to the worker.
+		relayPath := "/v1/p2p/" + targetPeer + requestPath
+		common.Logger.Debugf("Relay hop: relay=%s path=%s", relayPeer[:12], relayPath)
+		target = url.URL{
+			Scheme: "libp2p",
+			Host:   relayPeer,
+			Path:   relayPath,
+		}
 	}
 	// Resolve the end-user's wallet from their bearer token (if auth is
 	// configured) and inject it into the forwarded request so the worker
