@@ -19,7 +19,9 @@ Most users will only interact with `/v1/service/`. The other two exist for direc
 
 ## Request flow
 
-A typical request goes through two hops:
+### Direct routing (same network)
+
+When the head node and worker are directly connected over libp2p, requests go through two hops:
 
 ```
 User ──► Head Node ──► Worker Node ──► Local Service (e.g. vLLM)
@@ -28,11 +30,45 @@ User ──► Head Node ──► Worker Node ──► Local Service (e.g. vLL
 ```
 
 1. **User → Head Node**: The user sends a request to `/v1/service/llm/v1/chat/completions` on the head node.
-2. **Candidate selection**: The head node reads the request body, queries the distributed node table for all connected peers that provide the `llm` service, and filters them by **identity group** (explained below).
+2. **Candidate selection**: The head node reads the request body, queries the distributed node table for all peers that provide the `llm` service, and filters them by **identity group** (explained below).
 3. **Load balancing**: One candidate is selected at random from the matching set.
 4. **P2P forwarding**: The request is forwarded over libp2p to the selected worker at `/v1/_service/llm/v1/chat/completions`.
 5. **Local forwarding**: The worker's Local Service Forward handler proxies the request to the local process (e.g., `localhost:8080` where vLLM is listening).
 6. **Response**: The response streams back through the same chain to the user. An `X-Computing-Node` header is added so the caller knows which peer served the request.
+
+### Relay-hop routing (across network segments)
+
+Workers behind firewalls (e.g., HPC compute nodes) are not directly reachable from cloud head nodes. A **relay node** bridges the two network segments. When the head node detects that the target worker is not directly connected, it automatically routes through the worker's advertised relay:
+
+```
+User ──► Head Node ──► Relay Node ──► Worker Node ──► Local Service
+         /v1/service/              /v1/p2p/<worker>/
+         llm/...                   v1/_service/llm/...
+```
+
+1. **User → Head Node**: Same as direct routing — the user sends a request to `/v1/service/llm/...`.
+2. **Candidate selection**: Same as direct routing — the head finds the worker in the node table.
+3. **Relay detection**: The head checks whether it has a direct libp2p connection to the worker. If not, it looks up the worker's `relay_peer` field in the node table. This field is set by the worker when it successfully reserves a slot on a relay.
+4. **Relay-hop forwarding**: The head sends the request over libp2p to the relay node at `/v1/p2p/<worker_peer_id>/v1/_service/llm/...`. The relay's P2P Forward handler then forwards it to the worker using its own direct libp2p connection.
+5. **Local forwarding + response**: Same as direct routing.
+
+This is fully transparent to the user — the same endpoint and request format works regardless of whether the worker is directly reachable or behind a relay. The routing overhead for a relay hop is approximately 30ms.
+
+### How relay registration works
+
+Relay-hop routing requires three things to happen automatically at startup:
+
+1. **Relay starts with `role: relay`**: The relay node registers itself in the CRDT with `role=relay` and its `public-addr`. It appears in the bootstrap list at `https://bootstraps.opentela.ai/v1/dnt/bootstraps`.
+2. **Worker discovers the relay**: The worker fetches the bootstrap list, finds the relay, and connects to it over libp2p.
+3. **Worker reserves a relay slot**: The worker makes a relay v2 reservation on the relay and stores the relay's peer ID in its own `relay_peer` CRDT field. This tells head nodes which relay can reach this worker.
+
+No manual configuration is needed. Workers only need this bootstrap config:
+
+```yaml
+bootstrap:
+  sources:
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+```
 
 ## Identity groups
 
