@@ -46,11 +46,11 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			pubsubParams.D = viper.GetInt("crdt.tuned_gossipsub_d")     // default 10
 			pubsubParams.Dlo = viper.GetInt("crdt.tuned_gossipsub_dlo") // default 4
 			pubsubParams.Dhi = viper.GetInt("crdt.tuned_gossipsub_dhi") // default 16
-		} else {
-			pubsubParams.D = 128
-			pubsubParams.Dlo = 16
-			pubsubParams.Dhi = 256
 		}
+		// Default GossipSub params (D=6, Dlo=4, Dhi=12) work well for
+		// networks of any size. The previous values (D=128, Dlo=16,
+		// Dhi=256) prevented mesh formation with fewer than 16 peers,
+		// causing CRDT data to not propagate between relay and cloud nodes.
 		psub, err := pubsub.NewGossipSub(ctx, host, pubsub.WithGossipSubParams(pubsubParams))
 		common.ReportError(err, "Error while creating pubsub")
 
