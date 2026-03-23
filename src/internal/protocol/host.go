@@ -535,6 +535,7 @@ func MakeRelayReservations() {
 		return // head/relay nodes don't need relay reservations
 	}
 	h, _ := GetP2PNode(nil)
+	var reservedRelay string
 	for _, p := range h.Network().Peers() {
 		if p == h.ID() {
 			continue
@@ -547,7 +548,17 @@ func MakeRelayReservations() {
 			common.Logger.Debugf("Relay reservation on %s failed: %v", p.String()[:12], err)
 		} else {
 			common.Logger.Infof("Relay reservation on %s succeeded", p.String()[:12])
+			if reservedRelay == "" {
+				reservedRelay = p.String()
+			}
 		}
+	}
+	// Store the relay peer ID in our own CRDT entry so head nodes
+	// know which relay to route through to reach us.
+	if reservedRelay != "" && myself.RelayPeer != reservedRelay {
+		myself.RelayPeer = reservedRelay
+		ReannounceLocalServices()
+		common.Logger.Infof("Registered relay peer %s in CRDT", reservedRelay[:12])
 	}
 }
 
@@ -563,17 +574,26 @@ func IsDirectlyConnected(targetPeerID string) bool {
 }
 
 // FindRelayFor returns the peer ID of a connected peer that can relay
-// requests to the target. Prefers peers with role=relay since they
-// bridge network segments and are likely connected to the target.
-// Returns empty string if no relay is found.
+// requests to the target worker. It checks the worker's RelayPeer field
+// first (the worker advertises which relay it reserved a slot on), then
+// falls back to any connected relay-role peer.
 func FindRelayFor(targetPeerID string) string {
 	h, _ := GetP2PNode(nil)
+
+	// Best option: the worker advertised its relay in the CRDT.
+	if targetInfo, err := GetPeerFromTable(targetPeerID); err == nil && targetInfo.RelayPeer != "" {
+		relayPID, err := peer.Decode(targetInfo.RelayPeer)
+		if err == nil && h.Network().Connectedness(relayPID) == network.Connected {
+			common.Logger.Debugf("Using worker's advertised relay %s", targetInfo.RelayPeer[:12])
+			return targetInfo.RelayPeer
+		}
+	}
+
+	// Fallback: any connected relay-role peer.
 	targetPID, err := peer.Decode(targetPeerID)
 	if err != nil {
 		return ""
 	}
-
-	// First pass: prefer peers with role=relay in the node table.
 	for _, p := range h.Network().Peers() {
 		if p == targetPID || p == h.ID() {
 			continue
@@ -585,14 +605,6 @@ func FindRelayFor(targetPeerID string) string {
 				}
 			}
 		}
-	}
-
-	// Second pass: any connected peer as fallback.
-	for _, p := range h.Network().Peers() {
-		if p == targetPID || p == h.ID() {
-			continue
-		}
-		return p.String()
 	}
 	return ""
 }

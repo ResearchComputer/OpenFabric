@@ -174,6 +174,10 @@ type Peer struct {
 	PublicAddress     string              `json:"public_address"`
 	PublicPort        string              `json:"public_port,omitempty"`
 	Hardware          common.HardwareSpec `json:"hardware"`
+	// RelayPeer is the peer ID of the relay this node has an active
+	// reservation on. Set by workers behind firewalls so head nodes
+	// know which relay to route through.
+	RelayPeer         string              `json:"relay_peer,omitempty"`
 	Connected         bool                `json:"connected"`
 	Load              []int               `json:"load"`
 	// BuildAttestation carries the version + commit + signature so peers
