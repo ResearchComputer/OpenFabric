@@ -1,13 +1,11 @@
 package protocol
 
 import (
-	"fmt"
 	"opentela/internal/common"
 	"os"
 	"path"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/mitchellh/go-homedir"
 )
 
 func writeKeyToFile(priv crypto.PrivKey) {
@@ -15,9 +13,9 @@ func writeKeyToFile(priv crypto.PrivKey) {
 	if err != nil {
 		common.Logger.Error("Error while marshalling private key: ", err)
 	}
-	home, err := homedir.Dir()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Println(err)
+		common.Logger.Error("Could not determine home directory: ", err)
 		os.Exit(1)
 	}
 	keyPath := path.Join(home, ".ocfcore", "keys", "id")
@@ -34,16 +32,15 @@ func writeKeyToFile(priv crypto.PrivKey) {
 }
 
 func loadKeyFromFile() crypto.PrivKey {
-	home, err := homedir.Dir()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Println(err)
 		return nil
 	}
 	keyPath := path.Join(home, ".ocfcore", "keys", "id")
 	common.Logger.Debug("Looking for keys under: ", keyPath)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
-		common.Logger.Error("Error while reading private key file: ", err)
+		common.Logger.Debug("No key file found: ", err)
 		return nil
 	}
 	priv, err := crypto.UnmarshalPrivateKey(keyData)
