@@ -209,7 +209,14 @@ func StartServer() {
 			crdtGroup.GET("/stats", getResourceStats) // Add resource manager stats endpoint
 			crdtGroup.POST("/_node", updateLocal)
 			crdtGroup.DELETE("/_node", deleteLocal)
+			if viper.GetString("role") == "head" {
+				crdtGroup.GET("/challenge", challengePeer)
+				crdtGroup.POST("/register", registerPeer)
+				StartChallengeCleanup()
+			}
 		}
+		v1.GET("/self", getSelf)
+		v1.POST("/sign", signData)
 		p2pGroup := v1.Group("/p2p")
 		{
 			p2pGroup.PATCH("/:peerId/*path", P2PForwardHandler)
