@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	ds "github.com/ipfs/go-datastore"
 	"github.com/spf13/viper"
 )
@@ -208,4 +209,24 @@ func TestNodeLeaveAndRejoin(t *testing.T) {
 	if got.PublicAddress != "10.0.0.3" {
 		t.Fatalf("expected updated public address 10.0.0.3, got %s", got.PublicAddress)
 	}
+}
+
+func TestGetSelf(t *testing.T) {
+	myself = Peer{ID: "QmTestSelf", Role: []string{"relay"}, PublicAddress: "1.2.3.4"}
+	got := GetSelf()
+	assert.Equal(t, "QmTestSelf", got.ID)
+	assert.Equal(t, "1.2.3.4", got.PublicAddress)
+	assert.Equal(t, []string{"relay"}, got.Role)
+}
+
+func TestSetMyselfForTest(t *testing.T) {
+	SetMyselfForTest(Peer{ID: "QmTestSet"})
+	assert.Equal(t, "QmTestSet", GetSelf().ID)
+}
+
+func TestRegisterRemotePeer_Signature(t *testing.T) {
+	// Verify the function exists with the correct signature by assigning it.
+	// Full integration test requires CRDT store which is tested in Task 8.
+	fn := RegisterRemotePeer
+	_ = fn
 }

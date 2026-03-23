@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"opentela/internal/attestation"
 	"opentela/internal/common"
 	"opentela/internal/platform"
@@ -542,4 +543,30 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	if err != nil {
 		common.Logger.Error("Error while initializing myself in the node table: ", err)
 	}
+}
+
+// GetSelf returns a copy of this node's own Peer record.
+func GetSelf() Peer {
+	return myself
+}
+
+// SetMyselfForTest sets the myself var for testing. Test-only.
+func SetMyselfForTest(p Peer) {
+	myself = p
+}
+
+// RegisterRemotePeer writes a remote peer's entry to the CRDT store.
+// Used by the HTTP registration endpoint to insert relay addresses.
+func RegisterRemotePeer(p Peer) error {
+	ctx := context.Background()
+	store, _ := GetCRDTStore()
+	key := ds.NewKey(p.ID)
+	p.Connected = false
+	p.LastSeen = time.Now().Unix()
+	value, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("marshal remote peer: %w", err)
+	}
+	UpdateNodeTableHook(key, value)
+	return store.Put(ctx, key, value)
 }
