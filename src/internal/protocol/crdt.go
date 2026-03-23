@@ -48,11 +48,21 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			pubsubParams.Dhi = viper.GetInt("crdt.tuned_gossipsub_dhi") // default 16
 		}
 		// Default GossipSub params (D=6, Dlo=4, Dhi=12) work well for
-		// networks of any size. The previous values (D=128, Dlo=16,
-		// Dhi=256) prevented mesh formation with fewer than 16 peers,
-		// causing CRDT data to not propagate between relay and cloud nodes.
+		// networks of any size.
 		psub, err := pubsub.NewGossipSub(ctx, host, pubsub.WithGossipSubParams(pubsubParams))
 		common.ReportError(err, "Error while creating pubsub")
+
+		// Bootstrap BEFORE joining the CRDT pubsub topic. GossipSub
+		// exchanges topic subscriptions with already-connected peers.
+		// If we join the topic before peers are connected, the relay
+		// won't see cloud nodes as CRDT topic subscribers, causing
+		// unidirectional mesh and CRDT data not propagating.
+		addsInfo, err := peer.AddrInfosFromP2pAddrs(getDefaultBootstrapPeers(nil, mode)...)
+		common.ReportError(err, "Error while getting bootstrap peers")
+		ipfs.Bootstrap(addsInfo)
+		// Give bootstrap connections time to establish before joining
+		// topics, so GossipSub sees the peers immediately.
+		time.Sleep(3 * time.Second)
 
 		topic, err := psub.Join(pubsubNet)
 		common.ReportError(err, "Error while joining pubsub topic")
@@ -126,7 +136,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			var peer Peer
 			err := json.Unmarshal(v, &peer)
 			common.ReportError(err, "Error while unmarshalling peer")
-			// When a new peer is added to the table it is marked as diconnected by default.
+			// When a new peer is added to the table it is marked as disconnected by default.
 			// Doing so allows to intercept ghost peers by the verification procedure.
 
 			// Do not update itself
@@ -157,16 +167,9 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		crdtStore, err = crdt.New(store, ds.NewKey(pubsubKey), ipfs, pubsubBC, opts)
 		common.ReportError(err, "Error while creating crdt store")
 
-		// Bootstrap IPFS-lite to connect to peers for bitswap DAG sync.
-		addsInfo, err := peer.AddrInfosFromP2pAddrs(getDefaultBootstrapPeers(nil, mode)...)
-		common.ReportError(err, "Error while getting bootstrap peers")
-		ipfs.Bootstrap(addsInfo)
-		common.ReportError(err, "Error while starting ticker")
-
 		StartAutoReconnect(ctx)
 
 		// Workers: reserve relay slots so head nodes can reach us via circuit.
-		// Delay slightly to let bootstrap connections establish first.
 		go func() {
 			time.Sleep(10 * time.Second)
 			MakeRelayReservations()
