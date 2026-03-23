@@ -432,11 +432,13 @@ func GetAllProviders(serviceName string) ([]Peer, error) {
 	tableUpdateSem <- struct{}{}
 	defer func() { <-tableUpdateSem }() // Release on exit
 	for _, peer := range table {
-		if peer.Connected {
-			for _, service := range peer.Service {
-				if service.Name == serviceName {
-					providers = append(providers, peer)
-				}
+		// Include all peers with matching services, not just directly
+		// connected ones. Workers behind relays appear as disconnected
+		// but are reachable via relay-hop routing.
+		for _, service := range peer.Service {
+			if service.Name == serviceName {
+				providers = append(providers, peer)
+				break
 			}
 		}
 	}

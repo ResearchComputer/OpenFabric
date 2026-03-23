@@ -95,18 +95,23 @@ func StartTicker() {
 		}
 
 		// Cleanup: remove peers that have been disconnected for a long time.
+		// Skip peers with registered services — they're actively providing
+		// workloads and may be reachable through a relay even if we can't
+		// ping them directly.
 		staleAfter := 10 * time.Minute
 		table := *GetAllPeers()
 		now := time.Now().Unix()
 		for id, p := range table {
-			if !p.Connected && p.LastSeen > 0 {
+			hasServices := len(p.Service) > 0
+			if !p.Connected && p.LastSeen > 0 && !hasServices {
 				if time.Unix(p.LastSeen, 0).Add(staleAfter).Before(time.Now()) {
 					common.Logger.Warnf("Removing stale peer %s (last seen %v)", id, time.Unix(p.LastSeen, 0))
 					DeleteNodeTableHook(ds.NewKey(id))
 				}
 			}
 			// Mark peers with very old LastSeen as disconnected (in-memory only).
-			if p.Connected && p.LastSeen > 0 && time.Unix(p.LastSeen, 0).Add(2*time.Minute).Before(time.Now()) {
+			// Skip peers with services — they may be behind a relay.
+			if p.Connected && p.LastSeen > 0 && !hasServices && time.Unix(p.LastSeen, 0).Add(2*time.Minute).Before(time.Now()) {
 				p.Connected = false
 				value, err := json.Marshal(p)
 				if err == nil {
