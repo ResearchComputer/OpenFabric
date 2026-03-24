@@ -225,8 +225,8 @@ func TestRegister_NonceReuse(t *testing.T) {
 	}
 	b, _ := json.Marshal(body)
 
-	// First attempt: will fail at attestation check (no build attestation),
-	// but the nonce is consumed by LoadAndDelete.
+	// First attempt: will fail at attestation check (no build attestation).
+	// The nonce is consumed after signature verification succeeds.
 	req1, _ := http.NewRequest("POST", "/v1/dnt/register", bytes.NewReader(b))
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()

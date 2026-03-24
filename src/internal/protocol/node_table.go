@@ -20,6 +20,7 @@ import (
 
 var dntOnce sync.Once
 var myself Peer
+var myselfMu sync.RWMutex
 
 var (
 	scalableNodeTable *nodetable.NodeTable
@@ -257,6 +258,7 @@ func MarkSelfAsBootstrap() {
 		host, _ := GetP2PNode(nil)
 		key := ds.NewKey(host.ID().String())
 		// Ensure the global `myself` has at least a stable ID before marshalling.
+		myselfMu.Lock()
 		if myself.ID == "" {
 			myself.ID = host.ID().String()
 		}
@@ -265,6 +267,7 @@ func MarkSelfAsBootstrap() {
 		myself.PublicPort = viper.GetString("tcpport")
 		myself.Connected = true
 		value, err := json.Marshal(myself)
+		myselfMu.Unlock()
 		UpdateNodeTableHook(key, value)
 		common.ReportError(err, "Error while marshalling peer")
 		if err := store.Put(ctx, key, value); err != nil {
@@ -282,11 +285,12 @@ func AnnounceLeave() {
 	common.Logger.Info("Leaving network")
 
 	// Update self status to LEFT
+	myselfMu.Lock()
 	myself.Status = LEFT
 	myself.Connected = false
 	myself.LastSeen = time.Now().Unix()
-
 	value, err := json.Marshal(myself)
+	myselfMu.Unlock()
 	if err != nil {
 		common.Logger.Error("Error while marshalling peer for leave: ", err)
 		return
@@ -464,6 +468,7 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	ctx := context.Background()
 	store, _ := GetCRDTStore()
 	key := ds.NewKey(host.ID().String())
+	myselfMu.Lock()
 	myself = Peer{
 		ID:            host.ID().String(),
 		PublicAddress: viper.GetString("public-addr"),
@@ -538,6 +543,7 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 	}
 
 	value, err := json.Marshal(myself)
+	myselfMu.Unlock()
 	common.ReportError(err, "Error while marshalling peer")
 	err = store.Put(ctx, key, value)
 	if err != nil {
@@ -547,11 +553,22 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 
 // GetSelf returns a copy of this node's own Peer record.
 func GetSelf() Peer {
+	myselfMu.RLock()
+	defer myselfMu.RUnlock()
 	return myself
+}
+
+// SetMyselfRelayPeer atomically updates the RelayPeer field on myself.
+func SetMyselfRelayPeer(relayPeer string) {
+	myselfMu.Lock()
+	defer myselfMu.Unlock()
+	myself.RelayPeer = relayPeer
 }
 
 // SetMyselfForTest sets the myself var for testing. Test-only.
 func SetMyselfForTest(p Peer) {
+	myselfMu.Lock()
+	defer myselfMu.Unlock()
 	myself = p
 }
 

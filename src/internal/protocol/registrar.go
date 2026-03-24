@@ -151,12 +151,14 @@ func provideService(service Service) {
 	key := ds.NewKey(host.ID().String())
 	// track locally and publish full set (deduped)
 	addLocalService(service)
+	myselfMu.Lock()
 	myself.Service = snapshotLocalServices()
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}
 	common.Logger.Debug("Registering LLM service: ", myself)
 	value, err := json.Marshal(myself)
+	myselfMu.Unlock()
 	UpdateNodeTableHook(key, value)
 	common.ReportError(err, "Error while marshalling peer")
 	err = store.Put(ctx, key, value)
@@ -174,7 +176,7 @@ func ReannounceLocalServices() {
 	store, _ := GetCRDTStore()
 	key := ds.NewKey(host.ID().String())
 	// refresh hardware and services
-	myself.Hardware.GPUs = platform.GetGPUInfo()
+	gpus := platform.GetGPUInfo()
 	// Start from localServices (the authoritative in-memory set) and merge
 	// any extra services present in the current node table entry so that
 	// services registered through other paths (e.g. HTTP API) are not lost.
@@ -191,11 +193,14 @@ func ReannounceLocalServices() {
 			}
 		}
 	}
+	myselfMu.Lock()
+	myself.Hardware.GPUs = gpus
 	myself.Service = merged
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}
 	value, err := json.Marshal(myself)
+	myselfMu.Unlock()
 	if err != nil {
 		common.Logger.Error("Error marshalling self during reannounce: ", err)
 		return

@@ -2,7 +2,6 @@ package crdt
 
 import (
 	"context"
-	"opentela/internal/common"
 	"strings"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -59,8 +58,6 @@ func NewPubSubBroadcaster(ctx context.Context, psub *pubsub.PubSub, topic string
 
 // Broadcast publishes some data.
 func (pbc *PubSubBroadcaster) Broadcast(ctx context.Context, data []byte) error {
-	peers := pbc.topic.ListPeers()
-	common.Logger.Debugf("CRDT topic has %d peers: %v", len(peers), peers)
 	return pbc.topic.Publish(ctx, data)
 }
 
@@ -86,6 +83,5 @@ func (pbc *PubSubBroadcaster) Next(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 
-	common.Logger.Debugf("received CRDT broadcast from %s (%d bytes)", msg.GetFrom(), len(msg.GetData()))
 	return msg.GetData(), nil
 }

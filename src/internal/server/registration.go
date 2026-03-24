@@ -87,14 +87,16 @@ func registerPeer(c *gin.Context) {
 		return
 	}
 
-	// 2. Look up and consume nonce (single-use).
-	val, ok := challengeStore.LoadAndDelete(req.ChallengeResponse.Nonce)
+	// 2. Look up nonce (do NOT consume yet — consume after signature verification
+	// so a failed request from a different party doesn't burn the legitimate nonce).
+	val, ok := challengeStore.Load(req.ChallengeResponse.Nonce)
 	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid or expired nonce"})
 		return
 	}
 	challenge := val.(pendingChallenge)
 	if time.Now().After(challenge.Expires) {
+		challengeStore.Delete(req.ChallengeResponse.Nonce)
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid or expired nonce"})
 		return
 	}
@@ -141,6 +143,9 @@ func registerPeer(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "signature verification failed"})
 		return
 	}
+
+	// Nonce signature verified — consume the nonce now (single-use).
+	challengeStore.Delete(req.ChallengeResponse.Nonce)
 
 	// 6. Build attestation must be present and valid.
 	if req.BuildAttestation == nil {

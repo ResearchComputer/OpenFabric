@@ -569,6 +569,10 @@ func MakeRelayReservations() {
 		return // head/relay nodes don't need relay reservations
 	}
 	h, _ := GetP2PNode(nil)
+	if h == nil {
+		common.Logger.Debug("MakeRelayReservations: host not ready, skipping")
+		return
+	}
 	var reservedRelay string
 	for _, p := range h.Network().Peers() {
 		if p == h.ID() {
@@ -589,8 +593,8 @@ func MakeRelayReservations() {
 	}
 	// Store the relay peer ID in our own CRDT entry so head nodes
 	// know which relay to route through to reach us.
-	if reservedRelay != "" && myself.RelayPeer != reservedRelay {
-		myself.RelayPeer = reservedRelay
+	if reservedRelay != "" && GetSelf().RelayPeer != reservedRelay {
+		SetMyselfRelayPeer(reservedRelay)
 		ReannounceLocalServices()
 		common.Logger.Infof("Registered relay peer %s in CRDT", reservedRelay[:12])
 	}
@@ -600,6 +604,9 @@ func MakeRelayReservations() {
 // to the given peer (not via relay circuit).
 func IsDirectlyConnected(targetPeerID string) bool {
 	h, _ := GetP2PNode(nil)
+	if h == nil {
+		return false
+	}
 	pid, err := peer.Decode(targetPeerID)
 	if err != nil {
 		return false
@@ -613,6 +620,9 @@ func IsDirectlyConnected(targetPeerID string) bool {
 // falls back to any connected relay-role peer.
 func FindRelayFor(targetPeerID string) string {
 	h, _ := GetP2PNode(nil)
+	if h == nil {
+		return ""
+	}
 
 	// Best option: the worker advertised its relay in the CRDT.
 	if targetInfo, err := GetPeerFromTable(targetPeerID); err == nil && targetInfo.RelayPeer != "" {
