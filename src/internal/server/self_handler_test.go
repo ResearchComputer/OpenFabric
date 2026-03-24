@@ -38,6 +38,19 @@ func TestGetSelf_RemoteDenied(t *testing.T) {
 	assert.Equal(t, 403, w.Code)
 }
 
+func TestGetSelf_SpoofedXForwardedFor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.Default()
+	r.GET("/v1/self", getSelf)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/v1/self", nil)
+	req.RemoteAddr = "10.0.0.1:12345"            // actual remote address
+	req.Header.Set("X-Forwarded-For", "127.0.0.1") // spoofed
+	r.ServeHTTP(w, req)
+	assert.Equal(t, 403, w.Code) // must still be denied
+}
+
 func TestSignData_RemoteDenied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.Default()

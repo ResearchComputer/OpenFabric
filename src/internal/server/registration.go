@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -169,9 +170,10 @@ func registerPeer(c *gin.Context) {
 		return
 	}
 
-	// 9. Public port must be non-empty.
-	if req.PublicPort == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "public_port is required"})
+	// 9. Public port must be a valid TCP port number.
+	port, err := strconv.Atoi(req.PublicPort)
+	if err != nil || port < 1 || port > 65535 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "public_port must be a valid TCP port (1-65535)"})
 		return
 	}
 
@@ -188,14 +190,26 @@ func registerPeer(c *gin.Context) {
 		return
 	}
 
-	// 11. Write peer to CRDT.
+	// 11. Sanitize: clear fields that are unverified or must not come from the caller.
+	if req.IdentityAttestation == nil {
+		req.Owner = ""
+		req.ProviderID = ""
+	}
+	// Restrict role to exactly ["relay"] regardless of what the caller sent.
+	req.Role = []string{"relay"}
+	// Clear fields that only the node itself should set.
+	req.Service = nil
+	req.Load = nil
+	req.Hardware = common.HardwareSpec{}
+
+	// 12. Write peer to CRDT.
 	if err := protocol.RegisterRemotePeer(req.Peer); err != nil {
 		common.Logger.Errorf("Failed to register remote peer %s: %v", req.ID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register peer"})
 		return
 	}
 
-	// 12. Success.
+	// 13. Success.
 	multiaddr := protocol.BuildBootstrapAddr(req.PublicAddress, req.PublicPort, "", req.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "registered",

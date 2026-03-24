@@ -12,7 +12,11 @@ import (
 )
 
 func isLoopback(c *gin.Context) bool {
-	ip := net.ParseIP(c.ClientIP())
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
 
@@ -45,6 +49,10 @@ func signData(c *gin.Context) {
 		return
 	}
 	host, _ := protocol.GetP2PNode(nil)
+	if host == nil {
+		c.JSON(503, gin.H{"error": "node not ready"})
+		return
+	}
 	privKey := host.Peerstore().PrivKey(host.ID())
 	if privKey == nil {
 		c.JSON(500, gin.H{"error": "no private key available"})
