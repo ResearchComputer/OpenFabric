@@ -111,6 +111,20 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	// 	panic(err)
 	// }
 
+	listenAddrs := []string{
+		"/ip4/0.0.0.0/tcp/" + viper.GetString("tcpport"),
+		"/ip4/0.0.0.0/udp/" + viper.GetString("udpport") + "/quic",
+	}
+	// Dedicated WebSocket port for Cloudflare-proxied connections.
+	// If wsport is set, listen on a separate port for WS traffic.
+	// Otherwise, WS shares the TCP port (may not work with all proxies).
+	if wsPort := viper.GetString("wsport"); wsPort != "" {
+		listenAddrs = append(listenAddrs, "/ip4/0.0.0.0/tcp/"+wsPort+"/ws")
+		common.Logger.Infof("WebSocket listener on port %s", wsPort)
+	} else {
+		listenAddrs = append(listenAddrs, "/ip4/0.0.0.0/tcp/"+viper.GetString("tcpport")+"/ws")
+	}
+
 	opts := []libp2p.Option{
 		libp2p.DefaultTransports,
 		libp2p.Identity(priv),
@@ -118,11 +132,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.ResourceManager(newResourceManager()),
 		// libp2p.ConnectionManager(connmgr),
 		libp2p.NATPortMap(),
-		libp2p.ListenAddrStrings(
-			"/ip4/0.0.0.0/tcp/"+viper.GetString("tcpport"),
-			"/ip4/0.0.0.0/tcp/"+viper.GetString("tcpport")+"/ws",
-			"/ip4/0.0.0.0/udp/"+viper.GetString("udpport")+"/quic",
-		),
+		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.EnableNATService(),
@@ -519,6 +529,7 @@ func ConnectedBootstraps() []string {
 	dnt := GetAllPeers()
 	host, _ := GetP2PNode(nil)
 	fallbackPort := viper.GetString("tcpport")
+	wsDomain := viper.GetString("ws_domain") // e.g., "p2p.opentela.ai"
 	for _, p := range *dnt {
 		if p.PublicAddress != "" {
 			pid, err := peer.Decode(p.ID)
@@ -533,6 +544,15 @@ func ConnectedBootstraps() []string {
 			if connected || isSelf || isRecentRelay {
 				bootstrapAddr := BuildBootstrapAddr(p.PublicAddress, p.PublicPort, fallbackPort, p.ID)
 				bootstraps = append(bootstraps, bootstrapAddr)
+				// Also advertise WSS multiaddr via Cloudflare domain so
+				// firewall-restricted nodes (e.g., JSC) can connect on port 443.
+				// Emitted for all peers with a public address — Cloudflare
+				// round-robins, so some attempts may hit the wrong origin
+				// (peer ID mismatch), but libp2p retries and succeeds.
+				if wsDomain != "" {
+					wssAddr := "/dns4/" + wsDomain + "/tcp/443/wss/p2p/" + p.ID
+					bootstraps = append(bootstraps, wssAddr)
+				}
 			}
 		}
 	}

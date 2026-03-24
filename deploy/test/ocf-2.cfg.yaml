@@ -2,6 +2,8 @@ name: ocf-2-head
 seed: "2"
 port: "8092"
 tcpport: "43905"
+wsport: "43906"
+ws_domain: "p2p.opentela.ai"
 udpport: "59820"
 public-addr: "152.67.64.117"
 role: head
