@@ -633,7 +633,8 @@ func FindRelayFor(targetPeerID string) string {
 		}
 	}
 
-	// Fallback: any connected relay-role peer.
+	// Fallback: any connected peer with relay or head role that is also
+	// connected to the target (i.e. can forward on our behalf).
 	targetPID, err := peer.Decode(targetPeerID)
 	if err != nil {
 		return ""
@@ -644,7 +645,7 @@ func FindRelayFor(targetPeerID string) string {
 		}
 		if peerInfo, err := GetPeerFromTable(p.String()); err == nil {
 			for _, r := range peerInfo.Role {
-				if r == "relay" {
+				if r == "relay" || r == "head" {
 					return p.String()
 				}
 			}
