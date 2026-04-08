@@ -35,7 +35,7 @@ func TestUsageStore_SaveAndGet(t *testing.T) {
 	}
 
 	// Get
-	retrieved, err := store.GetRecord("test-req-1")
+	retrieved, err := store.GetRecord("test-req-1", "tokens")
 	if err != nil {
 		t.Fatalf("GetRecord failed: %v", err)
 	}
@@ -111,7 +111,10 @@ func TestUsageStore_MarkAggregated(t *testing.T) {
 	}
 
 	// Mark 2 of the 3 as aggregated
-	if err := store.MarkAggregated([]string{"req-0", "req-1"}); err != nil {
+	if err := store.MarkAggregated([]*UsageRecord{
+		{RequestID: "req-0", MetricName: "tokens"},
+		{RequestID: "req-1", MetricName: "tokens"},
+	}); err != nil {
 		t.Fatalf("MarkAggregated failed: %v", err)
 	}
 
@@ -144,7 +147,7 @@ func TestUsageStore_MarkAggregated_EmptyList(t *testing.T) {
 	defer store.Close()
 
 	// Marking an empty list should not error
-	if err := store.MarkAggregated([]string{}); err != nil {
+	if err := store.MarkAggregated([]*UsageRecord{}); err != nil {
 		t.Fatalf("MarkAggregated with empty list should not error, got: %v", err)
 	}
 }
@@ -185,7 +188,7 @@ func TestUsageStore_GetRecord_NotFound(t *testing.T) {
 	defer store.Close()
 
 	// Request a non-existent record
-	_, err = store.GetRecord("does-not-exist")
+	_, err = store.GetRecord("does-not-exist", "tokens")
 	if err == nil {
 		t.Fatal("Expected error when getting non-existent record, got nil")
 	}

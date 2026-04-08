@@ -74,11 +74,18 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	}
 	var priv crypto.PrivKey
 	if seed == 0 {
-		// seed=0: always generate a fresh random identity (no persistence)
-		common.Logger.Debug("seed=0: generating ephemeral random key")
-		priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
-		if err != nil {
-			return nil, err
+		// seed=0 (default): load existing key from disk for stable identity.
+		// If no key file exists yet, generate a random one and persist it.
+		priv = loadKeyFromFile()
+		if priv == nil {
+			common.Logger.Debug("seed=0: no existing key file, generating and persisting new identity")
+			priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
+			if err != nil {
+				return nil, err
+			}
+			writeKeyToFile(priv)
+		} else {
+			common.Logger.Debug("seed=0: loaded existing identity from disk")
 		}
 	} else {
 		// seed!=0: use persisted key file for stable identity across restarts.

@@ -3,8 +3,9 @@ _internal/
 .env
 __pycache__
 *.out
-
+.omx
 # Website (Fumadocs)
 website/node_modules/
 website/.next/
 website/.source/
+.omx/

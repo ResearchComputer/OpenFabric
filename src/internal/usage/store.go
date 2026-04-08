@@ -2,6 +2,7 @@ package usage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	badger "github.com/dgraph-io/badger/v4"
@@ -32,7 +33,7 @@ func (s *UsageStore) Close() error {
 
 // SaveRecord persists a usage record
 func (s *UsageStore) SaveRecord(record *UsageRecord) error {
-	key := []byte(fmt.Sprintf("record/%s", record.RequestID))
+	key := []byte(fmt.Sprintf("record/%s/%s", record.RequestID, record.MetricName))
 
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -44,11 +45,11 @@ func (s *UsageStore) SaveRecord(record *UsageRecord) error {
 	})
 }
 
-// GetRecord retrieves a usage record by request ID
-func (s *UsageStore) GetRecord(requestID string) (*UsageRecord, error) {
+// GetRecord retrieves a usage record by request ID and metric name.
+func (s *UsageStore) GetRecord(requestID string, metricName string) (*UsageRecord, error) {
 	var record UsageRecord
 
-	key := []byte(fmt.Sprintf("record/%s", requestID))
+	key := []byte(fmt.Sprintf("record/%s/%s", requestID, metricName))
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
@@ -107,12 +108,14 @@ func (s *UsageStore) GetPendingRecords(consumer, provider, service, metric strin
 	return records, err
 }
 
-// MarkAggregated removes records that have been aggregated
-func (s *UsageStore) MarkAggregated(requestIDs []string) error {
+// MarkAggregated removes records that have been aggregated.
+// Each element in records must be a "requestID/metricName" compound key
+// matching the format used by SaveRecord.
+func (s *UsageStore) MarkAggregated(records []*UsageRecord) error {
 	return s.db.Update(func(txn *badger.Txn) error {
-		for _, id := range requestIDs {
-			key := []byte(fmt.Sprintf("record/%s", id))
-			if err := txn.Delete(key); err != nil {
+		for _, r := range records {
+			key := []byte(fmt.Sprintf("record/%s/%s", r.RequestID, r.MetricName))
+			if err := txn.Delete(key); err != nil && !errors.Is(err, badger.ErrKeyNotFound) {
 				return err
 			}
 		}

@@ -79,7 +79,7 @@ func TestBillingPipeline_EndToEnd(t *testing.T) {
 
 	require.NoError(t, store.SaveRecord(headRecord))
 
-	got, err := store.GetRecord(requestID)
+	got, err := store.GetRecord(requestID, "tokens")
 	require.NoError(t, err)
 	assert.Equal(t, headRecord.MetricValue, got.MetricValue)
 
@@ -304,7 +304,7 @@ func TestBillingPipeline_StoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store2.Close() })
 
-	got, err := store2.GetRecord("persist-req-1")
+	got, err := store2.GetRecord("persist-req-1", "tokens")
 	require.NoError(t, err)
 	assert.Equal(t, int64(42000), got.MetricValue)
 	assert.Equal(t, "llm", got.Service)
@@ -424,7 +424,10 @@ func TestBillingPipeline_PendingRecordFiltering(t *testing.T) {
 	assert.Equal(t, int64(5000), gpuPending[0].MetricValue)
 
 	// Mark r1, r2 as aggregated — they should disappear
-	require.NoError(t, store.MarkAggregated([]string{"r1", "r2"}))
+	require.NoError(t, store.MarkAggregated([]*usage.UsageRecord{
+		{RequestID: "r1", MetricName: "tokens"},
+		{RequestID: "r2", MetricName: "tokens"},
+	}))
 
 	remaining, err := store.GetPendingRecords("head-1", "w1", "llm", "tokens")
 	require.NoError(t, err)

@@ -44,19 +44,18 @@ import (
 //
 // Returns the wallet public key, or "" if the caller cannot be identified.
 func resolveCallerWallet(r *http.Request) string {
-	// Prefer the end-user wallet injected by the head node.
+	if !isLibp2pRemoteAddr(r.RemoteAddr) {
+		return ""
+	}
+
+	// Only trust X-Otela-Client-Wallet when the request arrived over libp2p,
+	// meaning the direct caller is a verified peer (the head node). A plain
+	// HTTP caller could forge this header to bypass access control.
 	if clientWallet := r.Header.Get("X-Otela-Client-Wallet"); clientWallet != "" {
 		return clientWallet
 	}
 
 	addr := r.RemoteAddr
-	// libp2p-http sets RemoteAddr to the raw peer ID string.
-	// Peer IDs start with "12D3" (modern), "Qm" (legacy), or "16Ui".
-	if !strings.HasPrefix(addr, "12D3") &&
-		!strings.HasPrefix(addr, "Qm") &&
-		!strings.HasPrefix(addr, "16Ui") {
-		return ""
-	}
 	peer, err := protocol.GetPeerFromTable(addr)
 	if err != nil {
 		return ""
@@ -137,6 +136,18 @@ func accessControlMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// isLibp2pRemoteAddr returns true when addr looks like a libp2p peer ID.
+// libp2p-http sets http.Request.RemoteAddr to the raw peer ID string
+// (no host:port). Known base58-encoded prefixes:
+//   - "12D3" — Ed25519/identity multihash (current default)
+//   - "Qm"   — SHA2-256 multihash (legacy RSA keys)
+//   - "16Ui" — secp256k1 keys
+func isLibp2pRemoteAddr(addr string) bool {
+	return strings.HasPrefix(addr, "12D3") ||
+		strings.HasPrefix(addr, "Qm") ||
+		strings.HasPrefix(addr, "16Ui")
 }
 
 func containsWallet(list []string, wallet string) bool {
