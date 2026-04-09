@@ -69,6 +69,26 @@ def test_compute_diff_needs_cancel():
     assert cancels[0].job_id == "200"
 
 
+def test_compute_diff_cancel_numeric_order():
+    """Ensure the newest job is cancelled using numeric (not lexicographic) ordering.
+
+    With string comparison, "99" > "100", so the wrong job would be selected.
+    With int comparison, 100 > 99, so job "100" (the newer one) is correctly cancelled.
+    """
+    job_name = job_identity("sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
+    desired = [("jsc", "sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4", 1)]
+    live_jobs = {
+        "jsc": [
+            _mock_job(job_name, "99"),
+            _mock_job(job_name, "100"),
+        ],
+    }
+    actions = compute_diff(desired, live_jobs)
+    cancels = [a for a in actions if a.action == "cancel"]
+    assert len(cancels) == 1
+    assert cancels[0].job_id == "100"
+
+
 def test_compute_diff_no_op():
     job_name = job_identity("sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
     desired = [("jsc", "sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4", 1)]

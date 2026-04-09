@@ -50,7 +50,7 @@ def compute_diff(
             for _ in range(replicas - current):
                 actions.append(Action(action="deploy", cluster=cluster, backend=backend, cmd=cmd, preset=preset))
         elif current > replicas:
-            excess = sorted(matching, key=lambda j: j.id, reverse=True)[: current - replicas]
+            excess = sorted(matching, key=lambda j: int(j.id) if j.id and str(j.id).isdigit() else 0, reverse=True)[: current - replicas]
             for job in excess:
                 actions.append(Action(action="cancel", cluster=cluster, backend=backend, cmd=cmd, preset=preset, job_id=job.id))
     return actions
