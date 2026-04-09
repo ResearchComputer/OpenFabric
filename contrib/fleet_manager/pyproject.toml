@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "otela-fleet"
+version = "0.2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "paramiko>=3.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+otela-fleet = "fleet_manager.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fleet_manager = ["templates/*.j2"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
