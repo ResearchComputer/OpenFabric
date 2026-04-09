@@ -340,7 +340,7 @@ otela-fleet start jsc \
 
 ### CSCS Clariden (Enroot, ARM64)
 
-This cluster uses enroot as the container runtime instead of apptainer. Requires an EDF template.
+This cluster uses enroot as the container runtime instead of apptainer. Requires an EDF template. A long-running relay node is available on the cluster, so the fleet manager skips relay startup and workers bootstrap directly from it.
 
 ```yaml
 name: clariden
@@ -357,15 +357,15 @@ binary:
 
 relay:
   seed: "199"
-  peer_id: QmNXYTKxCgREE5RKLk7cFwCGFmW66sb3T2CE8UUSHacW7g
-  host_ip: "172.28.38.18"
+  peer_id: QmeUuaFBbFuHQa7mLo3VzywEaEN4wi4XDAhwBPPqZ8eG4Q
+  host_ip: "148.187.108.172"
   port: "18092"
   tcp_port: "18905"
   udp_port: "18820"
   home_override: /tmp/opentela-relay
+  skip: true                  # long-running relay already available on-cluster
   bootstrap:
-    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"
-    - "/ip4/152.67.64.117/tcp/43905/p2p/Qmf8AY2HccRM9uLrR9qQdjwBM46qstT7dEFmfFX6RWD4AA"
+    - "/ip4/148.187.108.172/tcp/18905/p2p/QmeUuaFBbFuHQa7mLo3VzywEaEN4wi4XDAhwBPPqZ8eG4Q"
 
 worker:
   seed: "200"
