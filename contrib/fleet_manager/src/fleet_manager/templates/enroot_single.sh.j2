@@ -1,0 +1,71 @@
+#!/bin/bash
+#SBATCH --job-name={{ job_name }}
+{% if account %}
+#SBATCH --account={{ account }}
+{% endif %}
+{% if partition %}
+#SBATCH --partition={{ partition }}
+{% endif %}
+#SBATCH --time={{ time }}
+#SBATCH --gpus-per-node={{ gpus }}
+#SBATCH --nodes={{ nodes }}
+{% if cpus_per_task %}
+#SBATCH --cpus-per-task={{ cpus_per_task }}
+{% endif %}
+{% for line in extra_sbatch %}
+#SBATCH {{ line }}
+{% endfor %}
+#SBATCH --output={{ log_dir }}/opentela_%j.out
+#SBATCH --error={{ log_dir }}/opentela_%j.err
+
+set -euo pipefail
+
+export SERVICE_PORT={{ service_port }}
+export HF_HOME="{{ hf_cache }}"
+
+OTELA_BINARY="{{ binary_path }}"
+OTELA_CONFIG="{{ worker_config }}"
+
+{% for mod in modules %}
+module load {{ mod }}
+{% endfor %}
+
+echo "Starting backend on port $SERVICE_PORT..."
+{{ container_exec_prefix }} \
+    {{ user_cmd }} &
+BACKEND_PID=$!
+
+echo "Waiting for backend to be ready..."
+for i in $(seq 1 {{ startup_timeout }}); do
+    if curl -sf "http://localhost:${SERVICE_PORT}/health" > /dev/null 2>&1; then
+        echo "Backend is ready after ${i}s"
+        break
+    fi
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo "ERROR: backend process died"
+        exit 1
+    fi
+    sleep 1
+done
+
+if ! curl -sf "http://localhost:${SERVICE_PORT}/health" > /dev/null 2>&1; then
+    echo "ERROR: backend failed to start within {{ startup_timeout }}s"
+    kill "$BACKEND_PID" 2>/dev/null || true
+    exit 1
+fi
+
+echo "Starting OpenTela worker..."
+"$OTELA_BINARY" start --config "$OTELA_CONFIG" &
+OTELA_PID=$!
+
+echo "OpenTela worker started (PID=$OTELA_PID)"
+echo "Backend running (PID=$BACKEND_PID)"
+echo "Job is running on $(hostname)"
+
+wait -n "$BACKEND_PID" "$OTELA_PID" 2>/dev/null
+EXIT_CODE=$?
+
+echo "A process exited with code $EXIT_CODE, shutting down..."
+kill "$BACKEND_PID" "$OTELA_PID" 2>/dev/null || true
+wait
+exit $EXIT_CODE
