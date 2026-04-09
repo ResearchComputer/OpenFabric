@@ -104,8 +104,9 @@ def worker_submit(
     }
     job_script = render_template(template_name, template_vars)
     conn.run("mkdir -p ~/opentela ~/logs", target="slurm")
-    conn.put_string(job_script, "~/opentela/job.sh", target="slurm")
-    out, err, code = conn.run("cd ~/opentela && sbatch job.sh", target="slurm")
+    remote_script = f"~/opentela/job_{job_name}.sh"
+    conn.put_string(job_script, remote_script, target="slurm")
+    out, err, code = conn.run(f"cd ~/opentela && sbatch {remote_script}", target="slurm")
     if code != 0:
         raise RuntimeError(f"sbatch failed on {cfg.name}: {err.strip()}")
     job_id = out.strip().split()[-1]

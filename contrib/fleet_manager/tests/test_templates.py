@@ -10,7 +10,7 @@ def _apptainer_single_vars():
         "gpus": 4,
         "nodes": 1,
         "cpus_per_task": 48,
-        "extra_sbatch": ["--exclusive"],
+        "extra_sbatch": ["#SBATCH --exclusive"],
         "log_dir": "~/logs",
         "binary_path": "~/opentela/otela",
         "worker_config": "~/.config/opentela/cfg.yaml",

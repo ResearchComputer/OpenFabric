@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from fleet_manager.cluster import ClusterConfig, Preset, load_cluster, list_clusters
+from fleet_manager.cluster import ClusterConfig, Preset, load_cluster, list_clusters, job_identity
 
 
 MINIMAL_CLUSTER = {
@@ -128,3 +128,25 @@ def test_relay_multiaddr():
         _write_yaml(d, "test-cluster", MINIMAL_CLUSTER)
         cfg = load_cluster("test-cluster", cluster_dir=d)
         assert cfg.relay_multiaddr == "/ip4/10.0.0.1/tcp/18905/p2p/QmTest123"
+
+
+def test_job_identity():
+    name1 = job_identity("sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
+    assert name1.startswith("opentela-sglang-")
+    assert len(name1.split("-")[-1]) == 8  # 8-char hash
+
+    # Same inputs produce same output
+    name2 = job_identity("sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
+    assert name1 == name2
+
+    # Different cmd produces different hash
+    name3 = job_identity("sglang", "sglang serve Qwen/Qwen3-8B", "A100_4")
+    assert name1 != name3
+
+    # Different preset produces different hash
+    name4 = job_identity("sglang", "sglang serve Qwen/Qwen3-0.6B", "A100_8")
+    assert name1 != name4
+
+    # Different backend changes prefix
+    name5 = job_identity("vllm", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
+    assert name5.startswith("opentela-vllm-")

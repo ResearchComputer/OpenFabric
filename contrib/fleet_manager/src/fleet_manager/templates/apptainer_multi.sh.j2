@@ -13,7 +13,7 @@
 #SBATCH --cpus-per-task={{ cpus_per_task }}
 {% endif %}
 {% for line in extra_sbatch %}
-#SBATCH {{ line }}
+{{ line }}
 {% endfor %}
 #SBATCH --output={{ log_dir }}/opentela_%j.out
 #SBATCH --error={{ log_dir }}/opentela_%j.err

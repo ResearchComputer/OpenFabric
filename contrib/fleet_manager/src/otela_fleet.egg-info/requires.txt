@@ -1,0 +1,7 @@
+click>=8.0
+paramiko>=3.0
+pyyaml>=6.0
+jinja2>=3.0
+
+[dev]
+pytest>=7.0

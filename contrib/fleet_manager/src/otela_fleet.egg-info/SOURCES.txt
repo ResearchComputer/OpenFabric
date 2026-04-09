@@ -1,0 +1,10 @@
+pyproject.toml
+src/fleet_manager/__init__.py
+src/fleet_manager/templates/__init__.py
+src/otela_fleet.egg-info/PKG-INFO
+src/otela_fleet.egg-info/SOURCES.txt
+src/otela_fleet.egg-info/dependency_links.txt
+src/otela_fleet.egg-info/entry_points.txt
+src/otela_fleet.egg-info/requires.txt
+src/otela_fleet.egg-info/top_level.txt
+tests/test_cluster.py

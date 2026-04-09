@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: otela-fleet
+Version: 0.2.0
+Requires-Python: >=3.10
+Requires-Dist: click>=8.0
+Requires-Dist: paramiko>=3.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: jinja2>=3.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
