@@ -1,0 +1,21 @@
+image = "{{ container_image }}"
+
+mounts = [
+{% for mount in container_mounts %}
+  "{{ mount }}"{{ "," if not loop.last }}
+{% endfor %}
+]
+
+workdir = "{{ workdir | default('/users/' + user, true) }}"
+
+[env]
+{% for key, val in container_env.items() %}
+{{ key }}="{{ val }}"
+{% endfor %}
+{% for key, val in host_env.items() %}
+{{ key }}="{{ val }}"
+{% endfor %}
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda12"
