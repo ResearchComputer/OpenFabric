@@ -1,0 +1,20 @@
+name: {{ cluster_name }}-relay
+seed: "{{ relay_seed }}"
+port: "{{ relay_port }}"
+tcpport: "{{ relay_tcp_port }}"
+udpport: "{{ relay_udp_port }}"
+mode: full
+loglevel: debug
+cleanslate: true
+
+security:
+  require_signed_binary: {{ require_signed_binary | lower }}
+
+solana:
+  skip_verification: {{ skip_verification | lower }}
+
+bootstrap:
+  sources:
+{% for addr in bootstrap_sources %}
+    - "{{ addr }}"
+{% endfor %}

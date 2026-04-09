@@ -1,0 +1,24 @@
+name: {{ cluster_name }}-worker
+seed: "{{ worker_seed }}"
+port: "{{ worker_port }}"
+tcpport: "43905"
+udpport: "59820"
+mode: full
+loglevel: debug
+cleanslate: true
+
+service:
+  name: llm
+  port: "{{ service_port }}"
+
+security:
+  require_signed_binary: {{ require_signed_binary | lower }}
+
+solana:
+  skip_verification: {{ skip_verification | lower }}
+
+bootstrap:
+  sources:
+{% for src in bootstrap_sources %}
+    - "{{ src }}"
+{% endfor %}
