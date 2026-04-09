@@ -7,7 +7,7 @@ all:
     mode: full
     loglevel: debug
     cleanslate: false
-    require_signed_binary: false
+    require_signed_binary: true
     solana_skip_verification: true
   hosts:
     ocf-1:

@@ -595,7 +595,7 @@ func (store *Datastore) logStats(ctx context.Context) {
 				store.logger.Errorf("error listing heads: %s", err)
 			}
 
-			store.logger.Infof(
+			store.logger.Debugf(
 				"Number of heads: %d. Current max height: %d. Queued jobs: %d. Dirty: %t",
 				len(heads),
 				height,

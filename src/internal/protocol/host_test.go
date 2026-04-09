@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -229,6 +230,14 @@ func TestBuildBootstrapAddr(t *testing.T) {
 			peerID:       "QmTest456",
 			want:         "/ip4/5.6.7.8/tcp/43905/p2p/QmTest456",
 		},
+		{
+			name:         "supports dns hostnames",
+			publicAddr:   "bootstrap.opentela.io",
+			publicPort:   "43905",
+			fallbackPort: "9999",
+			peerID:       "QmDnsTest",
+			want:         "/dns/bootstrap.opentela.io/tcp/43905/p2p/QmDnsTest",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -237,5 +246,61 @@ func TestBuildBootstrapAddr(t *testing.T) {
 				t.Errorf("BuildBootstrapAddr() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildPublicTCPMultiaddr(t *testing.T) {
+	tests := []struct {
+		name       string
+		publicAddr string
+		port       string
+		want       string
+	}{
+		{
+			name:       "ipv4 address",
+			publicAddr: "148.187.108.172",
+			port:       "43905",
+			want:       "/ip4/148.187.108.172/tcp/43905",
+		},
+		{
+			name:       "hostname address",
+			publicAddr: "head-eu-01.opentela.io",
+			port:       "43905",
+			want:       "/dns/head-eu-01.opentela.io/tcp/43905",
+		},
+		{
+			name:       "strips accidental host port",
+			publicAddr: "148.187.108.172:8092",
+			port:       "43905",
+			want:       "/ip4/148.187.108.172/tcp/43905",
+		},
+		{
+			name:       "ipv6 address",
+			publicAddr: "2001:db8::1",
+			port:       "43905",
+			want:       "/ip6/2001:db8::1/tcp/43905",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildPublicTCPMultiaddr(tt.publicAddr, tt.port)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got.String())
+		})
+	}
+}
+
+func TestAppendUniqueMultiaddrs(t *testing.T) {
+	base := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/10.0.0.1/tcp/43905"),
+	}
+	extra := multiaddr.StringCast("/ip4/148.187.108.172/tcp/43905")
+
+	got := appendUniqueMultiaddrs(base, extra, extra)
+
+	if assert.Len(t, got, 2) {
+		assert.Equal(t, "/ip4/10.0.0.1/tcp/43905", got[0].String())
+		assert.Equal(t, "/ip4/148.187.108.172/tcp/43905", got[1].String())
 	}
 }

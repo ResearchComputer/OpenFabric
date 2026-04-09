@@ -14,19 +14,19 @@ spec:
     spec:
       containers:
       - name: opentela-relay
-        image: ghcr.io/researchcomputer/ocf:amd64-stable
+        image: ghcr.io/xiaozheyao/opentela:latest
         imagePullPolicy: Always
         args:
           - start
-          - --mode
-          - "standalone"
           - --seed
           - "0"
+          - --public-addr
+          - "148.187.108.172"
         ports:
           - containerPort: 8092
-            name: ocf-http-port
+            name: otela-http-port
           - containerPort: 43905
-            name: ocf-p2p-port
+            name: otela-p2p-port
         resources:
           requests:
             memory: "8Gi"
@@ -36,7 +36,7 @@ spec:
             cpu: "8"
         volumeMounts:
           - name: key-id
-            mountPath: /root/.ocfcore/keys
+            mountPath: /root/.config/opentela/keys
             readOnly: true
       volumes:
         - name: key-id

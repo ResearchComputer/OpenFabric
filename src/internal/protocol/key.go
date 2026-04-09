@@ -18,7 +18,7 @@ func writeKeyToFile(priv crypto.PrivKey) {
 		common.Logger.Error("Could not determine home directory: ", err)
 		os.Exit(1)
 	}
-	keyPath := path.Join(home, ".ocfcore", "keys", "id")
+	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
 	err = os.MkdirAll(path.Dir(keyPath), os.ModePerm)
 	if err != nil {
 		common.Logger.Error("Could not create keys directory", "error", err)
@@ -36,7 +36,7 @@ func loadKeyFromFile() crypto.PrivKey {
 	if err != nil {
 		return nil
 	}
-	keyPath := path.Join(home, ".ocfcore", "keys", "id")
+	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
 	common.Logger.Debug("Looking for keys under: ", keyPath)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {

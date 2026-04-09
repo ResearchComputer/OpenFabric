@@ -154,13 +154,13 @@ const (
 
 // Peer is a single node in the network, as can be seen by the current node.
 type Peer struct {
-	ID                string              `json:"id"`
-	Latency           int                 `json:"latency"` // in ms
-	Privileged        bool                `json:"privileged"`
+	ID         string `json:"id"`
+	Latency    int    `json:"latency"` // in ms
+	Privileged bool   `json:"privileged"`
 	// Owner is the wallet public key (base58) of the node operator.
 	// This field is always a raw wallet pubkey and is used for
 	// trust/access-control decisions.
-	Owner             string              `json:"owner"`
+	Owner string `json:"owner"`
 	// ProviderID is the deterministic human-readable identifier derived
 	// from the wallet pubkey (e.g. "otela-AbCdEfGh...").  It is stored
 	// separately so that Owner always carries the raw pubkey and callers
@@ -179,9 +179,9 @@ type Peer struct {
 	// RelayPeer is the peer ID of the relay this node has an active
 	// reservation on. Set by workers behind firewalls so head nodes
 	// know which relay to route through.
-	RelayPeer         string              `json:"relay_peer,omitempty"`
-	Connected         bool                `json:"connected"`
-	Load              []int               `json:"load"`
+	RelayPeer string `json:"relay_peer,omitempty"`
+	Connected bool   `json:"connected"`
+	Load      []int  `json:"load"`
 	// BuildAttestation carries the version + commit + signature so peers
 	// can verify that this node is running an officially signed binary.
 	// Absent (nil) for nodes running older versions without attestation.
@@ -320,7 +320,7 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	// If enforcement is on, reject peers without a valid signed build.
 	// Always trust ourselves — a node should never reject its own entry.
 	if viper.GetBool("security.require_signed_binary") && !peer.SignedBuild && peer.ID != MyID {
-		common.Logger.Warnf("Rejecting peer [%s]: no valid build attestation (security.require_signed_binary=true)", peer.ID)
+		common.Logger.Debugf("Rejecting peer [%s]: no valid build attestation (security.require_signed_binary=true)", peer.ID)
 		return
 	}
 
