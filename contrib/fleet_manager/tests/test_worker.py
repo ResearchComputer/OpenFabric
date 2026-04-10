@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock
 import pytest
 
-from fleet_manager.worker import worker_list, worker_cancel, select_template, build_exec_prefix, Job
+from fleet_manager.cluster import Preset, ProxyChains
+from fleet_manager.worker import worker_list, worker_cancel, select_template, build_exec_prefix, Job, _effective_proxychains
 
 
 def _mock_conn():
@@ -87,3 +88,41 @@ def test_build_exec_prefix_enroot():
     prefix = build_exec_prefix(cfg)
     assert "srun" in prefix
     assert "~/.edf/sglang.toml" in prefix
+
+
+def test_effective_proxychains_disabled_by_default():
+    cfg = MagicMock()
+    cfg.proxychains = ProxyChains()
+    preset = Preset(partition="booster", account="a", time="1:00:00", gpus=4)
+    result = _effective_proxychains(cfg, preset)
+    assert result["enabled"] is False
+
+
+def test_effective_proxychains_enabled_passthrough():
+    cfg = MagicMock()
+    cfg.proxychains = ProxyChains(
+        enabled=True,
+        ssh_key="~/.ssh/id_jsc",
+        proxy_target="jureca",
+        socks_port=1080,
+        skip_partitions=["develbooster"],
+    )
+    preset = Preset(partition="booster", account="a", time="1:00:00", gpus=4)
+    result = _effective_proxychains(cfg, preset)
+    assert result["enabled"] is True
+    assert result["ssh_key"] == "~/.ssh/id_jsc"
+    assert result["proxy_target"] == "jureca"
+    assert result["socks_port"] == 1080
+
+
+def test_effective_proxychains_skipped_on_skip_partition():
+    cfg = MagicMock()
+    cfg.proxychains = ProxyChains(
+        enabled=True,
+        ssh_key="~/.ssh/id_jsc",
+        proxy_target="jureca",
+        skip_partitions=["develbooster"],
+    )
+    preset = Preset(partition="develbooster", account="a", time="1:00:00", gpus=4)
+    result = _effective_proxychains(cfg, preset)
+    assert result["enabled"] is False

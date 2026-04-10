@@ -1,0 +1,97 @@
+name: jsc
+ssh:
+  host: jsc
+
+arch: amd64
+
+binary:
+  local_path: ./binaries/otela-amd64
+  remote_path: ~/opentela/entry
+
+# Relay is optional on JSC — workers connect directly to head nodes via
+# Cloudflare-proxied WebSocket (wss://p2p.opentela.ai:443 → head:43906/ws).
+# Keeping a minimal relay section to satisfy fleet manager validation.
+relay:
+  seed: "299"
+  peer_id: QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs
+  host_ip: "127.0.0.1"
+  port: "18092"
+  tcp_port: "43900"
+  udp_port: "18820"
+  home_override: /tmp/opentela-relay
+  skip: true
+  bootstrap:
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+
+worker:
+  seed: "300"
+  port: "8092"
+  service_port: "30000"
+
+container:
+  runtime: apptainer
+  image: "lmsysorg/sglang:dev"
+  sif_path: "/p/scratch/laionize/yao4/containers/sglang-dev.sif"
+  pull_if_missing: true
+  hf_cache: "/p/scratch/laionize/yao4/models"
+  mounts:
+    - "/p/scratch/laionize/yao4:/p/scratch/laionize/yao4"
+    - "/p/home/jusers/yao4/juwels:/p/home/jusers/yao4/juwels"
+  env:
+    FLASHINFER_WORKSPACE_DIR: "/p/scratch/laionize/yao4/sglang_cache/flashinfer"
+    TRITON_CACHE_DIR: "/p/scratch/laionize/yao4/sglang_cache/triton"
+    TVM_FFI_CACHE_PATH: "/p/scratch/laionize/yao4/sglang_cache/tvm_ffi"
+    XDG_CACHE_HOME: "/p/scratch/laionize/yao4/sglang_cache/xdg"
+    TMPDIR: "/p/scratch/laionize/yao4/sglang_cache/tmp"
+  apptainer_flags:
+    - "--containall"
+    - "--writable-tmpfs"
+    - "--nv"
+
+# SSH SOCKS tunnel for compute nodes without direct internet (booster etc.).
+# Partitions like develbooster and dc-gpu-devel already have internet and
+# skip the tunnel.
+proxychains:
+  enabled: true
+  ssh_key: ~/.ssh/id_ed25519_jsc
+  proxy_target: jureca05.fz-juelich.de
+  socks_port: 1080
+  skip_partitions:
+    - develbooster
+    - dc-gpu-devel
+
+security:
+  require_signed_binary: false
+
+solana:
+  skip_verification: true
+
+presets:
+  A100_4:
+    partition: booster
+    account: laionize
+    time: "04:00:00"
+    gpus: 4
+    nodes: 1
+    extra_sbatch:
+      - "#SBATCH --nodes=1"
+      - "#SBATCH --gpus-per-node=4"
+
+  A100_4_dev:
+    partition: develbooster
+    account: laionize
+    time: "02:00:00"
+    gpus: 4
+    nodes: 1
+    extra_sbatch:
+      - "#SBATCH --nodes=1"
+      - "#SBATCH --gpus-per-node=4"
+
+  A100_8_multinode:
+    partition: booster
+    account: laionize
+    time: "08:00:00"
+    gpus: 4   # per node
+    nodes: 2
+    extra_sbatch:
+      - "#SBATCH --gpus-per-node=4"

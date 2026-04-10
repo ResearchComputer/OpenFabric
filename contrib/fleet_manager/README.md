@@ -38,10 +38,21 @@ otela-fleet apply fleet.yaml
 
 ## Configuration
 
-Cluster configs are YAML files stored in `~/.config/opentela/fleet/clusters/` (or `./clusters/` in the current directory).
+Cluster configs are YAML files stored in `~/.config/opentela/fleet/clusters/` (or `./clusters/` in the current directory). Each cluster file contains:
 
-## Documentation
+- **infrastructure**: SSH host, relay settings, container runtime, mounts
+- **presets**: named hardware/SLURM configurations (`A100_4`, `rtx3090_1`, etc.). Each preset specifies partition, account, time, gpus, nodes, etc.
+- **proxychains** *(optional)*: SSH SOCKS tunnel for compute nodes without direct internet (e.g. JSC `booster`). The tunnel is skipped automatically on partitions listed in `skip_partitions`.
 
-- [Getting Started](docs/getting-started.md)
-- [Cluster Configuration](docs/cluster-config.md)
-- [Fleet Apply](docs/fleet-apply.md)
+See `clusters/jsc.yaml` for a fully-featured example.
+
+### User command
+
+The `--cmd` flag is passed verbatim to the container. Inside the container, the command can reference:
+
+- `$SERVICE_PORT` — where the backend should listen (the OpenTela worker polls this port for readiness)
+- `$HF_HOME` — Hugging Face cache directory
+
+### Multi-node
+
+If a preset sets `nodes: N` with `N > 1`, the fleet manager picks the multi-node template automatically. The user's `--cmd` is launched on every node via `srun --ntasks-per-node=1`. `$MASTER_ADDR`, `$MASTER_PORT`, `$NNODES`, and `$NODE_RANK` are exported for the backend to consume.

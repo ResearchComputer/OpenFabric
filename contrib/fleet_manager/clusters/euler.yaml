@@ -1,0 +1,64 @@
+name: euler
+ssh:
+  host: euler
+
+arch: amd64
+
+binary:
+  local_path: ./binaries/otela-amd64
+  remote_path: ~/opentela/entry
+
+relay:
+  seed: "99"
+  peer_id: QmV4B8rADS7ygMQ37tSNQnDHX9ujmYEZBEDVSkkxavvxnZ
+  host_ip: "129.132.93.93"
+  port: "18092"
+  tcp_port: "18905"
+  udp_port: "18820"
+  home_override: /tmp/opentela-relay
+  bootstrap:
+    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"
+    - "/ip4/152.67.64.117/tcp/43905/p2p/Qmf8AY2HccRM9uLrR9qQdjwBM46qstT7dEFmfFX6RWD4AA"
+
+worker:
+  seed: "100"
+  port: "8092"
+  service_port: "30000"
+
+modules:
+  - "stack/2025-06"
+  - "eth_proxy"
+
+container:
+  runtime: apptainer
+  image: "lmsysorg/sglang:latest"
+  sif_path: "~/containers/sglang.sif"
+  pull_if_missing: true
+  hf_cache: "$SCRATCH/.cache/huggingface"
+  mounts:
+    - "$SCRATCH:/scratch"
+    - "$TMPDIR:/tmp"
+  env:
+    FLASHINFER_WORKSPACE_DIR: "$TMPDIR/sglang_cache/flashinfer"
+    TRITON_CACHE_DIR: "$TMPDIR/sglang_cache/triton"
+  apptainer_flags:
+    - "--containall"
+    - "--writable-tmpfs"
+    - "--nv"
+
+security:
+  require_signed_binary: false
+
+solana:
+  skip_verification: true
+
+presets:
+  rtx3090_1:
+    partition: gpu
+    account: default
+    time: "04:00:00"
+    gpus: "rtx_3090:1"
+    nodes: 1
+    cpus_per_task: 8
+    extra_sbatch:
+      - "#SBATCH --mem-per-cpu=8G"

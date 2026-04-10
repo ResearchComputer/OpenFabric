@@ -25,6 +25,26 @@ class Preset:
 
 
 @dataclass
+class ProxyChains:
+    """SSH SOCKS tunnel config for compute nodes without direct internet.
+
+    When enabled, the job script opens an SSH tunnel to `proxy_target` from
+    inside the SLURM allocation and exports HTTP(S)_PROXY/ALL_PROXY pointing
+    at the local SOCKS port. Commands can also be wrapped explicitly with
+    `proxychains4 -q -f <conf>` for apps that ignore proxy env vars.
+
+    Set `skip_partitions` for partitions that already have internet access
+    (e.g. `develbooster`, `dc-gpu-devel` on JSC) so the tunnel is skipped.
+    """
+
+    enabled: bool = False
+    ssh_key: str = ""
+    proxy_target: str = ""
+    socks_port: int = 1080
+    skip_partitions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ClusterConfig:
     name: str
     ssh_host: str
@@ -57,6 +77,7 @@ class ClusterConfig:
     container_env: dict[str, str] = field(default_factory=dict)
     container_env_from_host: list[str] = field(default_factory=list)
     container_apptainer_flags: list[str] = field(default_factory=list)
+    proxychains: ProxyChains = field(default_factory=ProxyChains)
     require_signed_binary: bool = False
     skip_verification: bool = True
 
@@ -86,6 +107,18 @@ def _parse_presets(raw_presets: dict) -> dict[str, Preset]:
             extra_sbatch=values.get("extra_sbatch", []),
         )
     return presets
+
+
+def _parse_proxychains(raw: dict | None) -> ProxyChains:
+    if not raw:
+        return ProxyChains()
+    return ProxyChains(
+        enabled=bool(raw.get("enabled", False)),
+        ssh_key=raw.get("ssh_key", ""),
+        proxy_target=raw.get("proxy_target", ""),
+        socks_port=int(raw.get("socks_port", 1080)),
+        skip_partitions=list(raw.get("skip_partitions", [])),
+    )
 
 
 def load_cluster(name: str, cluster_dir: str = "./clusters") -> ClusterConfig:
@@ -131,6 +164,7 @@ def load_cluster(name: str, cluster_dir: str = "./clusters") -> ClusterConfig:
         container_env=container.get("env", {}),
         container_env_from_host=container.get("env_from_host", []),
         container_apptainer_flags=container.get("apptainer_flags", []),
+        proxychains=_parse_proxychains(raw.get("proxychains")),
         require_signed_binary=raw.get("security", {}).get("require_signed_binary", False),
         skip_verification=raw.get("solana", {}).get("skip_verification", True),
     )
@@ -168,6 +202,14 @@ def _validate_raw(raw: dict, path: Path) -> None:
     elif runtime == "apptainer":
         if not container.get("sif_path"):
             raise ValueError(f"{path}: apptainer runtime requires 'container.sif_path'")
+
+    pc = raw.get("proxychains")
+    if pc and pc.get("enabled"):
+        for key in ("ssh_key", "proxy_target"):
+            if not pc.get(key):
+                raise ValueError(
+                    f"{path}: proxychains.enabled requires 'proxychains.{key}'"
+                )
 
 
 def list_clusters(cluster_dir: str = "./clusters") -> list[str]:

@@ -44,11 +44,49 @@ mkdir -p "$HF_HOME"
 export {{ key }}="{{ val }}"
 {% endfor %}
 
+TUNNEL_PID=""
+PCHAIN=""
+{% if proxychains is defined and proxychains.enabled %}
+# --- Proxychains: SSH SOCKS tunnel for compute nodes without internet ---
+export SSH_KEY="{{ proxychains.ssh_key }}"
+export PATH="$HOME/.local/bin:$PATH"
+SOCKS_PORT={{ proxychains.socks_port }}
+
+PROXYCHAINS_CONF="$HOME/opentela/proxychains_${SLURM_JOB_ID}.conf"
+cat > "$PROXYCHAINS_CONF" << EOF
+strict_chain
+quiet_mode
+proxy_dns
+[ProxyList]
+socks5 127.0.0.1 $SOCKS_PORT
+EOF
+
+echo "Starting SSH SOCKS tunnel to {{ proxychains.proxy_target }}..."
+ssh -i "$SSH_KEY" \
+    -o StrictHostKeyChecking=no \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=60 \
+    -N -D "127.0.0.1:$SOCKS_PORT" \
+    {{ proxychains.proxy_target }} &
+TUNNEL_PID=$!
+sleep 3
+if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    echo "ERROR: SSH SOCKS tunnel failed to start"
+    exit 1
+fi
+echo "Tunnel established (PID=$TUNNEL_PID)"
+
+export HTTPS_PROXY="socks5h://127.0.0.1:$SOCKS_PORT"
+export HTTP_PROXY="socks5h://127.0.0.1:$SOCKS_PORT"
+export ALL_PROXY="socks5h://127.0.0.1:$SOCKS_PORT"
+PCHAIN="proxychains4 -q -f $PROXYCHAINS_CONF"
+{% endif %}
+
 {% if pull_if_missing %}
 if [ ! -f "$SIF" ]; then
     echo "Pulling container (one-time)..."
     mkdir -p "$(dirname "$SIF")"
-    apptainer pull "$SIF" docker://{{ container_image }}
+    $PCHAIN apptainer pull "$SIF" docker://{{ container_image }}
 fi
 {% endif %}
 
@@ -121,6 +159,7 @@ EXIT_CODE=$?
 
 echo "A process exited with code $EXIT_CODE, shutting down..."
 kill "$BACKEND_PID" "$OTELA_PID" 2>/dev/null || true
+[ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null || true
 rm -f "$LAUNCHER"
 wait
 exit $EXIT_CODE

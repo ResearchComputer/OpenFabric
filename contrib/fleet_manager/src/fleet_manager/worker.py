@@ -65,6 +65,23 @@ def worker_list(conn: ClusterConnection, target: str = "slurm") -> list[Job]:
     return jobs
 
 
+def _effective_proxychains(cfg: ClusterConfig, preset: Preset) -> dict:
+    """Resolve the proxychains block for a given preset.
+
+    Returns a dict the templates can read with an `enabled` key that's only
+    True when the cluster enables proxychains AND the preset's partition is
+    not in `skip_partitions`.
+    """
+    pc = cfg.proxychains
+    enabled = pc.enabled and preset.partition not in pc.skip_partitions
+    return {
+        "enabled": enabled,
+        "ssh_key": pc.ssh_key,
+        "proxy_target": pc.proxy_target,
+        "socks_port": pc.socks_port,
+    }
+
+
 def worker_submit(
     conn: ClusterConnection,
     cfg: ClusterConfig,
@@ -101,6 +118,7 @@ def worker_submit(
         "container_mounts": cfg.container_mounts,
         "container_env": cfg.container_env,
         "apptainer_flags": cfg.container_apptainer_flags,
+        "proxychains": _effective_proxychains(cfg, preset),
     }
     job_script = render_template(template_name, template_vars)
     conn.run("mkdir -p ~/opentela ~/logs", target="slurm")

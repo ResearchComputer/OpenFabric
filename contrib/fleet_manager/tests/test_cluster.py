@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from fleet_manager.cluster import ClusterConfig, Preset, load_cluster, list_clusters, job_identity
+from fleet_manager.cluster import ClusterConfig, Preset, ProxyChains, load_cluster, list_clusters, job_identity
 
 
 MINIMAL_CLUSTER = {
@@ -150,3 +150,55 @@ def test_job_identity():
     # Different backend changes prefix
     name5 = job_identity("vllm", "sglang serve Qwen/Qwen3-0.6B", "A100_4")
     assert name5.startswith("opentela-vllm-")
+
+
+def test_proxychains_defaults_disabled():
+    with tempfile.TemporaryDirectory() as d:
+        _write_yaml(d, "test-cluster", MINIMAL_CLUSTER)
+        cfg = load_cluster("test-cluster", cluster_dir=d)
+        assert cfg.proxychains.enabled is False
+        assert cfg.proxychains.socks_port == 1080
+        assert cfg.proxychains.skip_partitions == []
+
+
+def test_proxychains_loaded_from_yaml():
+    data = {
+        **MINIMAL_CLUSTER,
+        "proxychains": {
+            "enabled": True,
+            "ssh_key": "~/.ssh/id_ed25519_jsc",
+            "proxy_target": "jureca05.fz-juelich.de",
+            "socks_port": 1081,
+            "skip_partitions": ["develbooster", "dc-gpu-devel"],
+        },
+    }
+    with tempfile.TemporaryDirectory() as d:
+        _write_yaml(d, "jsc", data)
+        cfg = load_cluster("jsc", cluster_dir=d)
+        assert cfg.proxychains.enabled is True
+        assert cfg.proxychains.ssh_key == "~/.ssh/id_ed25519_jsc"
+        assert cfg.proxychains.proxy_target == "jureca05.fz-juelich.de"
+        assert cfg.proxychains.socks_port == 1081
+        assert cfg.proxychains.skip_partitions == ["develbooster", "dc-gpu-devel"]
+
+
+def test_proxychains_enabled_without_ssh_key_raises():
+    data = {
+        **MINIMAL_CLUSTER,
+        "proxychains": {"enabled": True, "proxy_target": "jureca"},
+    }
+    with tempfile.TemporaryDirectory() as d:
+        _write_yaml(d, "bad", data)
+        with pytest.raises(ValueError, match="ssh_key"):
+            load_cluster("bad", cluster_dir=d)
+
+
+def test_proxychains_enabled_without_proxy_target_raises():
+    data = {
+        **MINIMAL_CLUSTER,
+        "proxychains": {"enabled": True, "ssh_key": "~/.ssh/id_ed25519"},
+    }
+    with tempfile.TemporaryDirectory() as d:
+        _write_yaml(d, "bad", data)
+        with pytest.raises(ValueError, match="proxy_target"):
+            load_cluster("bad", cluster_dir=d)

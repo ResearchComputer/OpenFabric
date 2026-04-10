@@ -85,6 +85,49 @@ def test_render_apptainer_multi():
     assert "wait -n" in result
 
 
+def test_render_apptainer_single_with_proxychains():
+    vars = _apptainer_single_vars()
+    vars["proxychains"] = {
+        "enabled": True,
+        "ssh_key": "~/.ssh/id_ed25519_jsc",
+        "proxy_target": "jureca05.fz-juelich.de",
+        "socks_port": 1080,
+    }
+    result = render_template("apptainer_single.sh.j2", vars)
+    assert "SSH SOCKS tunnel" in result
+    assert "jureca05.fz-juelich.de" in result
+    assert "~/.ssh/id_ed25519_jsc" in result
+    assert 'HTTPS_PROXY="socks5h://127.0.0.1:$SOCKS_PORT"' in result
+    assert "proxychains4 -q" in result
+    assert 'kill "$TUNNEL_PID"' in result
+
+
+def test_render_apptainer_single_without_proxychains():
+    vars = _apptainer_single_vars()
+    vars["proxychains"] = {"enabled": False}
+    result = render_template("apptainer_single.sh.j2", vars)
+    assert "SSH SOCKS tunnel" not in result
+    assert "proxychains4 -q" not in result
+
+
+def test_render_apptainer_multi_with_proxychains():
+    vars = _apptainer_single_vars()
+    vars["nodes"] = 2
+    vars["nccl_env"] = {"NCCL_SOCKET_IFNAME": "ib0"}
+    vars["container_mounts"] = ["/tmp:/tmp"]
+    vars["container_env"] = {"NCCL_SOCKET_IFNAME": "ib0"}
+    vars["apptainer_flags"] = ["--nv"]
+    vars["proxychains"] = {
+        "enabled": True,
+        "ssh_key": "~/.ssh/id_ed25519_jsc",
+        "proxy_target": "jureca05",
+        "socks_port": 1080,
+    }
+    result = render_template("apptainer_multi.sh.j2", vars)
+    assert "SSH SOCKS tunnel" in result
+    assert "jureca05" in result
+
+
 def test_render_worker_config():
     result = render_template("worker.cfg.yaml.j2", {
         "cluster_name": "test",
