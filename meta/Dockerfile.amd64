@@ -1,14 +1,26 @@
-FROM golang:1.23 AS build
+# syntax=docker/dockerfile:1.7
+FROM golang:1.26 AS build
+
+ARG VERSION
+ARG COMMIT_HASH
+ARG BUILD_DATE
 
 WORKDIR /app
 
 COPY src/ /app/src
-RUN cd /app/src/ && make build-release
+RUN --mount=type=secret,id=build_sign_key \
+    cd /app/src/ && \
+    BUILD_SIGN_KEY="$(cat /run/secrets/build_sign_key)" \
+    VERSION="${VERSION}" \
+    COMMIT_HASH="${COMMIT_HASH}" \
+    BUILD_DATE="${BUILD_DATE}" \
+    make build-signed && \
+    cp build/entry /app/otela-amd64
 
 FROM alpine:edge
 
 WORKDIR /app
-COPY --from=build /app/src/build/release/ocf-amd64 .
+COPY --from=build /app/otela-amd64 .
 RUN apk --no-cache add ca-certificates tzdata
 
-ENTRYPOINT ["/app/ocf-amd64"]
+ENTRYPOINT ["/app/otela-amd64"]

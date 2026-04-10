@@ -9,3 +9,4 @@ website/node_modules/
 website/.next/
 website/.source/
 .omx/
+.local/

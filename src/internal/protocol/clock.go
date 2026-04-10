@@ -105,7 +105,7 @@ func StartTicker() {
 			hasServices := len(p.Service) > 0
 			if !p.Connected && p.LastSeen > 0 && !hasServices {
 				if time.Unix(p.LastSeen, 0).Add(staleAfter).Before(time.Now()) {
-					common.Logger.Warnf("Removing stale peer %s (last seen %v)", id, time.Unix(p.LastSeen, 0))
+					common.Logger.Debugf("Removing stale peer %s (last seen %v)", id, time.Unix(p.LastSeen, 0))
 					DeleteNodeTableHook(ds.NewKey(id))
 				}
 			}

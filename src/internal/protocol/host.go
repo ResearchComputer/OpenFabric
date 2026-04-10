@@ -8,11 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	mrand "math/rand"
 	"net"
 	"opentela/internal/common"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,7 @@ import (
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/viper"
 )
 
@@ -151,6 +154,17 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 			ddht, err = newDHT(ctx, h, ds)
 			return ddht, err
 		}),
+	}
+
+	if publicAddr := strings.TrimSpace(viper.GetString("public-addr")); publicAddr != "" {
+		announcedAddr, err := buildPublicTCPMultiaddr(publicAddr, viper.GetString("tcpport"))
+		if err != nil {
+			common.Logger.With("public_addr", publicAddr).Warnf("Invalid public-addr for libp2p announce: %v", err)
+		} else {
+			opts = append(opts, libp2p.AddrsFactory(func(current []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+				return appendUniqueMultiaddrs(current, announcedAddr)
+			}))
+		}
 	}
 
 	// hostRef is set after host creation so the autorelay peer source
@@ -515,7 +529,78 @@ func BuildBootstrapAddr(publicAddr, publicPort, fallbackPort, peerID string) str
 	if port == "" {
 		port = fallbackPort
 	}
-	return "/ip4/" + publicAddr + "/tcp/" + port + "/p2p/" + peerID
+	addr, err := buildPublicTCPMultiaddr(publicAddr, port)
+	if err != nil {
+		return ""
+	}
+	return addr.String() + "/p2p/" + peerID
+}
+
+func buildPublicTCPMultiaddr(publicAddr, port string) (multiaddr.Multiaddr, error) {
+	if strings.TrimSpace(port) == "" {
+		return nil, errors.New("empty port")
+	}
+
+	host, protocol, err := publicAddrHostAndProtocol(publicAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return multiaddr.NewMultiaddr(fmt.Sprintf("/%s/%s/tcp/%s", protocol, host, port))
+}
+
+func publicAddrHostAndProtocol(publicAddr string) (string, string, error) {
+	addr := strings.TrimSpace(publicAddr)
+	if addr == "" {
+		return "", "", errors.New("empty public address")
+	}
+
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	} else if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") {
+		addr = strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
+	}
+
+	if ip := net.ParseIP(addr); ip != nil {
+		if ip.To4() != nil {
+			return addr, "ip4", nil
+		}
+		return addr, "ip6", nil
+	}
+
+	if strings.ContainsAny(addr, "/ \t") {
+		return "", "", fmt.Errorf("unsupported public address %q", publicAddr)
+	}
+
+	return addr, "dns", nil
+}
+
+func appendUniqueMultiaddrs(base []multiaddr.Multiaddr, extra ...multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]multiaddr.Multiaddr, 0, len(base)+len(extra))
+
+	for _, addr := range base {
+		key := addr.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, addr)
+	}
+
+	for _, addr := range extra {
+		if addr == nil {
+			continue
+		}
+		key := addr.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, addr)
+	}
+
+	return out
 }
 
 const maxBootstrapAge int64 = 10 * 60 // 10 minutes
