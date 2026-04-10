@@ -1,0 +1,169 @@
+---
+title: LLM Serving with Docker Containers
+description: How to use Docker-based LLM serving engines (e.g. SGLang) as a worker node subprocess in OpenTela.
+---
+
+OpenTela's `--subprocess` flag lets you delegate the LLM serving process to any command, including a `docker run` invocation. This is useful when you prefer not to install CUDA dependencies directly on the host, or when you want to pin a specific image version of a serving engine like [SGLang](https://github.com/sgl-project/sglang).
+
+## Prerequisites
+
+- Docker installed on the worker machine (`docker --version`)
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed, so Docker can access GPUs (`nvidia-ctk runtime configure --runtime=docker`)
+- A running head node (see [Spin Up a Network](/docs/tutorial/spinup))
+
+## How `--subprocess` works
+
+When you pass `--subprocess "docker run ..."`, OpenTela launches that command as a child process. It supervises the process and restores health-check state accordingly. The command string is split on whitespace — it is **not** passed through a shell, so shell quoting, pipes, and redirections do not work. Keep argument values free of spaces, or use a wrapper script (see [Complex Arguments](#complex-arguments-and-wrapper-scripts) below).
+
+## Step 1: Start the head node
+
+If you haven't already, start a head node on a machine with a public IP address:
+
+```bash
+./otela start --mode standalone --public-addr {YOUR_IP_ADDR} --seed 0
+```
+
+Note the peer ID printed in the logs — you'll need it for the worker command below.
+
+## Step 2: Start a worker node with SGLang in Docker
+
+```bash
+./otela start \
+  --bootstrap.addr /ip4/{YOUR_HEAD_IP}/tcp/43905/p2p/{YOUR_HEAD_PEER_ID} \
+  --subprocess "docker run --rm --gpus all --network host -v /root/.cache/huggingface:/root/.cache/huggingface -e HF_TOKEN={YOUR_HF_TOKEN} lmsysorg/sglang:latest python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --port 30000 --host 0.0.0.0" \
+  --service.name llm \
+  --service.port 30000 \
+  --seed 1
+```
+
+Key flags explained:
+
+| Docker flag | Purpose |
+|---|---|
+| `--rm` | Remove the container when it exits, avoiding leftover stopped containers |
+| `--gpus all` | Pass all host GPUs into the container (requires NVIDIA Container Toolkit) |
+| `--network host` | Share the host network namespace so OpenTela can reach the container on `localhost:30000` without explicit port mapping |
+| `-v /root/.cache/huggingface:/root/.cache/huggingface` | Mount the Hugging Face model cache from the host to avoid re-downloading on each run |
+| `-e HF_TOKEN=...` | Pass your Hugging Face token so the container can download gated models |
+
+The SGLang server flags:
+
+| SGLang flag | Purpose |
+|---|---|
+| `--model-path Qwen/Qwen3-8B` | Model to load (Hugging Face model ID or local path) |
+| `--port 30000` | Port inside the container; matches `--service.port` |
+| `--host 0.0.0.0` | Bind on all interfaces so it is reachable from the host |
+
+OpenTela flags:
+
+| otela flag | Purpose |
+|---|---|
+| `--subprocess "docker run ..."` | The command OpenTela will launch and supervise |
+| `--service.name llm` | Service name used for routing; keep this as `llm` for LLM serving |
+| `--service.port 30000` | Port OpenTela will proxy requests to (must match the SGLang port) |
+
+## Step 3: Verify the worker has registered
+
+Once the SGLang server is ready (this takes a minute or two while the model loads), OpenTela registers the worker with the head node. Check the head node's CRDT table:
+
+```bash
+curl http://{YOUR_HEAD_IP}:8092/v1/dnt/table
+```
+
+You should see the worker's peer entry with `"service": [{"name": "llm", ...}]` and the model listed under `"identity_group"`.
+
+## Step 4: Send requests
+
+Use the head node as a single entry point — OpenTela routes to the worker automatically:
+
+```python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://{YOUR_HEAD_IP}:8092/v1/service/llm/v1",
+    api_key="test-token"
+)
+
+response = client.chat.completions.create(
+    model="Qwen/Qwen3-8B",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response)
+```
+
+## Pinning a specific GPU
+
+To assign a specific GPU (e.g., device 0) to a container instead of all GPUs, replace `--gpus all` with `--gpus device=0`:
+
+```bash
+--subprocess "docker run --rm --gpus device=0 --network host ... lmsysorg/sglang:latest python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --port 30000 --host 0.0.0.0"
+```
+
+When running multiple workers on the same host (each on a different GPU), start a separate `otela` process per worker and assign each to a different GPU and port:
+
+```bash
+# Worker 0 on GPU 0, port 30000
+./otela start --bootstrap.addr ... --subprocess "docker run --rm --gpus device=0 --network host ... python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --port 30000 --host 0.0.0.0" --service.name llm --service.port 30000 --tcpport 43905 --udpport 59820 --port 8092 --seed 1
+
+# Worker 1 on GPU 1, port 30001
+./otela start --bootstrap.addr ... --subprocess "docker run --rm --gpus device=1 --network host ... python3 -m sglang.launch_server --model-path Qwen/Qwen3-35B-A22B --port 30001 --host 0.0.0.0" --service.name llm --service.port 30001 --tcpport 43906 --udpport 59821 --port 8093 --seed 2
+```
+
+## Complex arguments and wrapper scripts
+
+Because `--subprocess` is split on whitespace without shell interpretation, you cannot use spaces inside argument values or shell features like `&&`, pipes, or variable expansion. For anything more complex, write a small wrapper script and pass its path instead:
+
+```bash title="start-sglang.sh"
+#!/bin/bash
+docker run --rm \
+  --gpus all \
+  --network host \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  -e "HF_TOKEN=$HF_TOKEN" \
+  lmsysorg/sglang:latest \
+  python3 -m sglang.launch_server \
+    --model-path Qwen/Qwen3-8B \
+    --port 30000 \
+    --host 0.0.0.0 \
+    --trust-remote-code
+```
+
+```bash
+chmod +x start-sglang.sh
+HF_TOKEN=your_token ./otela start \
+  --bootstrap.addr /ip4/{HEAD_IP}/tcp/43905/p2p/{HEAD_PEER_ID} \
+  --subprocess ./start-sglang.sh \
+  --service.name llm \
+  --service.port 30000
+```
+
+The wrapper script is executed directly (no shell expansion of the path), so it must be executable and referenced by a path without spaces.
+
+## Equivalent config file
+
+If you prefer not to pass everything on the command line, you can set `subprocess` in the config file at `~/.config/opentela/cfg.yaml`:
+
+```yaml
+name: gpu-worker-docker
+service:
+  name: llm
+  port: "30000"
+
+subprocess: "./start-sglang.sh"
+
+bootstrap:
+  sources:
+    - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+
+security:
+  require_signed_binary: false
+
+solana:
+  skip_verification: true
+```
+
+Then run simply:
+
+```bash
+./otela start
+```

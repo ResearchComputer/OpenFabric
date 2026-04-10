@@ -7,7 +7,7 @@ type Bootstraps struct {
 type ModelData struct {
 	Id        string `json:"id"`
 	Object    string `json:"object"`
-	CreatedAt string `json:"created"`
+	CreatedAt int64 `json:"created"`
 	OwnedBy   string `json:"owned_by"`
 }
 

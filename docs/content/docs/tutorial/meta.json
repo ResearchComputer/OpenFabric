@@ -3,6 +3,7 @@
   "pages": [
     "installation",
     "spinup",
+    "docker-serving",
     "routing",
     "owner",
     "settlement",
