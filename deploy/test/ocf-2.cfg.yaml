@@ -20,3 +20,4 @@ solana:
 bootstrap:
   sources:
     - "https://bootstraps.opentela.ai/v1/dnt/bootstraps"
+    - "/ip4/140.238.223.116/tcp/43905/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs"

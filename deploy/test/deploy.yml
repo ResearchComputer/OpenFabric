@@ -210,3 +210,40 @@
         - name: Fail with message
           ansible.builtin.fail:
             msg: "Mesh verification failed on {{ inventory_hostname }}. See logs above."
+
+# Play 6: Teardown Euler-side relay and SLURM worker jobs
+# Runs only after the mesh is verified healthy. The test mesh lives entirely on
+# ocf-1/ocf-2, so any leftover Euler relay or workers just pollute the CRDT
+# table with stale peers.
+- name: Teardown Euler relay and jobs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Cancel all SLURM jobs owned by the current user
+      ansible.builtin.shell: |
+        set -o pipefail
+        ssh euler 'squeue --me -h -o "%i" | xargs -r scancel'
+      args:
+        executable: /bin/bash
+      register: scancel_result
+      changed_when: scancel_result.stdout | length > 0
+
+    - name: Stop relay and clean /tmp state on Euler
+      ansible.builtin.command:
+        cmd: ssh euler 'bash ~/opentela/cleanup.sh'
+      register: cleanup_result
+      changed_when: true
+
+    - name: Verify nothing is left on Euler
+      ansible.builtin.shell: |
+        set -o pipefail
+        ssh euler 'squeue --me; pgrep -af "opentela/entry" || echo "no relay process"'
+      args:
+        executable: /bin/bash
+      register: verify_result
+      changed_when: false
+
+    - name: Show Euler teardown result
+      ansible.builtin.debug:
+        var: verify_result.stdout_lines

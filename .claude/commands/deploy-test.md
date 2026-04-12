@@ -146,3 +146,22 @@ Both should list the other node. If verification fails, check logs:
 ssh ocf-1 'journalctl -u otela -n 50 --no-pager'
 ssh ocf-2 'journalctl -u otela -n 50 --no-pager'
 ```
+
+### 15. Teardown Euler relay and jobs
+
+Only after step 14 confirms the mesh is healthy, tear down any Euler-side test
+artifacts (SLURM worker jobs and the login-node relay). The test mesh itself
+lives only on ocf-1/ocf-2, so leaving the relay/workers up keeps stale peers in
+the CRDT table.
+
+```bash
+ssh euler 'squeue --me -h -o "%i" | xargs -r scancel'
+ssh euler 'bash ~/opentela/cleanup.sh'
+```
+
+`cleanup.sh` on Euler runs `pkill -f "entry start"` and removes
+`/tmp/opentela-relay*`. Verify nothing is left:
+
+```bash
+ssh euler 'squeue --me; pgrep -af "opentela/entry" || echo "no relay process"'
+```
