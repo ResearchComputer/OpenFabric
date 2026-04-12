@@ -58,6 +58,7 @@ func init() {
 	startCmd.Flags().String("solana.rpc", defaultConfig.Solana.RPC, "Solana RPC endpoint")
 	startCmd.Flags().String("solana.mint", defaultConfig.Solana.Mint, "SPL token mint to verify ownership")
 	startCmd.Flags().Bool("solana.skip_verification", defaultConfig.Solana.SkipVerification, "Skip Solana token ownership verification (use for testing only)")
+	startCmd.Flags().String("lb-policy", "random", "Load balancing policy for global service routing (random, round-robin, shortest-queue)")
 	startCmd.Flags().Bool("cleanslate", true, "Clean slate")
 	startCmd.Flags().String("role", "worker", "Node role (worker, head, relay)")
 	rootcmd.AddCommand(initCmd)

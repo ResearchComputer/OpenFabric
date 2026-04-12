@@ -457,6 +457,11 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	requestPath = "/v1/_service/" + serviceName + requestPath
 	clientWallet := resolveClientWallet(c)
 
+	// Load balancer configured via the lb-policy flag (random, round-robin,
+	// shortest-queue). Used for peer selection on the non-weighted path and to
+	// track in-flight requests per peer for queue-aware policies.
+	lb := GetLoadBalancer()
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		remaining := excludePeers(candidates, excluded)
 		if len(remaining) == 0 {
@@ -469,7 +474,9 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			weighted := scoreCandidates(remaining)
 			targetPeer = weightedRandomSelect(weighted)
 		} else {
-			targetPeer = remaining[rand.Intn(len(remaining))]
+			// Pick among the remaining candidates using the configured
+			// load balancing policy.
+			targetPeer = remaining[lb.Pick(remaining)]
 		}
 		excluded[targetPeer] = true
 
@@ -544,7 +551,12 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			return nil
 		}
 
+		// Track the in-flight request for queue-aware policies. ServeHTTP is
+		// synchronous (blocks until the response, including streaming, is
+		// complete), so the peer is considered busy for its whole duration.
+		lb.OnRequestStart(targetPeer)
 		proxy.ServeHTTP(rw, attemptReq)
+		lb.OnRequestEnd(targetPeer)
 
 		if rw.isRetryable() {
 			routingRetriesTotal.WithLabelValues(serviceName, strconv.Itoa(attempt+1)).Inc()

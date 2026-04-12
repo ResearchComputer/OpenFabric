@@ -110,6 +110,11 @@ func StartServer() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
 	defer stop()
 
+	// Configure load balancing policy for global service routing
+	lbPolicy := Policy(viper.GetString("lb-policy"))
+	SetLoadBalancerPolicy(lbPolicy)
+	common.Logger.Infof("Load balancing policy: %s", lbPolicy)
+
 	// Metrics aggregation: scrape worker /metrics via libp2p and serve aggregated
 	if viper.GetBool("metrics.aggregation_enabled") {
 		node, _ := protocol.GetP2PNode(nil)
