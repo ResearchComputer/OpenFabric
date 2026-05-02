@@ -1,0 +1,396 @@
+---
+title: Mesh Bench — OpenTela-native pairwise network profiling
+description: Design for an on-demand, libp2p-level latency and throughput benchmark across an OpenTela mesh, driven by the contrib network profiler.
+---
+
+**Date:** 2026-05-02
+**Status:** Draft
+**Author:** Claude
+
+## Overview
+
+`net-profiler bench` measures pairwise libp2p latency and throughput across an
+OpenTela mesh by bringing up an isolated, single-purpose mesh on a set of
+remote machines, sweeping every (source, destination) pair through three probe
+kinds, and writing per-pair results to JSONL.
+
+It exists because the existing `contrib/network-profiler/` measures raw IP RTT
+via `ping` and `iperf3`. Those numbers do not characterise what OpenTela
+actually experiences — its production traffic rides
+HTTP-over-libp2p with TLS, multiplexing, and (on Euler) relay-circuit hops.
+When relay reservations fail with `NO_RESERVATION`, raw `iperf3` between login
+nodes provides no signal. A profiler that drives the actual libp2p path does.
+
+## Goals
+
+- **On-demand pairwise sweep** — single command, fresh mesh per run, JSONL
+  output. Parallels `contrib/network-profiler/` so the two coexist as raw-IP
+  baseline vs. OpenTela-native measurement.
+- **Three probe kinds** — `libp2p_ping` (raw `/ipfs/ping/1.0.0` RTT),
+  `latency` (HTTP-over-libp2p `GET /v1/health` RTT), `throughput`
+  (HTTP-over-libp2p byte-stream of configurable size). The gap between
+  `libp2p_ping` and `latency` quantifies HTTP-tunnel overhead.
+- **Production-realistic path** — measurements ride the same code path as user
+  traffic: warm libp2p connections, real relay circuits, real TLS.
+- **Isolation** — each run uses a fresh config dir, fresh keys, dedicated
+  ports. No interaction with any persistent OpenTela state on the same hosts.
+- **Diagnostic surface, always available** — the new HTTP and CLI surface
+  ships in the OpenTela binary unconditionally. No feature flag.
+
+## Non-goals
+
+- Continuous mesh health monitoring (would write `Peer.Latency`, gossip RTT
+  through the CRDT). Future work, but explicitly out of scope here.
+- Replacing `contrib/network-profiler/`. Raw IP and OpenTela-native answer
+  different questions; both are kept.
+- Built-in heatmap rendering for the new throughput dimension. The existing
+  `render.py` is reused with a small tweak; multi-kind dashboards are future
+  work.
+- Authorisation on probe endpoints. They are unauthenticated, same as
+  `/v1/health`.
+
+## Architecture
+
+```
+┌──────────────────── developer laptop ────────────────────┐
+│  net-profiler bench --config machines.json               │
+│  ┌─ phases ────────────────────────────────────────────┐ │
+│  │ 1. init      (rcc → otela init per host)            │ │
+│  │ 2. discover  (rcc → otela peer-id per host)         │ │
+│  │ 3. configure (build per-host config locally)        │ │
+│  │ 4. push      (rcc → write config via stdin)         │ │
+│  │ 5. start     (rcc → nohup otela start &)            │ │
+│  │ 6. converge  (poll /v1/dnt/table per host)          │ │
+│  │ 7. sweep     (rcc → otela probe per pair × kind)    │ │
+│  │ 8. teardown  (rcc → pkill + rm -rf)                 │ │
+│  └─────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+                           │ rcc / libp2p
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+  ┌──────────┐       ┌──────────┐       ┌──────────┐
+  │ clariden │◀─────▶│ bristen  │◀─────▶│  euler   │  …
+  │ otela    │ libp2p│ otela    │ libp2p│ otela    │
+  └──────────┘       └──────────┘       └──────────┘
+   listens on        bench-only          new endpoints:
+   bench port,       config dir,         /v1/probe/echo
+   isolated CRDT     no production       /v1/probe/run
+   state             services            /ipfs/ping/1.0.0
+```
+
+The profiler runs on the developer laptop and dispatches every step over rcc.
+Each remote machine runs a fresh `otela` process bound to a bench-only HTTP
+port (default 19090) and libp2p port (default 19091), reading from a
+per-run config dir at `/tmp/otela-bench-<runID>/` so production state is
+untouched.
+
+## New OpenTela surface (Go side)
+
+### `src/internal/server/probe_handler.go` (new)
+
+Two endpoints, both registered in `server.go` alongside existing routes,
+both unauthenticated.
+
+**`GET /v1/probe/echo?bytes=N`** — server-side responder. Streams `N` zero
+bytes back with `Content-Length: N`. Hard cap of 1 GiB to prevent accidental
+DoS. Returns 400 on missing or invalid `bytes`. Used by the originator's
+throughput probe.
+
+**`POST /v1/probe/run`** — originator endpoint. JSON body:
+
+```json
+{
+  "target": "<peerID>",
+  "kind": "latency" | "throughput" | "libp2p_ping",
+  "bytes": <int, throughput only>,
+  "count": <int>,
+  "timeout_ms": <int>
+}
+```
+
+Behavior per kind. In all cases the originator dials the target peer
+through an internal libp2p HTTP client (the same `gostream`-based transport
+that `P2PForwardHandler` uses), not a self-recursive HTTP call through
+`/v1/p2p/`. The originator handler bypasses Gin and goes straight to the
+libp2p layer:
+
+- `latency` — `count` sequential `GET /v1/health` calls dialed at the target
+  peer over libp2p HTTP. Records each round-trip in nanoseconds.
+- `throughput` — `count` sequential `GET /v1/probe/echo?bytes=<bytes>` calls
+  dialed at the target peer over libp2p HTTP. Drains each response body,
+  records `bytes_received`, `elapsed_ns`, derives `mbps`.
+- `libp2p_ping` — `count` `ping.NewPingService(host).Ping(ctx, peerID)`
+  round-trips via the libp2p ping protocol. Bypasses HTTP entirely.
+
+Per-sample failures inside a `count` batch are recorded but do not fail the
+whole run; the response includes `failed_samples`. On total failure (peer
+unreachable, stream reset, all samples errored) the response is
+`{ok: false, error: "…"}`.
+
+The originator endpoint lives on the *running node*, not in the CLI, because
+the CLI process would have to spin up its own libp2p host to make a call —
+slow and pollutes the mesh just to make one measurement. The running node
+already has warm libp2p connections, which is the path we want to measure.
+
+### `src/internal/protocol/host.go` (modify)
+
+Register libp2p's built-in ping service after `newHost()`:
+
+```go
+import "github.com/libp2p/go-libp2p/p2p/protocol/ping"
+
+// after host construction
+ping.NewPingService(host)
+```
+
+This adds `/ipfs/ping/1.0.0` to the registered protocols. No config flag —
+diagnostic surface, always on. The same protocol is what
+`POST /v1/probe/run?kind=libp2p_ping` invokes.
+
+### `src/entry/cmd/probe.go` (new)
+
+Thin CLI shim. Reads the local config to find the running node's HTTP port,
+POSTs to `http://127.0.0.1:<port>/v1/probe/run` with the JSON body, prints
+the response body to stdout. Exit code 0 on `ok:true`, 1 otherwise.
+
+```
+otela probe --target <peerID>
+            [--kind latency|throughput|libp2p_ping]   (default: latency)
+            [--bytes 10485760]                        (10 MiB)
+            [--count 20]
+            [--timeout 60s]
+            [--config-dir /etc/opentela]
+```
+
+The CLI exists primarily so the Python profiler can invoke probes via
+`rcc run`, but it doubles as a useful per-host diagnostic when SSH'd in.
+
+### `src/entry/cmd/peerid.go` (new)
+
+```
+otela peer-id [--config-dir /etc/opentela]
+```
+
+Reads the keypair from the config dir, prints the PeerID to stdout, exits.
+No HTTP call. Used by the profiler's discover phase so PeerIDs are known
+before the start phase.
+
+## Python profiler `bench` command
+
+Implementation lives in `contrib/network-profiler/network_profiler/bench.py`
+(new). The existing `cli.py` grows a `bench` subcommand alongside `plan`,
+`collect`, `heatmap`.
+
+### Phases
+
+1. **Init** — for each host:
+   `rcc run --profile <h> -- otela init --config-dir /tmp/otela-bench-<runID>`.
+   Each host generates its own keypair locally; we do not reimplement libp2p
+   PeerID derivation in Python.
+
+2. **Discover PeerIDs** — for each host:
+   `rcc run --profile <h> -- otela peer-id --config-dir /tmp/otela-bench-<runID>`.
+   Stash the `host → PeerID` map in memory.
+
+3. **Configure** — locally render per-host `config.yaml` with:
+   - HTTP port `19090`, libp2p listen `/ip4/0.0.0.0/tcp/19091` (both
+     overridable per-host in `machines.json`)
+   - `bootstrap_peers`: every other host as `/ip4/<address>/tcp/19091/p2p/<peerID>`
+   - `cleanslate: true`, `security.require_signed_binary: false`
+   - All `scalability.*` feature flags off — measure baseline
+   - No services registered; bench nodes are bare libp2p endpoints
+
+4. **Push** — for each host:
+   `rcc run --profile <h> -- bash -c 'base64 -d > /tmp/otela-bench-<runID>/config.yaml'`
+   with the b64-encoded config piped through stdin. Avoids fragile filename
+   quoting and stays inside rcc's existing exec surface (no `rcc push` of
+   project trees needed).
+
+5. **Start** — for each host:
+   `rcc run --profile <h> -- bash -lc 'nohup otela start --config-dir /tmp/otela-bench-<runID> >>/tmp/otela-bench-<runID>/log 2>&1 &'`.
+   Then poll `rcc run -- curl -fsS http://127.0.0.1:19090/v1/health` until 200,
+   30s timeout per host.
+
+6. **Converge** — for each host, poll
+   `rcc run -- curl -s http://127.0.0.1:19090/v1/dnt/table` until every
+   peer's PeerID appears, 60s timeout per host. Convergence outcomes are
+   recorded in `run.json` whether or not all hosts converge in time.
+
+7. **Sweep** — for each `(src, dst, kind)` tuple where `src != dst`:
+   `rcc run --profile <src> -- otela probe --target <dst-peerID> --kind <kind> --count <N> --bytes <B> --config-dir /tmp/otela-bench-<runID>`.
+   Capture stdout JSON, append a record to `measurements.jsonl`.
+   Default plan: `libp2p_ping` (count=20), `latency` (count=20),
+   `throughput` (count=3, bytes=10 MiB). Sequential by kind, optional
+   `--parallel K` for within-kind concurrency.
+
+8. **Teardown** — for each host:
+   `rcc run -- bash -c 'pkill -f "otela start --config-dir /tmp/otela-bench-<runID>" && rm -rf /tmp/otela-bench-<runID>'`.
+   `pgrep` matches the unique runID path so production nodes cannot be killed.
+   `--keep` flag skips this phase for post-mortem inspection.
+
+### CLI surface
+
+```
+net-profiler bench --config machines.json
+                   [--output results/<runID>/]
+                   [--latency-count 20]
+                   [--throughput-bytes 10485760]
+                   [--throughput-count 3]
+                   [--parallel 4]
+                   [--http-port 19090] [--libp2p-port 19091]
+                   [--keep] [--run-id <id>]
+```
+
+### Signal handling
+
+SIGINT during any phase runs phase 8 (teardown) before exiting non-zero.
+A Ctrl-C never leaves dangling `otela` processes or temp dirs.
+
+## Output format
+
+Two files per run, both under `results/<runID>/`.
+
+### `measurements.jsonl`
+
+One JSON record per (src, dst, kind) tuple, one record per line.
+
+```json
+{
+  "run_id": "2026-05-02T20-45-12-ab12cd",
+  "timestamp": "2026-05-02T20:45:30Z",
+  "kind": "latency",
+  "source": "clariden",
+  "target": "bristen",
+  "source_peer_id": "12D3KooW...",
+  "target_peer_id": "12D3KooW...",
+  "ok": true,
+  "config": {"count": 20, "bytes": null},
+  "metrics": {
+    "min_ns": 1842000, "avg_ns": 2104500,
+    "p50_ns": 2050000, "p95_ns": 2410000, "max_ns": 2890000,
+    "min_ms": 1.842,  "avg_ms": 2.105,
+    "p50_ms": 2.050,  "p95_ms": 2.410, "max_ms": 2.890,
+    "samples_ns": [1842000, 2103000, /* … */],
+    "failed_samples": 0
+  },
+  "error": null,
+  "command": "rcc run --profile clariden -- otela probe --target 12D3KooW... --kind latency --count 20"
+}
+```
+
+For `kind=throughput`, `metrics` is:
+
+```json
+{
+  "bytes_received": 10485760,
+  "elapsed_ns": 412300000,
+  "mbps": 203.4,
+  "iterations": [
+    {"bytes_received": 10485760, "elapsed_ns": 410100000, "mbps": 204.5},
+    /* … */
+  ],
+  "failed_samples": 0
+}
+```
+
+For `kind=libp2p_ping`, the shape matches `latency`.
+
+Both nanosecond and millisecond fields are emitted to keep
+`render.py` compatible without Python-side conversion. `render.py` learns
+to recognise `avg_ms` as an alias for the legacy `avg` metric.
+
+### `run.json`
+
+One-shot run summary for post-mortem and timing analysis.
+
+```json
+{
+  "run_id": "2026-05-02T20-45-12-ab12cd",
+  "started_at": "2026-05-02T20:45:00Z",
+  "ended_at":   "2026-05-02T20:48:14Z",
+  "config_file": "machines.json",
+  "machines": [
+    {
+      "name": "clariden",
+      "address": "clariden.cscs.ch",
+      "peer_id": "12D3KooW...",
+      "http_port": 19090,
+      "libp2p_port": 19091
+    }
+  ],
+  "convergence": {
+    "clariden": {"converged_at": "2026-05-02T20:45:18Z", "elapsed_s": 8.2, "complete": true}
+  },
+  "phases": {
+    "init_s": 1.4, "discover_s": 0.9, "configure_s": 0.1,
+    "push_s": 0.6, "start_s": 12.3, "converge_s": 14.7,
+    "sweep_s": 92.4, "teardown_s": 3.1
+  },
+  "totals": {
+    "pairs": 12, "kinds": ["libp2p_ping","latency","throughput"],
+    "ok": 34, "failed": 2
+  }
+}
+```
+
+## Failure handling
+
+| Phase | Failure mode | Behavior |
+| --- | --- | --- |
+| Init / Discover | A host's `otela init` or `otela peer-id` fails | Abort. Run teardown on hosts already initialised. Exit non-zero with the failing host named. |
+| Configure / Push | rcc stdin write fails | Abort. Run teardown on initialised hosts. Clear error. |
+| Start | A host does not return 200 from `/v1/health` within 30s | Tail the host's `/tmp/otela-bench-<runID>/log` via `rcc run -- tail -50`, attach to the error. Abort. Run teardown. |
+| Converge | A host's `/v1/dnt/table` does not list every peer within 60s | Record the partial mesh in `run.json.convergence`. **Proceed to sweep** — partial-mesh measurements are themselves diagnostic for the relay-circuit problem. |
+| Sweep | A single (src, dst, kind) probe fails | Record `ok: false, error: "…"` in JSONL, continue. The sweep never aborts on per-pair failure. |
+| Teardown | `pkill` finds nothing or `rm -rf` fails | Log warning. Do not fail the run. |
+| SIGINT during any phase | User pressed Ctrl-C | Run phase 8 (teardown) immediately, exit non-zero. |
+
+Idempotency: the run-ID appears in every temp path and in the `pkill` matcher,
+so re-running is safe — old runs are not touched, new ones do not collide.
+
+## Testing
+
+- **Python unit tests** (`contrib/network-profiler/tests/`):
+  config rendering (multiaddr formatting, port assignment, bootstrap-list
+  construction), JSONL record shape, run-ID generation, signal handler
+  invokes teardown.
+- **Go unit tests** (`src/internal/server/`):
+  `/v1/probe/echo` byte-count correctness and boundary cases (0 bytes,
+  > 1 GiB rejected); `/v1/probe/run` with a mocked libp2p HTTP transport for
+  each `kind`.
+- **Go integration tests** (`src/internal/protocol/`):
+  start two in-process libp2p hosts, register the probe handler on both,
+  exercise round-trips for each kind. No SSH, no real network.
+- **End-to-end** — a `make bench-smoke` target brings up two `otela`
+  instances on localhost in different config dirs, runs `net-profiler bench`
+  against a `machines.json` whose `remote_command` is just
+  `["bash", "-lc", "{command}"]` (no rcc, exec locally). Validates the
+  full pipeline without cluster access.
+- **Manual validation** — actual run against
+  clariden + bristen + euler + sgs-amd-01 once addresses and the
+  sgs-amd-01 host key are sorted. This is the relay-circuit-diagnosis
+  test case that motivated the project.
+
+## Open questions and future work
+
+- **Minimum config for `otela start --config-dir <bench-dir>`.** The bench
+  config sets `cleanslate`, `billing.enabled: false`, no services, no
+  scalability flags, and the keypair generated by `otela init`. The
+  implementation plan must verify this is sufficient — if `otela start`
+  insists on a Solana wallet or other state, the bench-config generator
+  grows to cover it. No design change either way.
+- **`/v1/dnt/table` shape** for convergence polling. The endpoint already
+  returns the full peer table; this assumes the JSON is stable enough to
+  parse. If it is not, the discover phase records what it finds rather
+  than asserting on shape.
+- **Concurrent throughput** — current design measures single-stream
+  throughput. Multi-stream and bidirectional are future work; the probe
+  endpoint surface can grow `streams` and `direction` parameters without
+  breaking the JSONL schema.
+- **Continuous mesh health** — writing `Peer.Latency`, gossiping per-peer
+  RTT through the CRDT, exposing per-peer histograms in `/metrics`. The
+  probe primitives in this design are the foundation for that follow-up.
+- **Heatmap rendering for throughput** — `render.py` will read
+  `metrics.mbps` for `kind=throughput` after a small tweak. Multi-panel
+  dashboards (latency vs throughput vs libp2p_ping side-by-side) are
+  future work.

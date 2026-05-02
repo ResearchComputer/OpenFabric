@@ -2,6 +2,7 @@
   "title": "Proposals",
   "pages": [
     "solana-settlement-design",
-    "security-hardening"
+    "security-hardening",
+    "2026-05-02-mesh-bench-design"
   ]
 }
