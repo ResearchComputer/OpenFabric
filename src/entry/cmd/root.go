@@ -176,7 +176,16 @@ func initConfig(cmd *cobra.Command) error {
 		viper.SetDefault("solana.rpc", defaultConfig.Solana.RPC)
 		viper.SetDefault("solana.mint", defaultConfig.Solana.Mint)
 		viper.SetDefault("solana.skip_verification", defaultConfig.Solana.SkipVerification)
-		configPath := path.Join(home, ".config", configDirName, "cfg.yaml")
+		// Seed the config at whatever path viper was told to use (either via
+		// --config / cfgFile, or the default $HOME/.config/opentela path).
+		// This ensures `otela init --config-dir <dir>` writes the seed under
+		// <dir>/cfg.yaml rather than recomputing the path from $HOME.
+		configPath := viper.ConfigFileUsed()
+		if configPath == "" {
+			// Fallback for safety; in practice SetConfigFile was called above
+			// in both branches, so this should not be reached.
+			configPath = path.Join(home, ".config", configDirName, "cfg.yaml")
+		}
 		err = os.MkdirAll(path.Dir(configPath), os.ModePerm)
 		if err != nil {
 			common.Logger.Error("Could not create config directory", "error", err)
