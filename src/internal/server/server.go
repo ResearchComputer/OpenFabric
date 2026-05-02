@@ -215,6 +215,10 @@ func StartServer() {
 				StartChallengeCleanup()
 			}
 		}
+		probeGroup := v1.Group("/probe")
+		{
+			probeGroup.GET("/echo", echoHandler)
+		}
 		v1.GET("/self", getSelf)
 		v1.POST("/sign", signData)
 		p2pGroup := v1.Group("/p2p")
