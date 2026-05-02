@@ -15,7 +15,7 @@ import (
 func TestResolveKeyPath_DefaultsToHome(t *testing.T) {
 	viper.Reset()
 	home, _ := os.UserHomeDir()
-	got, err := resolveKeyPath()
+	got, err := ResolveKeyPath()
 	assert.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, ".config", "opentela", "keys", "id"), got)
 }
@@ -23,7 +23,7 @@ func TestResolveKeyPath_DefaultsToHome(t *testing.T) {
 func TestResolveKeyPath_HonorsConfigDir(t *testing.T) {
 	viper.Reset()
 	viper.Set("config_dir", "/tmp/otela-bench-xyz")
-	got, err := resolveKeyPath()
+	got, err := ResolveKeyPath()
 	assert.NoError(t, err)
 	assert.Equal(t, "/tmp/otela-bench-xyz/keys/id", got)
 }

@@ -3,7 +3,6 @@ package protocol
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -79,21 +78,23 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	if seed == 0 {
 		// seed=0 (default): load existing key from disk for stable identity.
 		// If no key file exists yet, generate a random one and persist it.
-		priv = loadKeyFromFile()
+		priv = LoadKeyFromFile()
 		if priv == nil {
 			common.Logger.Debug("seed=0: no existing key file, generating and persisting new identity")
-			priv, _, err = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
-			if err != nil {
+			if err = GenerateAndWriteKey(); err != nil {
 				return nil, err
 			}
-			writeKeyToFile(priv)
+			priv = LoadKeyFromFile()
+			if priv == nil {
+				return nil, errors.New("failed to load freshly generated identity key")
+			}
 		} else {
 			common.Logger.Debug("seed=0: loaded existing identity from disk")
 		}
 	} else {
 		// seed!=0: use persisted key file for stable identity across restarts.
 		// On first run, generate from seed and save; subsequent runs load from file.
-		priv = loadKeyFromFile()
+		priv = LoadKeyFromFile()
 		if priv == nil {
 			common.Logger.Debugf("No existing key file, generating from seed=%d", seed)
 			r := mrand.New(mrand.NewSource(seed))
@@ -101,7 +102,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 			if err != nil {
 				return nil, err
 			}
-			writeKeyToFile(priv)
+			WriteKeyToFile(priv)
 		}
 	}
 	if err != nil {
