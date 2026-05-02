@@ -218,6 +218,7 @@ func StartServer() {
 		probeGroup := v1.Group("/probe")
 		{
 			probeGroup.GET("/echo", echoHandler)
+			probeGroup.POST("/run", runHandler)
 		}
 		v1.GET("/self", getSelf)
 		v1.POST("/sign", signData)

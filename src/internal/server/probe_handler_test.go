@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -66,4 +68,62 @@ func TestEcho_RejectsNegativeBytes(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRun_RejectsInvalidBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/v1/probe/run", runHandler)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/probe/run", bytes.NewReader([]byte("{")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRun_RejectsUnknownKind(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/v1/probe/run", runHandler)
+
+	body, _ := json.Marshal(map[string]any{
+		"target": "12D3KooWPHmsoT1AdLbLUzVDYTk3xx3jSPfFy3Y3FdPzYpbPLyrV",
+		"kind":   "telepathy",
+		"count":  1,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/probe/run", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRun_RejectsMissingTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/v1/probe/run", runHandler)
+
+	body, _ := json.Marshal(map[string]any{
+		"kind":  "latency",
+		"count": 1,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/probe/run", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestSummariseDurations_ComputesPercentiles(t *testing.T) {
+	samples := []int64{1_000_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000}
+	m := summariseDurations(samples, 0)
+	assert.Equal(t, int64(1_000_000), m["min_ns"])
+	assert.Equal(t, int64(5_000_000), m["max_ns"])
+	assert.Equal(t, int64(3_000_000), m["avg_ns"])
+	assert.Equal(t, int64(3_000_000), m["p50_ns"])
+	assert.Equal(t, int64(5_000_000), m["p95_ns"])
+	assert.Equal(t, 0, m["failed_samples"])
+	assert.Equal(t, 1.0, m["min_ms"])
+	assert.Equal(t, 3.0, m["avg_ms"])
 }
