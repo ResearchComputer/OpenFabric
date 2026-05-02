@@ -72,15 +72,16 @@ func LoadKeyFromFile() crypto.PrivKey {
 	return priv
 }
 
-// GenerateAndWriteKey creates a fresh RSA-2048 libp2p identity key and
-// persists it via WriteKeyToFile. It is the same keygen flow used lazily
-// by newHost when seed=0 and no key exists, exposed so that `otela init`
-// can pre-generate the key without starting a libp2p host.
-func GenerateAndWriteKey() error {
+// GenerateAndWriteKey generates a fresh RSA-2048 libp2p identity, persists it
+// via WriteKeyToFile, and returns the in-memory key so callers don't need to
+// re-load from disk. It is the same keygen flow used lazily by newHost when
+// seed=0 and no key exists, exposed so that `otela init` can pre-generate
+// the key without starting a libp2p host.
+func GenerateAndWriteKey() (crypto.PrivKey, error) {
 	priv, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	WriteKeyToFile(priv)
-	return nil
+	return priv, nil
 }

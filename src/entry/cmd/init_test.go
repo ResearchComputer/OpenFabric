@@ -17,6 +17,7 @@ func TestEnsureLibp2pKey_CreatesKeyWhenMissing(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	viper.Reset()
+	t.Cleanup(viper.Reset)
 	viper.Set("config_dir", dir)
 
 	err = ensureLibp2pKey()

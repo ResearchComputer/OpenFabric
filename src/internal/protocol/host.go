@@ -81,12 +81,9 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		priv = LoadKeyFromFile()
 		if priv == nil {
 			common.Logger.Debug("seed=0: no existing key file, generating and persisting new identity")
-			if err = GenerateAndWriteKey(); err != nil {
+			priv, err = GenerateAndWriteKey()
+			if err != nil {
 				return nil, err
-			}
-			priv = LoadKeyFromFile()
-			if priv == nil {
-				return nil, errors.New("failed to load freshly generated identity key")
 			}
 		} else {
 			common.Logger.Debug("seed=0: loaded existing identity from disk")

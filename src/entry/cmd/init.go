@@ -26,7 +26,8 @@ func ensureLibp2pKey() error {
 	if _, err := os.Stat(keyPath); err == nil {
 		return nil
 	}
-	return protocol.GenerateAndWriteKey()
+	_, err = protocol.GenerateAndWriteKey()
+	return err
 }
 
 var initCmd = &cobra.Command{
