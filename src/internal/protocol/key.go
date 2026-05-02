@@ -3,23 +3,34 @@ package protocol
 import (
 	"opentela/internal/common"
 	"os"
-	"path"
+	"path/filepath"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/spf13/viper"
 )
+
+func resolveKeyPath() (string, error) {
+	if cd := viper.GetString("config_dir"); cd != "" {
+		return filepath.Join(cd, "keys", "id"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "opentela", "keys", "id"), nil
+}
 
 func writeKeyToFile(priv crypto.PrivKey) {
 	keyData, err := crypto.MarshalPrivateKey(priv)
 	if err != nil {
 		common.Logger.Error("Error while marshalling private key: ", err)
 	}
-	home, err := os.UserHomeDir()
+	keyPath, err := resolveKeyPath()
 	if err != nil {
 		common.Logger.Error("Could not determine home directory: ", err)
 		os.Exit(1)
 	}
-	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
-	err = os.MkdirAll(path.Dir(keyPath), os.ModePerm)
+	err = os.MkdirAll(filepath.Dir(keyPath), os.ModePerm)
 	if err != nil {
 		common.Logger.Error("Could not create keys directory", "error", err)
 		os.Exit(1)
@@ -32,11 +43,10 @@ func writeKeyToFile(priv crypto.PrivKey) {
 }
 
 func loadKeyFromFile() crypto.PrivKey {
-	home, err := os.UserHomeDir()
+	keyPath, err := resolveKeyPath()
 	if err != nil {
 		return nil
 	}
-	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
 	common.Logger.Debug("Looking for keys under: ", keyPath)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {

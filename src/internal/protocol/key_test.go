@@ -2,12 +2,31 @@ package protocol
 
 import (
 	"crypto/rand"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveKeyPath_DefaultsToHome(t *testing.T) {
+	viper.Reset()
+	home, _ := os.UserHomeDir()
+	got, err := resolveKeyPath()
+	assert.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".config", "opentela", "keys", "id"), got)
+}
+
+func TestResolveKeyPath_HonorsConfigDir(t *testing.T) {
+	viper.Reset()
+	viper.Set("config_dir", "/tmp/otela-bench-xyz")
+	got, err := resolveKeyPath()
+	assert.NoError(t, err)
+	assert.Equal(t, "/tmp/otela-bench-xyz/keys/id", got)
+}
 
 func TestKeyRoundTrip(t *testing.T) {
 	// Generate a libp2p RSA private key

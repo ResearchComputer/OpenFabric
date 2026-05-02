@@ -5,6 +5,7 @@ import (
 	"opentela/internal/common"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,10 @@ var rootcmd = &cobra.Command{
 //nolint:gochecknoinits
 func init() {
 	rootcmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/opentela/cfg.yaml)")
+	rootcmd.PersistentFlags().String("config-dir", "", "use this directory as the config root (overrides --config and key location)")
+	if err := viper.BindPFlag("config_dir", rootcmd.PersistentFlags().Lookup("config-dir")); err != nil {
+		common.Logger.Error("Could not bind config-dir flag", "error", err)
+	}
 	startCmd.Flags().String("wallet.account", "", "wallet account")
 	startCmd.Flags().String("account.wallet", "", "path to wallet key file")
 	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
@@ -85,6 +90,9 @@ func configFilePath(home string) string {
 func initConfig(cmd *cobra.Command) error {
 	var home string
 	var err error
+	if cd := viper.GetString("config_dir"); cd != "" && cfgFile == "" {
+		cfgFile = filepath.Join(cd, "cfg.yaml")
+	}
 	viper.SetEnvPrefix("of")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
