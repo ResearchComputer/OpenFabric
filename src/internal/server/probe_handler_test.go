@@ -29,6 +29,10 @@ func TestEcho_ReturnsRequestedByteCount(t *testing.T) {
 		body, _ := io.ReadAll(w.Body)
 		assert.Equal(t, int(n), len(body), "n=%d", n)
 		assert.Equal(t, strconv.FormatInt(n, 10), w.Header().Get("Content-Length"), "n=%d", n)
+		if n > 0 && n <= 1024 {
+			expected := make([]byte, n)
+			assert.Equal(t, expected, body, "body should be all-zero, n=%d", n)
+		}
 	}
 }
 

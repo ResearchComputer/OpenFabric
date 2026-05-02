@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"opentela/internal/common"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,9 +36,11 @@ func echoHandler(c *gin.Context) {
 		if remaining < write {
 			write = remaining
 		}
-		if _, err := io.CopyN(c.Writer, &zeroReader{}, write); err != nil {
+		if _, err := io.CopyN(c.Writer, zeroReader{}, write); err != nil {
+			common.Logger.Debugf("echo: write aborted after %d/%d bytes: %v", n-remaining, n, err)
 			return
 		}
+		c.Writer.Flush()
 		remaining -= write
 	}
 }
