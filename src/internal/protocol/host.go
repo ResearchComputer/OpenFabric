@@ -24,6 +24,7 @@ import (
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
 	relayClient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -67,6 +68,13 @@ func GetP2PNode(ds datastore.Batching) (host.Host, dualdht.DHT) {
 		P2PNode = &host
 	})
 	return *P2PNode, *ddht
+}
+
+// registerPingProtocol enables the libp2p built-in /ipfs/ping/1.0.0 service
+// on the given host. It is a separate function so it can be exercised in tests
+// without standing up the full newHost pipeline.
+func registerPingProtocol(h host.Host) {
+	ping.NewPingService(h)
 }
 
 func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host, error) {
@@ -209,6 +217,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	if err != nil {
 		return nil, err
 	}
+	registerPingProtocol(host)
 	// Set hostRef so the autorelay peer source callback can access the host.
 	hostRef = &host
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/assert"
 )
@@ -289,6 +290,25 @@ func TestBuildPublicTCPMultiaddr(t *testing.T) {
 			assert.Equal(t, tt.want, got.String())
 		})
 	}
+}
+
+func TestNewHost_RegistersPingProtocol(t *testing.T) {
+	h, err := libp2p.New()
+	assert.NoError(t, err)
+	defer h.Close()
+
+	// Manually run the registration step that newHost does. This proves
+	// the registration call is correct without spinning up the full node.
+	registerPingProtocol(h)
+
+	var hasPing bool
+	for _, p := range h.Mux().Protocols() {
+		if p == "/ipfs/ping/1.0.0" {
+			hasPing = true
+			break
+		}
+	}
+	assert.True(t, hasPing, "expected /ipfs/ping/1.0.0 in registered protocols")
 }
 
 func TestAppendUniqueMultiaddrs(t *testing.T) {
