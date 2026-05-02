@@ -65,6 +65,7 @@ func init() {
 	rootcmd.AddCommand(versionCmd)
 	rootcmd.AddCommand(updateCmd)
 	rootcmd.AddCommand(walletCmd)
+	rootcmd.AddCommand(peerIDCmd)
 }
 
 // configFilePath returns the canonical path for the OpenTela config file.
