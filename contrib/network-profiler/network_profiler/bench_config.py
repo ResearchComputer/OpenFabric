@@ -25,6 +25,7 @@ def build_host_config(
     run_id: str,
     http_port: int,
     libp2p_port: int,
+    extra_bootstraps: list[str] | None = None,
 ) -> dict[str, Any]:
     http = self_machine.http_port or http_port
     tcp = self_machine.libp2p_port or libp2p_port
@@ -33,6 +34,10 @@ def build_host_config(
         for m in all_machines
         if m.name != self_machine.name
     ]
+    if extra_bootstraps:
+        bootstrap.extend(extra_bootstraps)
+    if self_machine.bootstrap_extra:
+        bootstrap.extend(self_machine.bootstrap_extra)
     return {
         "port": str(http),
         "tcpport": str(tcp),

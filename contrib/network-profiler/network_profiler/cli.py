@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--throughput-count", type=int, default=3)
     bench.add_argument("--throughput-bytes", type=int, default=10 * 1024 * 1024)
     bench.add_argument("--keep", action="store_true")
+    bench.add_argument("--bootstrap", action="append", default=[],
+                       help="Extra libp2p bootstrap multiaddr (repeatable). Use this to point bench nodes at a public rendezvous when direct peer-to-peer dials are blocked by firewalls.")
     return parser
 
 
@@ -92,5 +94,6 @@ def main(argv: list[str] | None = None) -> int:
             throughput_count=args.throughput_count,
             throughput_bytes=args.throughput_bytes,
             keep=args.keep,
+            extra_bootstraps=args.bootstrap or None,
         )
     raise AssertionError(args.command)

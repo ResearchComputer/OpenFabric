@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	p2phttp "github.com/libp2p/go-libp2p-http"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/viper"
@@ -120,7 +119,7 @@ func StartServer() {
 			MaxIdleConns:          50,
 			MaxIdleConnsPerHost:   2,
 		}
-		scrapeTransport.RegisterProtocol("libp2p", p2phttp.NewTransport(node))
+		scrapeTransport.RegisterProtocol("libp2p", newLibp2pHTTPRoundTripper(node))
 
 		cfg := metrics.ScraperConfig{
 			ScrapeInterval: time.Duration(viper.GetInt("metrics.scrape_interval_seconds")) * time.Second,

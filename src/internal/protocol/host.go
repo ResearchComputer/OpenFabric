@@ -23,7 +23,9 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	relayClient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -155,7 +157,13 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoNATv2(),
-		libp2p.EnableRelayService(),
+		// Relay-as-server: lift the libp2p defaults (128 KB / 2 min per circuit,
+		// 128 reservations, 16 circuits/peer) so HTTP-over-circuit traffic is
+		// not reset on the first echo response or 20-sample latency probe.
+		libp2p.EnableRelayService(
+			relayv2.WithResources(relayServiceResources()),
+			relayv2.WithInfiniteLimits(),
+		),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			ddht, err = newDHT(ctx, h, ds)
 			return ddht, err
@@ -191,6 +199,12 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		// AutoRelay discovers relay servers from connected peers and
 		// maintains active reservations so other nodes can reach us
 		// via /p2p/<relay>/p2p-circuit/p2p/<us>.
+		//
+		// Defaults reserve on only 2 relays (desiredRelays=2). With several
+		// bootstrap relays available, two workers may pick disjoint subsets,
+		// so neither can dial the other through circuit. Reserve on every
+		// candidate the peer source returns so the reservation set across
+		// workers is identical (full-mesh coverage of advertised circuits).
 		opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(
 			func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
 				ch := make(chan peer.AddrInfo, numPeers)
@@ -210,6 +224,11 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 				}()
 				return ch
 			},
+			autorelay.WithNumRelays(16),
+			autorelay.WithMaxCandidates(32),
+			autorelay.WithMinCandidates(1),
+			autorelay.WithBootDelay(5*time.Second),
+			autorelay.WithMinInterval(5*time.Second),
 		))
 	}
 
@@ -476,6 +495,15 @@ func isTransientNetworkError(err error) bool {
 	}
 
 	return false
+}
+
+func relayServiceResources() relayv2.Resources {
+	r := relayv2.DefaultResources()
+	r.MaxReservations = 512
+	r.MaxCircuits = 128
+	r.MaxReservationsPerIP = 64
+	r.MaxReservationsPerASN = 256
+	return r
 }
 
 func newResourceManager() network.ResourceManager {

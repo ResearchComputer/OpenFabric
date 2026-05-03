@@ -3,9 +3,7 @@
 Pairwise network profiler for machines managed through
 [`ResearchComputer/remote-cluster-controller`](https://github.com/ResearchComputer/remote-cluster-controller).
 
-It runs commands on every source machine, targets every other machine, records
-latency with `ping`, optionally records bandwidth with `iperf3`, and renders an
-HTML heatmap.
+It runs commands on every source machine, targets every other machine, records latency with `ping`, optionally records bandwidth with `iperf3`, and renders an HTML heatmap.
 
 ## Configure machines
 
@@ -71,5 +69,4 @@ Each remote machine needs:
 - network paths that allow source machines to reach target `address` values
 - TCP access to `iperf_port` between remote machines when collecting bandwidth
 
-The JSONL output preserves every command, success flag, parsed metrics, and
-failure text so failed links can be inspected without rerunning the whole sweep.
+The JSONL output preserves every command, success flag, parsed metrics, and failure text so failed links can be inspected without rerunning the whole sweep.

@@ -57,6 +57,7 @@ def phase_configure_and_push(
     run_id: str,
     http_port: int,
     libp2p_port: int,
+    extra_bootstraps: list[str] | None = None,
 ) -> dict[str, str]:
     """Render per-host cfg.yaml and push via stdin-piped base64."""
     out: dict[str, str] = {}
@@ -70,6 +71,7 @@ def phase_configure_and_push(
             run_id=run_id,
             http_port=http_port,
             libp2p_port=libp2p_port,
+            extra_bootstraps=extra_bootstraps,
         )
         yaml_bytes = yaml.safe_dump(cfg, sort_keys=True).encode("utf-8")
         b64 = base64.b64encode(yaml_bytes)
@@ -275,6 +277,7 @@ def run_bench(
     throughput_count: int = 3,
     throughput_bytes: int = 10 * 1024 * 1024,
     keep: bool = False,
+    extra_bootstraps: list[str] | None = None,
 ) -> int:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -319,6 +322,7 @@ def run_bench(
         phase_configure_and_push(
             runner, machines, peer_ids, run_id,
             http_port=http_port, libp2p_port=libp2p_port,
+            extra_bootstraps=extra_bootstraps,
         )
         phase_timings["configure_s"] = round(time.monotonic() - t0, 2)
 

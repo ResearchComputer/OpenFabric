@@ -2,14 +2,18 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -145,4 +149,41 @@ func TestRunThroughput_AggregateIsBandwidthWeighted(t *testing.T) {
 	expected := (float64(totalBytes) * 8.0 / 1e6) / (float64(totalElapsed) / 1e9)
 	// Sanity check the test arithmetic itself.
 	assert.InDelta(t, 14.545, expected, 0.01)
+}
+
+func TestProcessPingResults_RejectsZeroRTTAndCountsErrors(t *testing.T) {
+	// libp2p's ping service emits Result{Error:nil, RTT:0} when the dial
+	// layer can't establish a stream. Without rejection, unreachable peers
+	// would register as fake-zero-RTT successes.
+	ch := make(chan ping.Result, 5)
+	ch <- ping.Result{RTT: 5 * time.Millisecond}                // valid
+	ch <- ping.Result{RTT: 0}                                   // zero-RTT bug
+	ch <- ping.Result{Error: errors.New("dial fail")}           // explicit error
+	ch <- ping.Result{RTT: 6 * time.Millisecond}                // valid
+	ch <- ping.Result{RTT: 0}                                   // zero-RTT bug
+	close(ch)
+
+	samples, failed, lastErr := processPingResults(context.Background(), ch, 5)
+	assert.Equal(t, []int64{int64(5 * time.Millisecond), int64(6 * time.Millisecond)}, samples)
+	assert.Equal(t, 3, failed)
+	assert.NotEmpty(t, lastErr)
+}
+
+func TestProcessPingResults_StopsOnContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan ping.Result)
+	cancel()
+	samples, failed, lastErr := processPingResults(ctx, ch, 5)
+	assert.Empty(t, samples)
+	assert.Equal(t, 0, failed)
+	assert.Contains(t, lastErr, "context canceled")
+}
+
+func TestProcessPingResults_HandlesClosedChannel(t *testing.T) {
+	ch := make(chan ping.Result, 2)
+	ch <- ping.Result{RTT: 1 * time.Millisecond}
+	close(ch)
+	samples, failed, _ := processPingResults(context.Background(), ch, 5)
+	assert.Equal(t, []int64{int64(1 * time.Millisecond)}, samples)
+	assert.Equal(t, 0, failed)
 }

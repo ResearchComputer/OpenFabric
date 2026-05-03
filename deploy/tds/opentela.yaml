@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: opentela-relay
-        image: ghcr.io/xiaozheyao/opentela:latest
+        image: ghcr.io/xiaozheyao/opentela:amd64-latest
         imagePullPolicy: Always
         args:
           - start

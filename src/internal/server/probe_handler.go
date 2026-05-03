@@ -263,25 +263,51 @@ func runLibp2pPing(ctx context.Context, pid libp2ppeer.ID, count int) (bool, map
 		return false, nil, "libp2p host not initialized"
 	}
 	resCh := ping.Ping(ctx, h, pid)
+	samples, failed, lastErr := processPingResults(ctx, resCh, count)
+	if len(samples) == 0 {
+		return false, map[string]any{"failed_samples": failed}, "no successful pings: " + lastErr
+	}
+	return true, summariseDurations(samples, failed), ""
+}
+
+// processPingResults reads up to count results from a ping result channel.
+// Returns the valid samples (in ns), failure count, and last error message.
+//
+// Treats `Error == nil && RTT == 0` as a failure: libp2p's ping service
+// produces such results when the dial layer can't establish a stream
+// (the channel still emits, but the ping never round-tripped). Without this
+// guard, unreachable peers register as 9 fake-zero-RTT successes plus 1
+// real failure, producing nonsense aggregates.
+func processPingResults(ctx context.Context, resCh <-chan ping.Result, count int) ([]int64, int, string) {
 	samples := make([]int64, 0, count)
 	var failed int
 	var lastErr string
 	for i := 0; i < count; i++ {
 		select {
 		case <-ctx.Done():
-			return len(samples) > 0, summariseDurations(samples, failed), ctx.Err().Error()
-		case res := <-resCh:
+			if lastErr == "" {
+				lastErr = ctx.Err().Error()
+			}
+			return samples, failed, lastErr
+		case res, ok := <-resCh:
+			if !ok {
+				return samples, failed, lastErr
+			}
 			if res.Error != nil {
 				failed++
 				lastErr = res.Error.Error()
 				continue
 			}
+			if res.RTT == 0 {
+				failed++
+				if lastErr == "" {
+					lastErr = "ping returned RTT=0 with no error (peer not reachable)"
+				}
+				continue
+			}
 			samples = append(samples, res.RTT.Nanoseconds())
 		}
 	}
-	if len(samples) == 0 {
-		return false, map[string]any{"failed_samples": failed}, "no successful pings: " + lastErr
-	}
-	return true, summariseDurations(samples, failed), ""
+	return samples, failed, lastErr
 }
 
