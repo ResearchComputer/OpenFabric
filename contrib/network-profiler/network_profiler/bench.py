@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import signal
+import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -254,3 +257,111 @@ def _extract_peer_ids(table_json: str) -> set[str]:
 
     walk(data)
     return found
+
+
+def new_run_id() -> str:
+    return time.strftime("%Y-%m-%dT%H-%M-%S") + "-" + uuid.uuid4().hex[:6]
+
+
+def run_bench(
+    *,
+    runner,
+    machines: list[Machine],
+    output_dir: Path,
+    run_id: str,
+    http_port: int = 19090,
+    libp2p_port: int = 19091,
+    latency_count: int = 20,
+    throughput_count: int = 3,
+    throughput_bytes: int = 10 * 1024 * 1024,
+    keep: bool = False,
+) -> int:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    measurements_path = output_dir / "measurements.jsonl"
+    run_json_path = output_dir / "run.json"
+
+    started_at = datetime.now(timezone.utc)
+    phase_timings: dict[str, float] = {}
+    convergence: dict[str, dict] = {}
+    peer_ids: dict[str, str] = {}
+    totals: dict[str, int] = {}
+    teardown_done = False
+
+    def teardown():
+        nonlocal teardown_done
+        if teardown_done or keep:
+            return
+        teardown_done = True
+        t0 = time.monotonic()
+        try:
+            phase_teardown(runner, machines, run_id)
+        except Exception as e:
+            print(f"warning: teardown error: {e}")
+        phase_timings["teardown_s"] = round(time.monotonic() - t0, 2)
+
+    def on_sigint(signum, frame):
+        print("\ninterrupted, running teardown")
+        teardown()
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, on_sigint)
+    try:
+        t0 = time.monotonic()
+        phase_init(runner, machines, run_id)
+        phase_timings["init_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
+        peer_ids = phase_discover(runner, machines, run_id)
+        phase_timings["discover_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
+        phase_configure_and_push(
+            runner, machines, peer_ids, run_id,
+            http_port=http_port, libp2p_port=libp2p_port,
+        )
+        phase_timings["configure_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
+        phase_start(runner, machines, run_id, http_port=http_port)
+        phase_timings["start_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
+        convergence = phase_converge(runner, machines, peer_ids, http_port=http_port)
+        phase_timings["converge_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
+        totals = phase_sweep(
+            runner, machines, peer_ids, run_id,
+            output=measurements_path,
+            kinds=[
+                {"kind": "libp2p_ping", "count": latency_count, "bytes": 0},
+                {"kind": "latency", "count": latency_count, "bytes": 0},
+                {"kind": "throughput", "count": throughput_count, "bytes": throughput_bytes},
+            ],
+        )
+        phase_timings["sweep_s"] = round(time.monotonic() - t0, 2)
+    finally:
+        teardown()
+
+    ended_at = datetime.now(timezone.utc)
+    summary = {
+        "run_id": run_id,
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "ended_at": ended_at.isoformat(timespec="seconds"),
+        "machines": [
+            {
+                "name": m.name,
+                "address": m.address,
+                "peer_id": peer_ids.get(m.name),
+                "http_port": http_port,
+                "libp2p_port": libp2p_port,
+            }
+            for m in machines
+        ],
+        "convergence": convergence,
+        "phases": phase_timings,
+        "totals": totals,
+    }
+    run_json_path.write_text(json.dumps(summary, indent=2, sort_keys=True))
+    return 0

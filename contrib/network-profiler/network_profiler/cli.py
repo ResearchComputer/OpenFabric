@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 import json
 
+from .bench import new_run_id, run_bench
 from .measure import collect
 from .model import load_config
 from .remote import RemoteRunner
@@ -28,6 +29,17 @@ def build_parser() -> argparse.ArgumentParser:
     heatmap.add_argument("--output", type=Path, default=Path("results/network-heatmap.html"))
     heatmap.add_argument("--kind", choices=["ping", "iperf3"], default="ping")
     heatmap.add_argument("--metric", default=None, help="Defaults to avg for ping, mbps for iperf3.")
+
+    bench = subparsers.add_parser("bench", help="Bring up an isolated mesh and profile pairwise libp2p latency/throughput.")
+    bench.add_argument("--config", type=Path, required=True)
+    bench.add_argument("--output", type=Path, default=None, help="Output directory. Defaults to results/<run-id>/")
+    bench.add_argument("--run-id", default=None)
+    bench.add_argument("--http-port", type=int, default=19090)
+    bench.add_argument("--libp2p-port", type=int, default=19091)
+    bench.add_argument("--latency-count", type=int, default=20)
+    bench.add_argument("--throughput-count", type=int, default=3)
+    bench.add_argument("--throughput-bytes", type=int, default=10 * 1024 * 1024)
+    bench.add_argument("--keep", action="store_true")
     return parser
 
 
@@ -64,4 +76,21 @@ def main(argv: list[str] | None = None) -> int:
         metric = args.metric or ("avg" if args.kind == "ping" else "mbps")
         render_heatmap(args.input, args.output, args.kind, metric)
         return 0
+    if args.command == "bench":
+        config = load_config(args.config)
+        runner = RemoteRunner(config, dry_run=False)
+        run_id = args.run_id or new_run_id()
+        output = args.output or Path("results") / run_id
+        return run_bench(
+            runner=runner,
+            machines=config.machines,
+            output_dir=output,
+            run_id=run_id,
+            http_port=args.http_port,
+            libp2p_port=args.libp2p_port,
+            latency_count=args.latency_count,
+            throughput_count=args.throughput_count,
+            throughput_bytes=args.throughput_bytes,
+            keep=args.keep,
+        )
     raise AssertionError(args.command)
