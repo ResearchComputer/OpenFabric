@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
@@ -147,6 +149,79 @@ def phase_converge(
         elapsed_s = time.monotonic() - start_t
         out[m.name] = {"complete": complete, "elapsed_s": round(elapsed_s, 2)}
     return out
+
+
+def phase_sweep(
+    runner,
+    machines: list[Machine],
+    peer_ids: dict[str, str],
+    run_id: str,
+    output: Path,
+    kinds: list[dict],
+) -> dict[str, int]:
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    ok = 0
+    failed = 0
+    for spec in kinds:
+        kind = spec["kind"]
+        count = spec.get("count", 20)
+        nbytes = spec.get("bytes", 0)
+        for src in machines:
+            for dst in machines:
+                if src.name == dst.name:
+                    continue
+                cfg_path = f"{bench_dir(run_id, src.name)}/cfg.yaml"
+                cmd = (
+                    f"otela probe --target {peer_ids[dst.name]} "
+                    f"--kind {kind} --count {count} --bytes {nbytes} "
+                    f"--config {cfg_path}"
+                )
+                result = runner.run(src, cmd, timeout=count * 5 + nbytes // (1 << 20) + 60)
+                record = _build_record(
+                    src=src,
+                    dst=dst,
+                    src_peer_id=peer_ids[src.name],
+                    dst_peer_id=peer_ids[dst.name],
+                    kind=kind,
+                    count=count,
+                    nbytes=nbytes,
+                    run_id=run_id,
+                    result=result,
+                )
+                with output.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, sort_keys=True) + "\n")
+                if record["ok"]:
+                    ok += 1
+                else:
+                    failed += 1
+    return {"ok": ok, "failed": failed}
+
+
+def _build_record(*, src, dst, src_peer_id, dst_peer_id, kind, count, nbytes, run_id, result) -> dict:
+    parsed = None
+    if result.returncode == 0 and result.stdout:
+        try:
+            parsed = json.loads(result.stdout.strip().splitlines()[-1])
+        except json.JSONDecodeError:
+            parsed = None
+    ok = bool(parsed and parsed.get("ok"))
+    return {
+        "run_id": run_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "kind": kind,
+        "source": src.name,
+        "target": dst.name,
+        "source_peer_id": src_peer_id,
+        "target_peer_id": dst_peer_id,
+        "ok": ok,
+        "config": {"count": count, "bytes": nbytes if kind == "throughput" else None},
+        "metrics": (parsed or {}).get("metrics", {}) if ok else {},
+        "error": None if ok else (
+            (parsed or {}).get("error") if parsed else (result.stderr or result.stdout or "no output")
+        ),
+        "command": result.command,
+    }
 
 
 def _extract_peer_ids(table_json: str) -> set[str]:

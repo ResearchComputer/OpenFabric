@@ -139,3 +139,48 @@ def test_phase_converge_returns_when_all_peers_seen():
     convergence = phase_converge(runner, machines, peer_ids, http_port=19090, max_wait_s=5)
     assert convergence["a"]["complete"] is True
     assert convergence["b"]["complete"] is True
+
+
+import tempfile
+from pathlib import Path
+
+from network_profiler.bench import phase_sweep
+
+
+def test_phase_sweep_writes_jsonl_record_per_pair_and_kind():
+    machines = [
+        Machine(name="a", address="x", rcc_host="a"),
+        Machine(name="b", address="y", rcc_host="b"),
+    ]
+    peer_ids = {"a": "PIDA", "b": "PIDB"}
+    canned = json.dumps({
+        "ok": True, "kind": "latency",
+        "metrics": {"avg_ns": 1234567, "avg_ms": 1.234},
+    })
+    runner = ScriptedRunner({
+        "a": [("otela probe", (0, canned, ""))],
+        "b": [("otela probe", (0, canned, ""))],
+    })
+    with tempfile.TemporaryDirectory() as tmp:
+        out_path = Path(tmp) / "measurements.jsonl"
+        phase_sweep(
+            runner, machines, peer_ids,
+            run_id="run123",
+            output=out_path,
+            kinds=[
+                {"kind": "latency", "count": 10, "bytes": 0},
+                {"kind": "throughput", "count": 1, "bytes": 1048576},
+            ],
+        )
+        lines = out_path.read_text().splitlines()
+        assert len(lines) == 4  # 2 ordered pairs × 2 kinds
+        records = [json.loads(l) for l in lines]
+        assert {(r["source"], r["target"], r["kind"]) for r in records} == {
+            ("a", "b", "latency"),
+            ("b", "a", "latency"),
+            ("a", "b", "throughput"),
+            ("b", "a", "throughput"),
+        }
+        assert all(r["source_peer_id"] for r in records)
+        assert all(r["target_peer_id"] for r in records)
+        assert all(r["ok"] for r in records)
