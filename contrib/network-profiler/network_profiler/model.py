@@ -11,6 +11,8 @@ class Machine:
     name: str
     address: str
     rcc_host: str
+    http_port: int | None = None
+    libp2p_port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ def load_config(path: Path) -> ProfilerConfig:
             name=str(item["name"]),
             address=str(item.get("address", item["name"])),
             rcc_host=str(item.get("rcc_host", item["name"])),
+            http_port=item.get("http_port"),
+            libp2p_port=item.get("libp2p_port"),
         )
         for item in raw["machines"]
     ]

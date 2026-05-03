@@ -97,7 +97,7 @@ def phase_start(
         cfg_path = f"{d}/cfg.yaml"
         log_path = f"{d}/log"
         cmd = (
-            f"nohup otela start --config {cfg_path} "
+            f"nohup otela start --config {cfg_path} --config-dir {d} "
             f">>{log_path} 2>&1 &"
         )
         result = runner.run(m, cmd, timeout=10)

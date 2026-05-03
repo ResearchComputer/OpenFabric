@@ -14,6 +14,10 @@ def build_multiaddr(machine: Machine, libp2p_port: int, peer_id: str) -> str:
     return f"/dns4/{machine.address}/tcp/{libp2p_port}/p2p/{peer_id}"
 
 
+def _peer_libp2p_port(m: Machine, default: int) -> int:
+    return m.libp2p_port or default
+
+
 def build_host_config(
     self_machine: Machine,
     all_machines: list[Machine],
@@ -22,15 +26,17 @@ def build_host_config(
     http_port: int,
     libp2p_port: int,
 ) -> dict[str, Any]:
+    http = self_machine.http_port or http_port
+    tcp = self_machine.libp2p_port or libp2p_port
     bootstrap = [
-        build_multiaddr(m, libp2p_port, peer_ids[m.name])
+        build_multiaddr(m, _peer_libp2p_port(m, libp2p_port), peer_ids[m.name])
         for m in all_machines
         if m.name != self_machine.name
     ]
     return {
-        "port": str(http_port),
-        "tcpport": str(libp2p_port),
-        "udpport": str(libp2p_port + 1),
+        "port": str(http),
+        "tcpport": str(tcp),
+        "udpport": str(tcp + 1),
         "cleanslate": True,
         "bootstrap": {"static": bootstrap},
         "security": {"require_signed_binary": False},
