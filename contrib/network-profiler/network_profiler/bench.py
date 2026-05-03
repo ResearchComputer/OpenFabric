@@ -224,6 +224,14 @@ def _build_record(*, src, dst, src_peer_id, dst_peer_id, kind, count, nbytes, ru
     }
 
 
+def phase_teardown(runner, machines: list[Machine], run_id: str) -> None:
+    for m in machines:
+        d = bench_dir(run_id, m.name)
+        cfg_path = f"{d}/cfg.yaml"
+        runner.run(m, f"pkill -f 'otela start --config {cfg_path}' || true", timeout=10)
+        runner.run(m, f"rm -rf {d} || true", timeout=10)
+
+
 def _extract_peer_ids(table_json: str) -> set[str]:
     """Tolerant extraction: walk any list/dict and collect string values that
     look like libp2p PeerIDs (start with 12D3 or Qm)."""

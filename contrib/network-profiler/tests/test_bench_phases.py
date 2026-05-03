@@ -184,3 +184,32 @@ def test_phase_sweep_writes_jsonl_record_per_pair_and_kind():
         assert all(r["source_peer_id"] for r in records)
         assert all(r["target_peer_id"] for r in records)
         assert all(r["ok"] for r in records)
+
+
+from network_profiler.bench import phase_teardown
+
+
+def test_phase_teardown_pkills_and_removes_bench_dir():
+    machines = [
+        Machine(name="a", address="x", rcc_host="a"),
+        Machine(name="b", address="y", rcc_host="b"),
+    ]
+    runner = ScriptedRunner({
+        "a": [("pkill -f", (0, "", "")), ("rm -rf", (0, "", ""))],
+        "b": [("pkill -f", (0, "", "")), ("rm -rf", (0, "", ""))],
+    })
+    phase_teardown(runner, machines, run_id="run123")
+    cmds = [(h, c) for h, c in runner.calls]
+    # pkill matcher and rm path are both per-host
+    assert any(h == "a" and "pkill -f" in c and "/tmp/otela-bench-run123-a/cfg.yaml" in c for h, c in cmds)
+    assert any(h == "b" and "rm -rf /tmp/otela-bench-run123-b" in c for h, c in cmds)
+
+
+def test_phase_teardown_warns_but_does_not_fail_on_pkill_returning_1():
+    """pkill returns 1 when no processes match. Treat as success."""
+    machines = [Machine(name="a", address="x", rcc_host="a")]
+    runner = ScriptedRunner({
+        "a": [("pkill -f", (1, "", "")), ("rm -rf", (0, "", ""))],
+    })
+    # must not raise
+    phase_teardown(runner, machines, run_id="run123")
