@@ -57,7 +57,7 @@ class RemoteRunner:
             for part in template
         ]
 
-    def run(self, machine: Machine, command: str, timeout: int | None = None) -> CommandResult:
+    def run(self, machine: Machine, command: str, timeout: int | None = None, stdin: bytes | None = None) -> CommandResult:
         args = self.build_args(machine, command)
         if self.dry_run:
             rendered = shlex.join(args)
@@ -66,15 +66,18 @@ class RemoteRunner:
         completed = subprocess.run(
             args,
             check=False,
-            text=True,
+            text=True if stdin is None else False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            input=stdin,
             timeout=timeout,
         )
+        stdout = completed.stdout if isinstance(completed.stdout, str) else completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr if isinstance(completed.stderr, str) else completed.stderr.decode("utf-8", errors="replace")
         return CommandResult(
             host=machine.name,
             command=shlex.join(args),
             returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=stdout,
+            stderr=stderr,
         )

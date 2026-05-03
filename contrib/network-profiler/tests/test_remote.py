@@ -18,3 +18,15 @@ def test_remote_command_template_expands_host_and_command() -> None:
         "cluster/node-a",
         "hostname",
     ]
+
+
+def test_remote_runner_accepts_stdin():
+    config = ProfilerConfig(
+        machines=[Machine(name="a", address="x", rcc_host="a")],
+        remote_command=["sh", "-c", "cat"],
+        ping_count=1, iperf_seconds=1, iperf_port=5201, connect_timeout_seconds=1,
+    )
+    runner = RemoteRunner(config, dry_run=False)
+    result = runner.run(config.machines[0], "ignored", stdin=b"hello")
+    assert result.returncode == 0
+    assert result.stdout == "hello"
