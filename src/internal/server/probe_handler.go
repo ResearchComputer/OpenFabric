@@ -240,17 +240,18 @@ func runThroughput(ctx context.Context, pid libp2ppeer.ID, n int64, count int) (
 		return false, map[string]any{"failed_samples": failed}, "no successful iterations: " + lastErr
 	}
 	var totalBytes, totalElapsed int64
-	var avgMbps float64
 	for _, it := range iterations {
 		totalBytes += it["bytes_received"].(int64)
 		totalElapsed += it["elapsed_ns"].(int64)
-		avgMbps += it["mbps"].(float64)
 	}
-	avgMbps /= float64(len(iterations))
+	mbps := 0.0
+	if totalElapsed > 0 {
+		mbps = (float64(totalBytes) * 8.0 / 1e6) / (float64(totalElapsed) / 1e9)
+	}
 	return true, map[string]any{
 		"bytes_received": totalBytes,
 		"elapsed_ns":     totalElapsed,
-		"mbps":           avgMbps,
+		"mbps":           mbps,
 		"iterations":     iterations,
 		"failed_samples": failed,
 	}, ""
@@ -261,8 +262,7 @@ func runLibp2pPing(ctx context.Context, pid libp2ppeer.ID, count int) (bool, map
 	if h == nil {
 		return false, nil, "libp2p host not initialized"
 	}
-	svc := ping.NewPingService(h)
-	resCh := svc.Ping(ctx, pid)
+	resCh := ping.Ping(ctx, h, pid)
 	samples := make([]int64, 0, count)
 	var failed int
 	var lastErr string

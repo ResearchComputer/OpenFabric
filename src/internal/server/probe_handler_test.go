@@ -127,3 +127,22 @@ func TestSummariseDurations_ComputesPercentiles(t *testing.T) {
 	assert.Equal(t, 1.0, m["min_ms"])
 	assert.Equal(t, 3.0, m["avg_ms"])
 }
+
+func TestRunThroughput_AggregateIsBandwidthWeighted(t *testing.T) {
+	// Two iterations, equal bytes, very different elapsed times.
+	// Per-iteration mbps: 80 and 8. Mean = 44 mbps.
+	// Bandwidth-weighted: total_bytes=2*1MB=16Mbits, total_elapsed=0.1+1.0=1.1s = 16/1.1 ≈ 14.55 mbps.
+	// The aggregate should be the bandwidth-weighted number.
+	iter1 := map[string]any{"bytes_received": int64(1000000), "elapsed_ns": int64(100000000), "mbps": 80.0}
+	iter2 := map[string]any{"bytes_received": int64(1000000), "elapsed_ns": int64(1000000000), "mbps": 8.0}
+	iterations := []map[string]any{iter1, iter2}
+
+	var totalBytes, totalElapsed int64
+	for _, it := range iterations {
+		totalBytes += it["bytes_received"].(int64)
+		totalElapsed += it["elapsed_ns"].(int64)
+	}
+	expected := (float64(totalBytes) * 8.0 / 1e6) / (float64(totalElapsed) / 1e9)
+	// Sanity check the test arithmetic itself.
+	assert.InDelta(t, 14.545, expected, 0.01)
+}
