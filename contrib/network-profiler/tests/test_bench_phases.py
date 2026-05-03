@@ -88,3 +88,54 @@ def test_phase_configure_and_push_writes_yaml_per_host():
             assert "PIDB" in decoded and "PIDA" not in decoded
         else:
             assert "PIDA" in decoded and "PIDB" not in decoded
+
+
+import json
+
+from network_profiler.bench import phase_start, phase_converge
+from network_profiler.remote import CommandResult
+
+
+class ScriptedRunner:
+    """Returns canned responses keyed on (host, command-substring)."""
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def run(self, machine, command, timeout=None, stdin=None):
+        self.calls.append((machine.name, command))
+        for substr, payload in self.responses.get(machine.name, []):
+            if substr in command:
+                rc, stdout, stderr = payload
+                return CommandResult(machine.name, command, rc, stdout, stderr)
+        raise AssertionError(f"unexpected command for {machine.name}: {command}")
+
+
+def test_phase_start_polls_health_then_succeeds():
+    machines = [Machine(name="a", address="x", rcc_host="a")]
+    runner = ScriptedRunner({
+        "a": [
+            ("nohup otela start", (0, "", "")),
+            ("curl -fsS http://127.0.0.1:19090/v1/health", (0, '{"status":"ok"}', "")),
+        ],
+    })
+    phase_start(runner, machines, run_id="run123", http_port=19090, max_wait_s=5)
+    assert any("nohup otela start" in c for _, c in runner.calls)
+    assert any("/v1/health" in c for _, c in runner.calls)
+
+
+def test_phase_converge_returns_when_all_peers_seen():
+    machines = [
+        Machine(name="a", address="x", rcc_host="a"),
+        Machine(name="b", address="y", rcc_host="b"),
+    ]
+    peer_ids = {"a": "12D3PIDA", "b": "12D3PIDB"}
+    table_a = json.dumps({"peers": [{"id": "12D3PIDB"}]})
+    table_b = json.dumps({"peers": [{"id": "12D3PIDA"}]})
+    runner = ScriptedRunner({
+        "a": [("dnt/table", (0, table_a, ""))],
+        "b": [("dnt/table", (0, table_b, ""))],
+    })
+    convergence = phase_converge(runner, machines, peer_ids, http_port=19090, max_wait_s=5)
+    assert convergence["a"]["complete"] is True
+    assert convergence["b"]["complete"] is True

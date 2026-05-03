@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import time
 
 import yaml
 
@@ -72,3 +74,100 @@ def phase_configure_and_push(
             raise RuntimeError(f"phase_configure_and_push failed on {m.name}: {result.stderr or result.stdout}")
         out[m.name] = cfg_path
     return out
+
+
+def _http_port_for(m: Machine, default: int) -> int:
+    return getattr(m, "http_port", None) or default
+
+
+def phase_start(
+    runner,
+    machines: list[Machine],
+    run_id: str,
+    http_port: int,
+    max_wait_s: int = 30,
+) -> None:
+    for m in machines:
+        d = bench_dir(run_id, m.name)
+        cfg_path = f"{d}/cfg.yaml"
+        log_path = f"{d}/log"
+        cmd = (
+            f"nohup otela start --config {cfg_path} "
+            f">>{log_path} 2>&1 &"
+        )
+        result = runner.run(m, cmd, timeout=10)
+        if result.returncode != 0:
+            raise RuntimeError(f"phase_start could not launch on {m.name}: {result.stderr}")
+
+    for m in machines:
+        port = _http_port_for(m, http_port)
+        deadline = time.monotonic() + max_wait_s
+        while True:
+            health = runner.run(
+                m,
+                f"curl -fsS http://127.0.0.1:{port}/v1/health",
+                timeout=10,
+            )
+            if health.returncode == 0:
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"phase_start: {m.name} did not become healthy within {max_wait_s}s"
+                )
+            time.sleep(1)
+
+
+def phase_converge(
+    runner,
+    machines: list[Machine],
+    peer_ids: dict[str, str],
+    http_port: int,
+    max_wait_s: int = 60,
+) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    expected = {p for p in peer_ids.values()}
+    for m in machines:
+        port = _http_port_for(m, http_port)
+        deadline = time.monotonic() + max_wait_s
+        complete = False
+        elapsed_s = 0.0
+        start_t = time.monotonic()
+        while time.monotonic() <= deadline:
+            tbl = runner.run(
+                m,
+                f"curl -s http://127.0.0.1:{port}/v1/dnt/table",
+                timeout=10,
+            )
+            if tbl.returncode == 0:
+                seen = _extract_peer_ids(tbl.stdout)
+                if expected - {peer_ids[m.name]} <= seen:
+                    complete = True
+                    break
+            time.sleep(1)
+        elapsed_s = time.monotonic() - start_t
+        out[m.name] = {"complete": complete, "elapsed_s": round(elapsed_s, 2)}
+    return out
+
+
+def _extract_peer_ids(table_json: str) -> set[str]:
+    """Tolerant extraction: walk any list/dict and collect string values that
+    look like libp2p PeerIDs (start with 12D3 or Qm)."""
+    try:
+        data = json.loads(table_json)
+    except json.JSONDecodeError:
+        return set()
+    found: set[str] = set()
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+        elif isinstance(obj, str):
+            if obj.startswith("12D3") or obj.startswith("Qm"):
+                found.add(obj)
+
+    walk(data)
+    return found
