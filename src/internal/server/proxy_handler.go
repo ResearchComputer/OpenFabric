@@ -520,7 +520,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		director := func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Path = target.Path
-			req.URL.Host = req.Host
+			req.URL.Host = target.Host
 			req.Host = target.Host
 			if clientWallet != "" {
 				req.Header.Set("X-Otela-Client-Wallet", clientWallet)
