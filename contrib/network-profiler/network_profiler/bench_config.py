@@ -43,6 +43,7 @@ def build_host_config(
         "tcpport": str(tcp),
         "udpport": str(tcp + 1),
         "cleanslate": True,
+        "reachability": "auto",
         "bootstrap": {"static": bootstrap},
         "security": {"require_signed_binary": False},
         "scalability": {

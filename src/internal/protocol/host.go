@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	mrand "math/rand"
 	"net"
 	"opentela/internal/common"
@@ -23,10 +25,14 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
+	basichost "github.com/libp2p/go-libp2p/p2p/host/basic"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	libp2pyamux "github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	relayClient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	"github.com/libp2p/go-yamux/v5"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -45,6 +51,12 @@ var ddht *dualdht.DHT
 var hostOnce sync.Once
 var autoReconnectOnce sync.Once
 var MyID string
+
+// holePunchService holds our manually-constructed hole punch service so that
+// callers can trigger DCUtR explicitly via DirectConnect. libp2p's built-in
+// EnableHolePunching creates the service but does not expose it; constructing
+// our own lets us retry direct-connection upgrades for the bench.
+var holePunchService *holepunch.Service
 
 const (
 	Version = "0.0.0-dev.0"
@@ -148,6 +160,11 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.Identity(priv),
 		// libp2p.PrivateNetwork(psk),
 		libp2p.ResourceManager(newResourceManager()),
+		// Override the default yamux muxer with a larger initial stream
+		// window. Default Initial=256 KiB caps single-stream throughput at
+		// ~70 Mbps over a 30 ms RTT relay path; bumping to 8 MiB lifts the
+		// BDP ceiling so 4 MiB+ probes don't bottleneck on flow control.
+		libp2p.Muxer(libp2pyamux.ID, bigWindowYamuxMuxer()),
 		// libp2p.ConnectionManager(connmgr),
 		libp2p.NATPortMap(),
 		libp2p.ListenAddrStrings(listenAddrs...),
@@ -155,7 +172,9 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelay(),
-		libp2p.EnableHolePunching(),
+		// Hole-punching is enabled below by manually constructing holepunch.Service
+		// so we can call DirectConnect directly. EnableHolePunching would create
+		// its own internal service but doesn't expose it.
 		libp2p.EnableAutoNATv2(),
 		// Relay-as-server: lift the libp2p defaults (128 KB / 2 min per circuit,
 		// 128 reservations, 16 circuits/peer) so HTTP-over-circuit traffic is
@@ -185,17 +204,25 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	// callback can access the host. We use a pointer-to-pointer because
 	// the callback closure captures hostRef, and we set *hostRef later.
 	var hostRef *host.Host
-	if viper.GetString("public-addr") != "" {
-		// Head/relay nodes with a known public address: force public
-		// reachability so they don't waste time with AutoNAT probes.
+	// reachability mode: "auto" lets AutoNATv2 decide per-peer; "public" /
+	// "private" force the libp2p hint. Default mirrors prior behavior:
+	// public if public-addr is set, private otherwise.
+	reachability := strings.ToLower(strings.TrimSpace(viper.GetString("reachability")))
+	switch reachability {
+	case "auto":
+		// no force — let AutoNAT decide
+	case "public":
 		opts = append(opts, libp2p.ForceReachabilityPublic())
-	} else {
-		// Workers (no public-addr): force private reachability so libp2p
-		// automatically reserves slots on relay servers. Without this,
-		// AutoNAT may incorrectly report "public" (the relay CAN reach
-		// the worker directly) even though the worker is unreachable from
-		// the cloud.
+	case "private":
 		opts = append(opts, libp2p.ForceReachabilityPrivate())
+	default:
+		if viper.GetString("public-addr") != "" {
+			opts = append(opts, libp2p.ForceReachabilityPublic())
+		} else {
+			opts = append(opts, libp2p.ForceReachabilityPrivate())
+		}
+	}
+	if reachability != "public" && viper.GetString("public-addr") == "" {
 		// AutoRelay discovers relay servers from connected peers and
 		// maintains active reservations so other nodes can reach us
 		// via /p2p/<relay>/p2p-circuit/p2p/<us>.
@@ -239,6 +266,21 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 	registerPingProtocol(host)
 	// Set hostRef so the autorelay peer source callback can access the host.
 	hostRef = &host
+
+	// Create holepunch service manually so callers can trigger DirectConnect
+	// (DCUtR) on demand. This requires access to BasicHost internals — namely
+	// the IDService and AllAddrs callback — which the Host interface does not
+	// expose. The cast is safe: libp2p.New always returns *basic.BasicHost.
+	if bh, ok := host.(*basichost.BasicHost); ok {
+		hps, hpErr := holepunch.NewService(host, bh.IDService(), bh.AllAddrs)
+		if hpErr != nil {
+			common.Logger.Warnf("hole-punch service init failed: %v", hpErr)
+		} else {
+			holePunchService = hps
+		}
+	} else {
+		common.Logger.Warn("host is not *basichost.BasicHost; hole punching disabled")
+	}
 
 	// Log connection events for debugging
 	host.Network().Notify(&network.NotifyBundle{
@@ -497,6 +539,16 @@ func isTransientNetworkError(err error) bool {
 	return false
 }
 
+func bigWindowYamuxMuxer() *libp2pyamux.Transport {
+	cfg := yamux.DefaultConfig()
+	cfg.InitialStreamWindowSize = 8 * 1024 * 1024
+	cfg.MaxStreamWindowSize = 16 * 1024 * 1024
+	cfg.LogOutput = io.Discard
+	cfg.ReadBufSize = 0
+	cfg.MaxIncomingStreams = math.MaxUint32
+	return (*libp2pyamux.Transport)(cfg)
+}
+
 func relayServiceResources() relayv2.Resources {
 	r := relayv2.DefaultResources()
 	r.MaxReservations = 512
@@ -725,6 +777,35 @@ func MakeRelayReservations() {
 		ReannounceLocalServices()
 		common.Logger.Infof("Registered relay peer %s in CRDT", reservedRelay[:12])
 	}
+}
+
+// TryHolePunch invokes DCUtR (Direct Connection Upgrade through Relay) for the
+// given peer. Returns nil on success (a direct connection now exists), or an
+// error if the punch failed. Requires the holepunch service to be initialized.
+func TryHolePunch(targetPeerID string) error {
+	if holePunchService == nil {
+		return errors.New("hole punch service not initialized")
+	}
+	pid, err := peer.Decode(targetPeerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer id: %w", err)
+	}
+	return holePunchService.DirectConnect(pid)
+}
+
+// ConnectednessOf reports the libp2p connectedness state for the given peer:
+// "Connected" (direct), "Limited" (circuit-only), "NotConnected", "CanConnect",
+// "CannotConnect", or "" if the local host is not initialized.
+func ConnectednessOf(targetPeerID string) string {
+	h, _ := GetP2PNode(nil)
+	if h == nil {
+		return ""
+	}
+	pid, err := peer.Decode(targetPeerID)
+	if err != nil {
+		return ""
+	}
+	return h.Network().Connectedness(pid).String()
 }
 
 // IsDirectlyConnected returns true if we have a direct libp2p connection

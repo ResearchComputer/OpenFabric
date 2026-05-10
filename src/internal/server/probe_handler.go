@@ -80,6 +80,72 @@ type probeResponse struct {
 	Error   string         `json:"error,omitempty"`
 }
 
+type holepunchRequest struct {
+	Target     string `json:"target"`
+	Attempts   int    `json:"attempts"`
+	WaitMS     int    `json:"wait_ms"`
+	TimeoutMS  int    `json:"timeout_ms"`
+}
+
+type holepunchResponse struct {
+	OK            bool   `json:"ok"`
+	Target        string `json:"target"`
+	Connectedness string `json:"connectedness"`
+	Attempts      int    `json:"attempts"`
+	LastError     string `json:"last_error,omitempty"`
+}
+
+// holepunchHandler tries DCUtR up to N times (default 5), pausing between
+// attempts, and returns once Connectedness is "Connected" or the budget is
+// exhausted. Useful for warming up direct connections before throughput probes.
+func holepunchHandler(c *gin.Context) {
+	var req holepunchRequest
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+	if req.Target == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target is required"})
+		return
+	}
+	if req.Attempts <= 0 {
+		req.Attempts = 5
+	}
+	if req.WaitMS <= 0 {
+		req.WaitMS = 2000
+	}
+	if req.TimeoutMS <= 0 {
+		req.TimeoutMS = 30000
+	}
+	if _, err := libp2ppeer.Decode(req.Target); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid target peer id: " + err.Error()})
+		return
+	}
+
+	resp := holepunchResponse{Target: req.Target}
+	deadline := time.Now().Add(time.Duration(req.TimeoutMS) * time.Millisecond)
+
+	for resp.Attempts < req.Attempts && time.Now().Before(deadline) {
+		state := protocol.ConnectednessOf(req.Target)
+		resp.Connectedness = state
+		if state == "Connected" {
+			resp.OK = true
+			c.JSON(http.StatusOK, resp)
+			return
+		}
+		resp.Attempts++
+		if err := protocol.TryHolePunch(req.Target); err != nil {
+			resp.LastError = err.Error()
+		}
+		// Wait briefly for libp2p to upgrade Limited → Connected.
+		time.Sleep(time.Duration(req.WaitMS) * time.Millisecond)
+	}
+
+	resp.Connectedness = protocol.ConnectednessOf(req.Target)
+	resp.OK = resp.Connectedness == "Connected"
+	c.JSON(http.StatusOK, resp)
+}
+
 func runHandler(c *gin.Context) {
 	var req probeRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {

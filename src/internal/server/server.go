@@ -218,6 +218,7 @@ func StartServer() {
 		{
 			probeGroup.GET("/echo", echoHandler)
 			probeGroup.POST("/run", runHandler)
+			probeGroup.POST("/holepunch", holepunchHandler)
 		}
 		v1.GET("/self", getSelf)
 		v1.POST("/sign", signData)

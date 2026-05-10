@@ -44,13 +44,17 @@ func newLibp2pHTTPRoundTripper(h host.Host) *libp2pHTTPRoundTripper {
 			if err != nil {
 				return nil, fmt.Errorf("libp2pHTTP: invalid peer id %q: %w", hostPart, err)
 			}
-			// Permit opening a stream over a relay-circuit (Limited) connection.
-			// libp2p's NewStream refuses Limited conns by default and tries to
-			// upgrade to direct, which on cross-cluster peers blocks until the
-			// caller's context expires (manifests as plain "context deadline
-			// exceeded" with no dial-failure prefix). The ping protocol opts in
-			// the same way at p2p/protocol/ping/ping.go:117.
-			dialCtx := network.WithAllowLimitedConn(ctx, "libp2p-http")
+			// Only allow circuit-relay (Limited) streams when no direct
+			// connection exists. With Connected, the plain context lets
+			// libp2p use the direct path; otherwise we explicitly opt in
+			// to circuit (matching ping at p2p/protocol/ping/ping.go:117).
+			// Without this guard, libp2p picks the Limited conn even when
+			// a direct one is available, capping throughput at the relay's
+			// per-flow rate.
+			dialCtx := ctx
+			if h.Network().Connectedness(pid) != network.Connected {
+				dialCtx = network.WithAllowLimitedConn(ctx, "libp2p-http")
+			}
 			return gostream.Dial(dialCtx, h, pid, p2phttp.DefaultP2PProtocol)
 		},
 		DisableKeepAlives:     false,

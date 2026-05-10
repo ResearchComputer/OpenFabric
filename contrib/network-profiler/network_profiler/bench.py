@@ -102,7 +102,7 @@ def phase_start(
             f"nohup otela start --config {cfg_path} --config-dir {d} "
             f">>{log_path} 2>&1 &"
         )
-        result = runner.run(m, cmd, timeout=10)
+        result = runner.run(m, cmd, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(f"phase_start could not launch on {m.name}: {result.stderr}")
 
@@ -113,7 +113,7 @@ def phase_start(
             health = runner.run(
                 m,
                 f"curl -fsS http://127.0.0.1:{port}/v1/health",
-                timeout=10,
+                timeout=30,
             )
             if health.returncode == 0:
                 break
@@ -143,7 +143,7 @@ def phase_converge(
             tbl = runner.run(
                 m,
                 f"curl -s http://127.0.0.1:{port}/v1/dnt/table",
-                timeout=10,
+                timeout=30,
             )
             if tbl.returncode == 0:
                 seen = _extract_peer_ids(tbl.stdout)
@@ -153,6 +153,55 @@ def phase_converge(
             time.sleep(1)
         elapsed_s = time.monotonic() - start_t
         out[m.name] = {"complete": complete, "elapsed_s": round(elapsed_s, 2)}
+    return out
+
+
+def phase_punch(
+    runner,
+    machines: list[Machine],
+    peer_ids: dict[str, str],
+    http_port: int,
+    attempts: int = 5,
+    wait_ms: int = 2000,
+    timeout_ms: int = 30000,
+) -> dict[str, dict]:
+    """For each (src, dst) pair, ask the source node to upgrade its connection
+    to the target via DCUtR. Records final connectedness per pair so the run
+    summary can show which pairs are actually direct vs circuit-only."""
+    out: dict[str, dict] = {}
+    for src in machines:
+        port = _http_port_for(src, http_port)
+        for dst in machines:
+            if dst.name == src.name:
+                continue
+            target_pid = peer_ids[dst.name]
+            body = json.dumps({
+                "target": target_pid,
+                "attempts": attempts,
+                "wait_ms": wait_ms,
+                "timeout_ms": timeout_ms,
+            })
+            cmd = (
+                f"curl -fsS -m {timeout_ms // 1000 + 5} "
+                f"-H 'Content-Type: application/json' "
+                f"-X POST -d {json.dumps(body)} "
+                f"http://127.0.0.1:{port}/v1/probe/holepunch"
+            )
+            result = runner.run(src, cmd, timeout=timeout_ms // 1000 + 10)
+            entry = {"connectedness": "Unknown", "attempts": 0, "ok": False}
+            if result.returncode == 0:
+                try:
+                    parsed = json.loads(result.stdout.strip())
+                    entry["connectedness"] = parsed.get("connectedness", "Unknown")
+                    entry["attempts"] = parsed.get("attempts", 0)
+                    entry["ok"] = parsed.get("ok", False)
+                    if parsed.get("last_error"):
+                        entry["last_error"] = parsed["last_error"]
+                except Exception as e:
+                    entry["error"] = f"parse: {e}"
+            else:
+                entry["error"] = (result.stderr or result.stdout or "").strip()[:200]
+            out[f"{src.name}->{dst.name}"] = entry
     return out
 
 
@@ -233,8 +282,8 @@ def phase_teardown(runner, machines: list[Machine], run_id: str) -> None:
     for m in machines:
         d = bench_dir(run_id, m.name)
         cfg_path = f"{d}/cfg.yaml"
-        runner.run(m, f"pkill -f 'otela start --config {cfg_path}' || true", timeout=10)
-        runner.run(m, f"rm -rf {d} || true", timeout=10)
+        runner.run(m, f"pkill -f 'otela start --config {cfg_path}' || true", timeout=30)
+        runner.run(m, f"rm -rf {d} || true", timeout=30)
 
 
 def _extract_peer_ids(table_json: str) -> set[str]:
@@ -287,6 +336,7 @@ def run_bench(
     started_at = datetime.now(timezone.utc)
     phase_timings: dict[str, float] = {}
     convergence: dict[str, dict] = {}
+    punch_results: dict[str, dict] = {}
     peer_ids: dict[str, str] = {}
     totals: dict[str, int] = {}
     teardown_done = False
@@ -335,6 +385,10 @@ def run_bench(
         phase_timings["converge_s"] = round(time.monotonic() - t0, 2)
 
         t0 = time.monotonic()
+        punch_results = phase_punch(runner, machines, peer_ids, http_port=http_port)
+        phase_timings["punch_s"] = round(time.monotonic() - t0, 2)
+
+        t0 = time.monotonic()
         totals = phase_sweep(
             runner, machines, peer_ids, run_id,
             output=measurements_path,
@@ -364,6 +418,7 @@ def run_bench(
             for m in machines
         ],
         "convergence": convergence,
+        "punch": punch_results,
         "phases": phase_timings,
         "totals": totals,
     }
