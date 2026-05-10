@@ -148,6 +148,7 @@ func P2PForwardHandler(c *gin.Context) {
 
 // ServiceHandler
 func ServiceForwardHandler(c *gin.Context) {
+	st := newStageTimer()
 	serviceName := c.Param("service")
 	requestPath := c.Param("path")
 	service, err := protocol.GetService(serviceName)
@@ -167,6 +168,8 @@ func ServiceForwardHandler(c *gin.Context) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
 	}
+	st.Mark("local_proxy")
+
 	proxy := httputil.NewSingleHostReverseProxy(&target)
 	proxy.Director = director
 	// Use global transport here too if we want pooling to external HTTP services,
@@ -176,6 +179,12 @@ func ServiceForwardHandler(c *gin.Context) {
 	// Ideally we separate p2p transport from standard http transport, OR register protocols on one.
 	// Our getGlobalTransport() has registered libp2p, so it works for both (http falls back to standard).
 	proxy.Transport = getGlobalTransport()
+
+	proxy.ModifyResponse = func(r *http.Response) error {
+		st.Mark("sglang_ttft")
+		setWorkerTimingHeader(st, r)
+		return nil
+	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }

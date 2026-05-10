@@ -119,3 +119,11 @@ func parseServerTiming(header string) []stage {
 	}
 	return result
 }
+
+// setWorkerTimingHeader writes the timer's accumulated stages to a response
+// under X-Otela-Worker-Timing. No-op when the timer is disabled.
+func setWorkerTimingHeader(st *stageTimer, r *http.Response) {
+	if hv := st.Header(); hv != "" {
+		r.Header.Set("X-Otela-Worker-Timing", hv)
+	}
+}

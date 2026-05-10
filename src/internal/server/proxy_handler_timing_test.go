@@ -63,5 +63,33 @@ func TestMergeWorkerTimingMissingHeader(t *testing.T) {
 		"no worker_ prefix expected when upstream emitted nothing")
 }
 
+// TestSetWorkerTimingHeader verifies the helper that copies the timer's
+// stages onto an outgoing response under X-Otela-Worker-Timing.
+func TestSetWorkerTimingHeader_Enabled(t *testing.T) {
+	timingEnabled = true
+	defer func() { timingEnabled = false }()
+
+	st := newStageTimer()
+	st.Mark("local_proxy")
+	st.Mark("sglang_ttft")
+
+	resp := &http.Response{Header: http.Header{}}
+	setWorkerTimingHeader(st, resp)
+
+	got := resp.Header.Get("X-Otela-Worker-Timing")
+	assert.Contains(t, got, "local_proxy;dur=")
+	assert.Contains(t, got, "sglang_ttft;dur=")
+}
+
+func TestSetWorkerTimingHeader_DisabledNoOp(t *testing.T) {
+	timingEnabled = false
+	st := newStageTimer()
+	st.Mark("local_proxy")
+
+	resp := &http.Response{Header: http.Header{}}
+	setWorkerTimingHeader(st, resp)
+	assert.Equal(t, "", resp.Header.Get("X-Otela-Worker-Timing"))
+}
+
 // helper to keep the test compiling regardless of test ordering
 var _ = http.MethodGet
