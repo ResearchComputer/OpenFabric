@@ -1,0 +1,13 @@
+[project]
+name = "network-profiler"
+version = "0.1.0"
+description = "Pairwise network profiling over remote-cluster-controller managed machines"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+network-profiler = "network_profiler.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

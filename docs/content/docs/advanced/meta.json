@@ -5,6 +5,7 @@
     "crdt-tombstones",
     "crdt-internals",
     "benchmark",
+    "network-profiling",
     "performance-optimization"
   ]
 }

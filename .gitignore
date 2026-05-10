@@ -11,3 +11,5 @@ website/.source/
 .omx/
 .local
 .pista
+.claude/
+.venv/

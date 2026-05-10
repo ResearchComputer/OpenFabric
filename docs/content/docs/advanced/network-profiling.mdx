@@ -1,0 +1,242 @@
+---
+title: Network Profiling
+description: Measure pairwise latency and throughput between OpenTela nodes — both raw IP baselines and libp2p-level numbers — using the `contrib/network-profiler` toolkit.
+---
+
+OpenTela ships a profiling toolkit at [`contrib/network-profiler/`](https://github.com/ResearchComputer/OpenTela/tree/main/contrib/network-profiler) that produces two complementary views of the network between any set of machines you can SSH into:
+
+- A **raw-IP baseline** using `ping` and `iperf3` (`net-profiler collect`). Tells you what the underlying network is capable of, ignoring OpenTela's own overhead.
+- An **OpenTela-native** measurement using libp2p ping and HTTP-over-libp2p (`net-profiler bench`). Tells you what production traffic actually experiences — including TLS, multiplexing, and relay-circuit hops.
+
+Both flavors dispatch over [`remote-cluster-controller` (rcc)](https://pypi.org/project/remote-cluster-controller/) and produce JSONL output. The bench flavor brings up an isolated four-port mesh on the target hosts, runs every (source, destination, kind) tuple through three probe kinds, and tears the mesh down at the end.
+
+## Why two flavors?
+
+Raw `ping` between HPC login nodes will tell you "the network can do 0.3 ms" — but production OpenTela traffic rides libp2p HTTP through Noise/TLS encryption, stream multiplexing, and (often) a relay-v2 circuit because direct dial is blocked. The two latencies can differ by an order of magnitude. Run `net-profiler collect` to characterise the underlying link; run `net-profiler bench` to characterise the path your users actually traverse.
+
+A bench run that succeeds at `libp2p_ping` but fails at HTTP-over-libp2p is itself a diagnostic — it usually means the bootstrap/relay isn't issuing v2 reservations to your workers.
+
+## One-time setup
+
+You will need:
+
+- Python 3.11+ on your local machine.
+- An [`rcc`](https://pypi.org/project/remote-cluster-controller/) install: `uv tool install remote-cluster-controller` (or `pipx install remote-cluster-controller`). The CLI is named `rcc`.
+- Per-host SSH access. The bench dispatches every command through rcc → SSH, so passwordless SSH (with the host key already accepted) is required for every machine.
+- The `otela` binary on each remote machine. The bench expects to find it on `PATH` when commands run there.
+
+### rcc profiles
+
+In a working directory of your choice, scaffold the rcc config and add one profile per machine:
+
+```bash
+mkdir bench-workdir && cd bench-workdir
+rcc init
+```
+
+Edit `.rcc/config.toml` to look like:
+
+```toml
+default = "clariden"
+
+[profiles.clariden]
+host = "clariden"
+remote_dir = "/tmp"
+
+[profiles.bristen]
+host = "bristen"
+remote_dir = "/tmp"
+
+[profiles.euler]
+host = "euler"
+remote_dir = "/tmp"
+```
+
+`host` is whatever your `~/.ssh/config` recognises (or `user@host.example.com`). `remote_dir` is just the working directory rcc `cd`'s into before running each command — `/tmp` is fine.
+
+### Deploying `otela` to each host
+
+`otela` needs to be on `PATH` whenever the bench runs a command on a remote host. The simplest way is to drop the binary in a known location and inject it via the `remote_command` template in `machines.json`. Build the release binaries:
+
+```bash
+cd src && make build-release
+# produces build/release/otela-amd64 and build/release/otela-arm64
+```
+
+Push the right architecture to each host:
+
+```bash
+ssh clariden "mkdir -p ~/otela-bench-bin/aarch64 ~/otela-bench-bin/x86_64"
+scp src/build/release/otela-arm64 clariden:otela-bench-bin/aarch64/otela
+scp src/build/release/otela-amd64 clariden:otela-bench-bin/x86_64/otela
+ssh clariden "chmod +x ~/otela-bench-bin/aarch64/otela ~/otela-bench-bin/x86_64/otela"
+```
+
+If two hosts share a network filesystem (CSCS clariden + bristen, for example), one push covers both — the architecture-specific subdirectory keeps them from clobbering each other.
+
+### `machines.json`
+
+This is the inventory the profiler reads. A minimal example:
+
+```json
+{
+  "remote_command": [
+    "rcc", "run", "--profile", "{host}", "--",
+    "bash", "-lc",
+    "export PATH=$HOME/otela-bench-bin/$(uname -m):$PATH; {command}"
+  ],
+  "machines": [
+    {
+      "name": "clariden",
+      "address": "clariden.cscs.ch",
+      "rcc_host": "clariden"
+    },
+    {
+      "name": "euler",
+      "address": "euler.ethz.ch",
+      "rcc_host": "euler"
+    }
+  ]
+}
+```
+
+Fields:
+
+- `remote_command` — argv template the profiler uses to run each remote command. The PATH-injecting form above lets the bench find the right `otela` binary on each host without modifying user shells. `{host}`, `{name}`, `{address}`, and `{command}` are substituted per call.
+- `machines[].name` — label used in output records.
+- `machines[].address` — the address other peers should use to dial this machine (the bootstrap multiaddr). For HPC login nodes this is usually the public FQDN; for cluster compute nodes it depends on your network topology.
+- `machines[].rcc_host` — the rcc profile name (matches `[profiles.<name>]` in `.rcc/config.toml`).
+
+Optional fields:
+
+- `http_port` / `libp2p_port` (per machine) — override the bench's default ports (`19090` HTTP, `19091` libp2p). Useful when running multiple bench nodes on one host.
+- `bootstrap_extra` (per machine, list of multiaddrs) — extra libp2p bootstrap addresses for this specific host. Use when one cluster's outbound rules let it reach a different rendezvous than another.
+
+## Raw-IP baseline: `net-profiler collect`
+
+For each ordered pair, runs `ping` from source to target's address. With `--iperf` it also runs `iperf3` on the target and a client on the source.
+
+```bash
+cd bench-workdir
+python3 -m network_profiler collect \
+  --config machines.json \
+  --output results/baseline.jsonl
+```
+
+Add `--iperf` to also measure bandwidth. `iperf3` must be installed on every host; on most HPC clusters it isn't on the login node — load it with `module load iperf` (Euler) or run on a compute node.
+
+Output is JSONL, one record per probe. Render a heatmap from the latency results:
+
+```bash
+python3 -m network_profiler heatmap \
+  --input results/baseline.jsonl \
+  --output results/ping.html
+```
+
+## OpenTela-native: `net-profiler bench`
+
+The bench owns the full lifecycle: it brings up an isolated four-port mesh on each host, runs every (source, destination) pair through three probe kinds, and tears the mesh down. Each run uses a unique config dir at `/tmp/otela-bench-<runID>-<host>/` so it never collides with persistent OpenTela state.
+
+```bash
+cd bench-workdir
+python3 -m network_profiler bench \
+  --config machines.json \
+  --bootstrap /ip4/<bootstrap-ip>/tcp/43905/p2p/<bootstrap-peerid> \
+  --latency-count 20 \
+  --throughput-count 3 \
+  --throughput-bytes 10485760 \
+  --output results/bench
+```
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--config` | (required) | `machines.json` path. |
+| `--output` | `results/<run-id>/` | Output directory. |
+| `--run-id` | timestamp + random | Stable identifier; appears in every record and in the bench dir name. |
+| `--latency-count` | `20` | Samples per `latency` and `libp2p_ping` probe. |
+| `--throughput-count` | `3` | Iterations per `throughput` probe. |
+| `--throughput-bytes` | `10485760` (10 MiB) | Bytes per throughput iteration. |
+| `--http-port` | `19090` | Bench HTTP port (overridable per machine). |
+| `--libp2p-port` | `19091` | Bench libp2p port (overridable per machine). |
+| `--bootstrap` | (none) | Extra libp2p bootstrap multiaddr. Repeat for multiple. |
+| `--keep` | off | Skip teardown — leave processes and `/tmp/otela-bench-*` dirs in place for post-mortem. |
+
+### What gets measured
+
+Three probe kinds, all between the same peer pairs in the same run:
+
+- **`libp2p_ping`** — raw `/ipfs/ping/1.0.0` round-trip. Tiny payload, shortest-lived stream. Most likely to succeed under restrictive networks because the libp2p relay can carry small ping packets even when full bidirectional streams are blocked.
+- **`latency`** — HTTP-over-libp2p `GET /v1/health` round-trip via the same `gostream`-based transport as production traffic.
+- **`throughput`** — HTTP-over-libp2p `GET /v1/probe/echo?bytes=N`. Measures bandwidth-weighted Mbps over `count × bytes` total transfer.
+
+### Phases of a run
+
+The orchestrator runs eight phases in sequence:
+
+1. **init** — `otela init --config-dir /tmp/otela-bench-<runID>-<host>/` per host (generates the libp2p key).
+2. **discover** — `otela peer-id --config-dir <dir>` per host. Stores `host → PeerID`.
+3. **configure** — locally render per-host `cfg.yaml` with bench ports, every other host as a bootstrap peer, and any `--bootstrap` / per-machine `bootstrap_extra` entries appended.
+4. **push** — base64-pipe the cfg.yaml to each host via stdin.
+5. **start** — launch `otela start --config-dir <dir>` in the background, poll `GET /v1/health` until 200 (or 30 s timeout per host).
+6. **converge** — poll `GET /v1/dnt/table` until each host sees every other expected PeerID, or 60 s timeout.
+7. **sweep** — for each `(src, dst, kind)`, run `otela probe --target <dst-pid> --kind <kind>` via rcc on the source.
+8. **teardown** — `pkill -f` matched on the unique cfg path, then `rm -rf` the bench dir.
+
+`SIGINT` during any phase runs teardown before exiting, so a Ctrl-C never leaves dangling otela processes.
+
+### Output
+
+Two files per run, under `<output-dir>/`:
+
+`measurements.jsonl` — one record per `(src, dst, kind)`:
+
+```json
+{
+  "run_id": "real-20260503T113742",
+  "kind": "latency",
+  "source": "euler",
+  "target": "sgs-amd-01",
+  "source_peer_id": "QmVpKnDX...",
+  "target_peer_id": "QmZiuqrG...",
+  "ok": true,
+  "metrics": {
+    "min_ms": 2.62, "avg_ms": 2.89, "p50_ms": 2.85, "p95_ms": 4.13, "max_ms": 4.42,
+    "samples_ns": [2620000, 2745000, ...],
+    "failed_samples": 0
+  }
+}
+```
+
+For `throughput`, `metrics` instead carries `bytes_received`, `elapsed_ns`, `mbps`, and a per-iteration `iterations` array.
+
+`run.json` — top-level summary with phase timings, per-host convergence outcome, and total ok/failed counts. Useful for post-mortem ("why did this run take 22 minutes?").
+
+## Interpreting results
+
+A few patterns to watch for:
+
+- **`libp2p_ping` succeeds, HTTP-over-libp2p fails** — relay v2 reservation issue. The relay node passes ping packets but isn't granting your workers the reservations needed for full bidirectional streams. Failed records will show `failed to dial: ... all dials failed * [/ip4/.../tcp/19091] dial backoff`.
+- **Convergence times out for some hosts** — those nodes' outbound firewalls let through fewer DHT discovery exchanges than others. They can still ping the peers they did learn about; they just don't see the full mesh in their `dnt/table` within 60 s. Try a closer-by bootstrap (`bootstrap_extra` per machine).
+- **Significant gap between `libp2p_ping` and `latency`** — the difference quantifies HTTP-over-libp2p overhead vs. raw libp2p streams (TLS, multiplexing). Useful when tuning client request sizes.
+- **`failed_samples` non-zero on `libp2p_ping`** — a peer that's intermittently reachable. Look at `samples_ns` for the surviving samples.
+
+## Cross-cluster considerations
+
+For HPC login nodes (Euler, CSCS clusters) the bench will form a mesh **only if** outbound TCP from each host can reach the bootstrap. Don't expect direct peer-to-peer dial to work between login nodes — institutional firewalls almost always block user-port inbound. Use a publicly reachable bootstrap (e.g. one of OpenTela's relay nodes) and accept that HTTP-over-libp2p probes may fail until v2 relay reservations land.
+
+For real cross-cluster benchmarking, run the worker side on a SLURM-allocated compute node with port-forwarding rules, not on the login node.
+
+## Troubleshooting
+
+- **`error: no .rcc/ found`** — you need to run from the directory containing `.rcc/config.toml`. The profiler hands every command to `rcc`, which searches cwd.
+- **`bash: .../otela: cannot execute binary file: Exec format error`** — wrong-architecture binary on the host. Use the `$(uname -m)` PATH-injection trick from the example `remote_command`.
+- **`error: dest open ".../otela": Failure` when re-pushing** — a previous bench's `otela` is still running and holding the binary text-busy. `ssh <host> "pkill -9 -f otela.*config-dir.*otela-bench"` and re-push.
+- **Convergence completes but every probe fails with `dial backoff`** — peers can see each other in the DHT but can't dial each other directly. Add a relay node accessible from each peer via `--bootstrap`.
+
+## Related code
+
+- [`contrib/network-profiler/`](https://github.com/ResearchComputer/OpenTela/tree/main/contrib/network-profiler) — Python orchestrator.
+- `src/internal/server/probe_handler.go` — the `/v1/probe/echo` and `/v1/probe/run` endpoints, plus the libp2p ping wrapper.
+- `src/entry/cmd/probe.go`, `src/entry/cmd/peerid.go` — the `otela probe` and `otela peer-id` CLI commands the bench dispatches.

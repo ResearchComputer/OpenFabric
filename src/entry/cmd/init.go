@@ -8,8 +8,27 @@ import (
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 
+	"opentela/internal/protocol"
 	"opentela/internal/wallet"
 )
+
+// ensureLibp2pKey makes sure a libp2p identity key exists on disk at the
+// path resolved by protocol.ResolveKeyPath. It is a no-op when a key is
+// already present, so calling it repeatedly (e.g. across multiple
+// `otela init` invocations) preserves the existing identity. This lets
+// tooling that needs the PeerID — such as the mesh-bench runner — read
+// it after `otela init` without ever starting the server.
+func ensureLibp2pKey() error {
+	keyPath, err := protocol.ResolveKeyPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(keyPath); err == nil {
+		return nil
+	}
+	_, err = protocol.GenerateAndWriteKey()
+	return err
+}
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -74,12 +93,21 @@ without overwriting anything.`,
 			fmt.Printf("  Keypair file: %s\n", acc.FilePath)
 			fmt.Println()
 			fmt.Println("No changes were made to the existing wallet.")
+			if err := ensureLibp2pKey(); err != nil {
+				fmt.Printf("Failed to initialize libp2p key: %v\n", err)
+				os.Exit(1)
+			}
 			return
 		}
 
 		account, err := wm.AddSolanaAccount()
 		if err != nil {
 			fmt.Printf("Failed to create wallet: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := ensureLibp2pKey(); err != nil {
+			fmt.Printf("Failed to initialize libp2p key: %v\n", err)
 			os.Exit(1)
 		}
 

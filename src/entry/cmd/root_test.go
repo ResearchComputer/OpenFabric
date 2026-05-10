@@ -101,14 +101,18 @@ udpport: "59820"
 			expectError: false,
 		},
 		{
-			name: "invalid config file path",
+			name: "missing config file under writable dir",
 			setup: func() {
-				cfgFile = "/nonexistent/path/config.yaml"
+				// Point cfgFile at a location whose parent does not yet
+				// exist but is creatable (under a temp dir). initConfig
+				// should seed the config there instead of erroring.
+				tempDir := t.TempDir()
+				cfgFile = filepath.Join(tempDir, "nested", "cfg.yaml")
 			},
 			cleanup: func() {
 				cfgFile = ""
 			},
-			expectError: false, // Should use defaults
+			expectError: false, // Should use defaults and seed the file.
 		},
 	}
 
@@ -273,6 +277,44 @@ func TestConfigFileVariable(t *testing.T) {
 
 	// Reset for other tests
 	cfgFile = ""
+}
+
+func TestInitConfigSeedWriteHonorsConfigDir(t *testing.T) {
+	// Regression test: when --config-dir is set (via viper key "config_dir")
+	// and the target cfg.yaml does not yet exist, initConfig must seed the
+	// file at <config_dir>/cfg.yaml — not at a relative path under the
+	// current working directory.
+	viper.Reset()
+	defer viper.Reset()
+
+	tempDir := t.TempDir()
+	viper.Set("config_dir", tempDir)
+
+	// Make sure the global cfgFile starts empty so the config_dir branch
+	// at the top of initConfig populates it.
+	cfgFile = ""
+	defer func() { cfgFile = "" }()
+
+	// Capture the working directory and assert nothing is written there.
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	strayPath := filepath.Join(cwd, ".config", "opentela", "cfg.yaml")
+	_, strayBefore := os.Stat(strayPath)
+
+	cmd := &cobra.Command{}
+	require.NoError(t, initConfig(cmd))
+
+	expected := filepath.Join(tempDir, "cfg.yaml")
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("expected seed config at %s, but it was not created: %v", expected, err)
+	}
+
+	// Confirm we did not also splatter a relative-path config under cwd.
+	if strayBefore != nil && os.IsNotExist(strayBefore) {
+		if _, err := os.Stat(strayPath); err == nil {
+			t.Fatalf("seed config was written to stray relative path %s", strayPath)
+		}
+	}
 }
 
 func TestBillingConfigDefaults(t *testing.T) {

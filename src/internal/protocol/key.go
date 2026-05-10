@@ -1,25 +1,43 @@
 package protocol
 
 import (
+	"crypto/rand"
 	"opentela/internal/common"
 	"os"
-	"path"
+	"path/filepath"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/spf13/viper"
 )
 
-func writeKeyToFile(priv crypto.PrivKey) {
+// ResolveKeyPath returns the on-disk location of the libp2p identity key.
+// It honors viper's "config_dir" override (set by the --config-dir flag) and
+// falls back to ~/.config/opentela/keys/id.
+func ResolveKeyPath() (string, error) {
+	if cd := viper.GetString("config_dir"); cd != "" {
+		return filepath.Join(cd, "keys", "id"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "opentela", "keys", "id"), nil
+}
+
+// WriteKeyToFile marshals priv and writes it to the resolved key path,
+// creating parent directories as needed. Exits the process on failure to
+// preserve the historical behavior of newHost.
+func WriteKeyToFile(priv crypto.PrivKey) {
 	keyData, err := crypto.MarshalPrivateKey(priv)
 	if err != nil {
 		common.Logger.Error("Error while marshalling private key: ", err)
 	}
-	home, err := os.UserHomeDir()
+	keyPath, err := ResolveKeyPath()
 	if err != nil {
 		common.Logger.Error("Could not determine home directory: ", err)
 		os.Exit(1)
 	}
-	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
-	err = os.MkdirAll(path.Dir(keyPath), os.ModePerm)
+	err = os.MkdirAll(filepath.Dir(keyPath), os.ModePerm)
 	if err != nil {
 		common.Logger.Error("Could not create keys directory", "error", err)
 		os.Exit(1)
@@ -31,12 +49,15 @@ func writeKeyToFile(priv crypto.PrivKey) {
 	}
 }
 
-func loadKeyFromFile() crypto.PrivKey {
-	home, err := os.UserHomeDir()
+// LoadKeyFromFile reads the libp2p identity key from disk and returns it.
+// Returns nil if the file does not exist or cannot be parsed; errors are
+// logged but not propagated, matching the historical behavior used by
+// newHost when probing for an existing identity.
+func LoadKeyFromFile() crypto.PrivKey {
+	keyPath, err := ResolveKeyPath()
 	if err != nil {
 		return nil
 	}
-	keyPath := path.Join(home, ".config", "opentela", "keys", "id")
 	common.Logger.Debug("Looking for keys under: ", keyPath)
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -49,4 +70,18 @@ func loadKeyFromFile() crypto.PrivKey {
 		return nil
 	}
 	return priv
+}
+
+// GenerateAndWriteKey generates a fresh RSA-2048 libp2p identity, persists it
+// via WriteKeyToFile, and returns the in-memory key so callers don't need to
+// re-load from disk. It is the same keygen flow used lazily by newHost when
+// seed=0 and no key exists, exposed so that `otela init` can pre-generate
+// the key without starting a libp2p host.
+func GenerateAndWriteKey() (crypto.PrivKey, error) {
+	priv, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	WriteKeyToFile(priv)
+	return priv, nil
 }

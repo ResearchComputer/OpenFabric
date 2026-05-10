@@ -5,6 +5,7 @@ import (
 	"opentela/internal/common"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,10 @@ var rootcmd = &cobra.Command{
 //nolint:gochecknoinits
 func init() {
 	rootcmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/opentela/cfg.yaml)")
+	rootcmd.PersistentFlags().String("config-dir", "", "use this directory as the config root (overrides --config and key location)")
+	if err := viper.BindPFlag("config_dir", rootcmd.PersistentFlags().Lookup("config-dir")); err != nil {
+		common.Logger.Error("Could not bind config-dir flag", "error", err)
+	}
 	startCmd.Flags().String("wallet.account", "", "wallet account")
 	startCmd.Flags().String("account.wallet", "", "path to wallet key file")
 	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
@@ -60,6 +65,8 @@ func init() {
 	rootcmd.AddCommand(versionCmd)
 	rootcmd.AddCommand(updateCmd)
 	rootcmd.AddCommand(walletCmd)
+	rootcmd.AddCommand(peerIDCmd)
+	rootcmd.AddCommand(probeCmd)
 }
 
 // configFilePath returns the canonical path for the OpenTela config file.
@@ -85,6 +92,9 @@ func configFilePath(home string) string {
 func initConfig(cmd *cobra.Command) error {
 	var home string
 	var err error
+	if cd := viper.GetString("config_dir"); cd != "" && cfgFile == "" {
+		cfgFile = filepath.Join(cd, "cfg.yaml")
+	}
 	viper.SetEnvPrefix("of")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
@@ -168,7 +178,16 @@ func initConfig(cmd *cobra.Command) error {
 		viper.SetDefault("solana.rpc", defaultConfig.Solana.RPC)
 		viper.SetDefault("solana.mint", defaultConfig.Solana.Mint)
 		viper.SetDefault("solana.skip_verification", defaultConfig.Solana.SkipVerification)
-		configPath := path.Join(home, ".config", configDirName, "cfg.yaml")
+		// Seed the config at whatever path viper was told to use (either via
+		// --config / cfgFile, or the default $HOME/.config/opentela path).
+		// This ensures `otela init --config-dir <dir>` writes the seed under
+		// <dir>/cfg.yaml rather than recomputing the path from $HOME.
+		configPath := viper.ConfigFileUsed()
+		if configPath == "" {
+			// Fallback for safety; in practice SetConfigFile was called above
+			// in both branches, so this should not be reached.
+			configPath = path.Join(home, ".config", configDirName, "cfg.yaml")
+		}
 		err = os.MkdirAll(path.Dir(configPath), os.ModePerm)
 		if err != nil {
 			common.Logger.Error("Could not create config directory", "error", err)

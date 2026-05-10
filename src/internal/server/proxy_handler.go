@@ -22,7 +22,6 @@ import (
 	"github.com/axiomhq/axiom-go/axiom/ingest"
 	"github.com/buger/jsonparser"
 	"github.com/gin-gonic/gin"
-	p2phttp "github.com/libp2p/go-libp2p-http"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
@@ -76,7 +75,7 @@ func getGlobalTransport() *http.Transport {
 			MaxIdleConns:          512,              // Support large peer sets
 			MaxIdleConnsPerHost:   4,                // Limit per-host to avoid head-of-line blocking
 		}
-		globalTransport.RegisterProtocol("libp2p", p2phttp.NewTransport(node))
+		globalTransport.RegisterProtocol("libp2p", newLibp2pHTTPRoundTripper(node))
 	})
 	return globalTransport
 }
