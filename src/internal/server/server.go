@@ -153,6 +153,7 @@ func StartServer() {
 		common.Logger.Infof("Metrics aggregation enabled: scraping workers every %ds", viper.GetInt("metrics.scrape_interval_seconds"))
 	}
 
+	InitTiming()
 	initTracer()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
