@@ -369,11 +369,13 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	// Always buffer the request body so transport-level failures can retry
 	// against a different worker. The retry loop replays bodyBytes on each
 	// attempt.
+	st := newStageTimer()
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	st.Mark("head_recv")
 	c.Request = c.Request.WithContext(ctx)
 
 	// matchBody is used *only* by selectCandidates to pick the identity group.
@@ -408,6 +410,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	fallbackLevel := parseFallbackLevel(c.GetHeader("X-Otela-Fallback"))
 
 	candidates := selectCandidates(providers, serviceName, matchBody, fallbackLevel)
+	st.Mark("head_dnt")
 	routingFallbackTotal.WithLabelValues(serviceName, strconv.Itoa(fallbackLevel)).Inc()
 	if len(candidates) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No provider found for the requested service."})
@@ -472,6 +475,9 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			targetPeer = remaining[rand.Intn(len(remaining))]
 		}
 		excluded[targetPeer] = true
+		if attempt == 0 {
+			st.Mark("head_peer_select")
+		}
 
 		// Clone request — ReverseProxy mutates URL, Host, X-Forwarded-*
 		attemptReq := c.Request.Clone(ctx)
@@ -528,6 +534,11 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 		capturedPeer := targetPeer
 		proxy.ModifyResponse = func(r *http.Response) error {
+			st.Mark("head_p2p_to_worker_first_byte")
+			mergeWorkerTiming(st, r)
+			if hv := st.Header(); hv != "" {
+				r.Header.Set("Server-Timing", hv)
+			}
 			if err := rewriteHeader()(r); err != nil {
 				return err
 			}

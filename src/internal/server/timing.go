@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,22 @@ func (s *stageTimer) Header() string {
 		parts[i] = fmt.Sprintf("%s;dur=%.3f", st.name, st.ms)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// mergeWorkerTiming reads X-Otela-Worker-Timing from an upstream response
+// and appends each stage to the timer with a "worker_" prefix. No-op when
+// the timer is disabled or the header is absent.
+func mergeWorkerTiming(st *stageTimer, resp *http.Response) {
+	if !st.enabled {
+		return
+	}
+	h := resp.Header.Get("X-Otela-Worker-Timing")
+	if h == "" {
+		return
+	}
+	for _, ws := range parseServerTiming(h) {
+		st.AddRaw("worker_"+ws.name, ws.ms)
+	}
 }
 
 // parseServerTiming parses a Server-Timing-style header value into stages.
