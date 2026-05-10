@@ -130,6 +130,10 @@ func initConfig(cmd *cobra.Command) error {
 	// Production logging mode: reduces log volume via sampling (opt-in)
 	viper.SetDefault("production_logging", false)
 
+	// Server-Timing per-request stage instrumentation (opt-in, disabled by default
+	// because emitting headers does ~6 time.Now() calls per request).
+	viper.SetDefault("observability.timing_headers", false)
+
 	// Scalability feature flags (all default to false for safe rollout)
 	viper.SetDefault("scalability.swim_enabled", false)
 	viper.SetDefault("scalability.crdt_tuned", false)
