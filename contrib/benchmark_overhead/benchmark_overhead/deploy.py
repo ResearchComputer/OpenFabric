@@ -106,7 +106,7 @@ def _wait_dnt_ready(*, head_url: str, model: str, timeout_s: int) -> None:
             r.raise_for_status()
             if is_model_ready_in_dnt(r.json(), model=model):
                 return
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:
             log.debug("DNT poll failed: %s", e)
         time.sleep(backoff)
     raise TimeoutError(f"model {model} not registered in DNT within {timeout_s}s")
