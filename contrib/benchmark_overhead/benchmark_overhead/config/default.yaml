@@ -1,0 +1,25 @@
+head_url: http://148.187.108.172:8092
+models:
+  - name: Qwen/Qwen3-1.7B
+    gres: gpu:1
+    apptainer_image: <CLARIDEN_SGLANG_SIF>
+  - name: Qwen/Qwen3-8B
+    gres: gpu:1
+    apptainer_image: <CLARIDEN_SGLANG_SIF>
+  - name: Qwen/Qwen3-32B
+    gres: gpu:2
+    apptainer_image: <CLARIDEN_SGLANG_SIF>
+arrival_rates_rps: [1, 4, 16, 64]
+paths: [direct, otela]
+duration_s: 120
+warmup_s: 30
+repetitions: 3
+sharegpt_path: ~/datasets/sharegpt.json
+slurm:
+  partition: normal
+  account: <SLURM_ACCOUNT>
+  time_limit: 02:00:00
+  bench_state_dir: ~/.opentela-bench
+otela:
+  binary_path: ~/opentela/otela
+  bootstrap_url: http://148.187.108.172:8092/v1/dnt/bootstraps
