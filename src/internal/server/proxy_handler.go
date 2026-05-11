@@ -72,8 +72,10 @@ func getGlobalTransport() *http.Transport {
 			ResponseHeaderTimeout: 10 * time.Minute, // Allow up to 10 minutes for response headers
 			IdleConnTimeout:       60 * time.Second, // Keep connections alive for 60 seconds
 			DisableKeepAlives:     false,            // Enable keep-alives for better performance
-			MaxIdleConns:          512,              // Support large peer sets
-			MaxIdleConnsPerHost:   4,                // Limit per-host to avoid head-of-line blocking
+			MaxIdleConns:          1024,             // Support large peer sets
+			MaxIdleConnsPerHost:   64,               // Larger pool so bursty per-peer forwards don't
+			//                                          have to open fresh libp2p streams (gostream.Dial
+			//                                          over a relay circuit is non-trivial).
 		}
 		globalTransport.RegisterProtocol("libp2p", newLibp2pHTTPRoundTripper(node))
 	})
