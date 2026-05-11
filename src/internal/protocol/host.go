@@ -559,7 +559,11 @@ func relayServiceResources() relayv2.Resources {
 }
 
 func newResourceManager() network.ResourceManager {
-	limiter := rcmgr.NewFixedLimiter(rcmgr.DefaultLimits.AutoScale())
+	// InfiniteLimits removes per-protocol / per-peer / system stream caps.
+	// DefaultLimits.AutoScale() refuses concurrent outbound streams once a
+	// single peer-protocol pair has ~128 in flight, which 502s legitimate
+	// head→worker forwarding at moderate RPS on slow models.
+	limiter := rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits)
 	rm, err := rcmgr.NewResourceManager(limiter)
 	if err != nil {
 		common.Logger.Errorf("Failed to create resource manager, falling back to null (NO RESOURCE LIMITS): %v", err)
