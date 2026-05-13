@@ -62,6 +62,26 @@ def load_sharegpt(
     return out
 
 
+def fixed_prompt(*, input_tokens: int, output_tokens: int) -> list[dict]:
+    """Return a single-prompt list with a deterministic input of approximately
+    `input_tokens` tokens and a configured `output_tokens` budget.
+
+    Eliminates input-length variance — every request hits the worker with the
+    exact same prompt, so TTFT/total reflect routing + cold-cache + model time
+    only, not prompt-length spread. Output is bounded by the client setting
+    max_tokens=min_tokens=output_tokens with ignore_eos=true (see client.py).
+
+    The prompt is a deterministic ASCII string of `input_tokens * CHARS_PER_TOKEN`
+    chars (heuristic — actual tokens depend on the model's tokenizer, but the
+    string is identical across requests so variance is exactly zero).
+    """
+    char_count = max(1, input_tokens * CHARS_PER_TOKEN)
+    seed = "the cat sat on the mat. "
+    body = (seed * (char_count // len(seed) + 1))[:char_count]
+    prompt = "Continue this story:\n" + body
+    return [{"id": "fixed", "prompt": prompt, "max_output_tokens": output_tokens}]
+
+
 def poisson_schedule(
     *,
     rps: float,

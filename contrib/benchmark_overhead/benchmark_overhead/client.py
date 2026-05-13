@@ -129,6 +129,10 @@ async def fire_open_loop(
                 "stream": True,
                 "messages": [{"role": "user", "content": prompt["prompt"]}],
                 "max_tokens": prompt["max_output_tokens"],
+                # Force vLLM to emit exactly max_tokens tokens — eliminates the
+                # output-length variance that otherwise dominates p95/p99.
+                "min_tokens": prompt["max_output_tokens"],
+                "ignore_eos": True,
             }
             req_id = f"bench-{cell_meta['cell_key']}-{uuid.uuid4().hex[:8]}-{i}"
 

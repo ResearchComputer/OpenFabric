@@ -15,7 +15,7 @@ import yaml
 
 from benchmark_overhead.client import fire_open_loop
 from benchmark_overhead.deploy import WorkerState, ensure_worker
-from benchmark_overhead.workload import load_sharegpt, poisson_schedule
+from benchmark_overhead.workload import fixed_prompt, load_sharegpt, poisson_schedule
 
 log = logging.getLogger(__name__)
 
@@ -58,8 +58,15 @@ def summarize_cell(rows: list[dict], *, cell_meta: dict) -> dict:
 
 
 def run_sweep(*, config_path: str, output_dir: str) -> None:
+    import os
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     cfg = yaml.safe_load(Path(config_path).expanduser().read_text())
-    run_id = "r-" + datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    run_id = os.environ.get("OTELA_BENCH_RUN_ID") or (
+        "r-" + datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    )
     out_root = Path(output_dir).expanduser() / run_id
     out_root.mkdir(parents=True, exist_ok=True)
     (out_root / "config.yaml").write_text(yaml.safe_dump(cfg))
@@ -79,13 +86,39 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
     meta_path.write_text(json.dumps(meta, indent=2))
 
     state_dir = Path(cfg["slurm"]["bench_state_dir"]).expanduser()
-    prompts = load_sharegpt(cfg["sharegpt_path"], max_input_tokens=512, max_output_tokens=128)
-    if not prompts:
-        raise RuntimeError(f"no prompts loaded from {cfg['sharegpt_path']}")
+    workload = cfg.get("workload") or {}
+    if workload.get("kind") == "fixed":
+        prompts = fixed_prompt(
+            input_tokens=int(workload.get("input_tokens", 256)),
+            output_tokens=int(workload.get("output_tokens", 128)),
+        )
+        log.info("using fixed workload: input=%d tokens, output=%d tokens",
+                 workload.get("input_tokens", 256), workload.get("output_tokens", 128))
+    else:
+        prompts = load_sharegpt(
+            cfg["sharegpt_path"], max_input_tokens=512, max_output_tokens=128
+        )
+        if not prompts:
+            raise RuntimeError(f"no prompts loaded from {cfg['sharegpt_path']}")
     log.info("loaded %d prompts", len(prompts))
 
     cells_rows: list[dict] = []
-    for m in cfg["models"]:
+    import subprocess
+    # Resume support: cells already present in raw.jsonl are skipped so a
+    # crashed sweep can be relaunched with the same OTELA_BENCH_RUN_ID.
+    done_keys = _existing_cell_keys(raw_path)
+    if done_keys:
+        log.info("resume: %d cells already measured in %s", len(done_keys), raw_path)
+    for i, m in enumerate(cfg["models"]):
+        all_cell_keys = [
+            f"{m['name'].replace('/', '_')}-rps{rps}-{path}-rep{rep}"
+            for rps in cfg["arrival_rates_rps"]
+            for path in cfg["paths"]
+            for rep in range(1, int(cfg["repetitions"]) + 1)
+        ]
+        if all(k in done_keys for k in all_cell_keys):
+            log.info("skip model %s — all %d cells already measured", m["name"], len(all_cell_keys))
+            continue
         state = ensure_worker(
             model=m["name"],
             model_cfg=m,
@@ -107,6 +140,11 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
                         "rep": rep,
                         "cell_key": cell_key,
                     }
+                    if cell_key in done_keys:
+                        log.info("skip cell (already measured): %s", cell_key)
+                        cell_rows = _read_cell_rows(raw_path, cell_key)
+                        cells_rows.append(summarize_cell(cell_rows, cell_meta=cell_meta))
+                        continue
                     log.info("cell: %s", cell_key)
                     rng = np.random.default_rng(hash(cell_key) & 0xFFFFFFFF)
                     asyncio.run(_run_cell(
@@ -116,6 +154,12 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
                     ))
                     cell_rows = _read_cell_rows(raw_path, cell_key)
                     cells_rows.append(summarize_cell(cell_rows, cell_meta=cell_meta))
+        # Free GPU before the next model. Required when QOS caps jobs/user
+        # (e.g. debug-qos: MaxJobsPerUser=1) — without this, the next
+        # ensure_worker's sbatch sits PENDING forever.
+        if i < len(cfg["models"]) - 1:
+            log.info("scancel worker %s for %s before next model", state.job_id, m["name"])
+            subprocess.run(["scancel", state.job_id], check=False)
 
     _write_cells_csv(cells_path, cells_rows)
     meta["end"] = datetime.datetime.utcnow().isoformat() + "Z"
@@ -161,13 +205,47 @@ def _url_for_path(path: str, *, head_url: str, state: WorkerState) -> str:
     raise ValueError(f"unknown path {path!r}")
 
 
-def _read_cell_rows(raw_path: Path, cell_key: str) -> list[dict]:
-    rows: list[dict] = []
+def _existing_cell_keys(raw_path: Path) -> set[str]:
+    """Scan raw.jsonl once and return the set of cell_keys that already have
+    at least one measure row. Used for resume after a crashed sweep."""
+    keys: set[str] = set()
+    if not raw_path.exists():
+        return keys
     with raw_path.open() as f:
         for line in f:
-            r = json.loads(line)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            cell = r.get("cell", {})
+            if cell.get("phase") == "measure" and cell.get("cell_key"):
+                keys.add(cell["cell_key"])
+    return keys
+
+
+def _read_cell_rows(raw_path: Path, cell_key: str) -> list[dict]:
+    """Read measure rows for one cell. Tolerates malformed JSONL lines
+    (concurrent async appends at high RPS can interleave bytes from
+    different rows; skip those instead of crashing the whole sweep)."""
+    rows: list[dict] = []
+    bad = 0
+    with raw_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                bad += 1
+                continue
             if r.get("cell", {}).get("cell_key") == cell_key and r.get("cell", {}).get("phase") == "measure":
                 rows.append(r)
+    if bad:
+        log.warning("skipped %d malformed jsonl lines in %s", bad, raw_path)
     return rows
 
 

@@ -44,8 +44,23 @@ def read_worker_state(path: Path) -> WorkerState | None:
 
 
 def is_model_ready_in_dnt(dnt_response: dict, *, model: str) -> bool:
-    """Return True if any provider in the DNT lookup advertises the model."""
+    """Return True if any peer in the DNT table advertises the model.
+
+    The /v1/dnt/table endpoint returns an object keyed by `/<peer-id>` with
+    each value containing a `service` list. Service entries use snake_case
+    (`identity_group`). For test compatibility, we also accept a simpler
+    `{"providers": [...]}` shape with `identityGroup` (camelCase).
+    """
     needle = f"model={model}"
+    # Real /v1/dnt/table shape: dict of {"/peer": {"service": [{"identity_group": [...]}]}}
+    for v in dnt_response.values():
+        if not isinstance(v, dict):
+            continue
+        for svc in v.get("service") or []:
+            for ig in svc.get("identity_group") or []:
+                if ig == needle:
+                    return True
+    # Test-fixture shape: {"providers": [{"service": [{"identityGroup": [...]}]}]}
     for prov in dnt_response.get("providers") or []:
         for svc in prov.get("service") or []:
             for ig in svc.get("identityGroup") or []:
@@ -66,11 +81,12 @@ def _submit_sbatch(*, model: str, model_cfg: dict, run_id: str, cfg: dict) -> st
     sbatch_script = Path(__file__).parent.parent / "slurm" / "worker.sbatch"
     env_export = ",".join([
         f"OTELA_BIN={cfg['otela']['binary_path']}",
-        f"SGLANG_SIF={model_cfg['apptainer_image']}",
         f"MODEL={model}",
+        f"TP_SIZE={model_cfg.get('tp_size', 1)}",
         f"RUN_ID={run_id}",
         f"BENCH_STATE_DIR={state_dir}",
-        f"BOOTSTRAP_URL={cfg['otela']['bootstrap_url']}",
+        f"BOOTSTRAP_ADDR={cfg['otela']['bootstrap_url']}",
+        f"ENV_FILE={cfg['slurm']['env_file']}",
     ])
     cmd = [
         "sbatch",
@@ -78,6 +94,7 @@ def _submit_sbatch(*, model: str, model_cfg: dict, run_id: str, cfg: dict) -> st
         f"--account={slurm['account']}",
         f"--gres={model_cfg['gres']}",
         f"--time={slurm['time_limit']}",
+        f"--environment={cfg['slurm']['env_file']}",
         f"--export={env_export}",
         str(sbatch_script),
     ]
@@ -102,7 +119,7 @@ def _wait_dnt_ready(*, head_url: str, model: str, timeout_s: int) -> None:
     backoff = 2
     while time.time() - start < timeout_s:
         try:
-            r = httpx.get(f"{head_url.rstrip('/')}/v1/dnt/lookup?service=llm", timeout=5.0)
+            r = httpx.get(f"{head_url.rstrip('/')}/v1/dnt/table", timeout=5.0)
             r.raise_for_status()
             if is_model_ready_in_dnt(r.json(), model=model):
                 return
@@ -112,16 +129,40 @@ def _wait_dnt_ready(*, head_url: str, model: str, timeout_s: int) -> None:
     raise TimeoutError(f"model {model} not registered in DNT within {timeout_s}s")
 
 
+def _wait_direct_ready(*, host: str, port: int, timeout_s: int) -> None:
+    """Block until vLLM's /v1/models endpoint responds 200. Without this, the
+    'direct' benchmark path measures connection-refused errors during vLLM
+    boot instead of inference latency."""
+    start = time.time()
+    while time.time() - start < timeout_s:
+        try:
+            r = httpx.get(f"http://{host}:{port}/v1/models", timeout=5.0)
+            if r.status_code == 200:
+                return
+        except httpx.HTTPError as e:
+            log.debug("direct poll failed: %s", e)
+        time.sleep(2)
+    raise TimeoutError(f"vLLM at {host}:{port} not ready within {timeout_s}s")
+
+
 def ensure_worker(*, model: str, model_cfg: dict, run_id: str, cfg: dict, state_dir: Path) -> WorkerState:
-    """Submit sbatch and block until both state file and DNT advertise readiness."""
+    """Submit sbatch and block until both state file and DNT advertise readiness.
+    Always re-confirms readiness (DNT + direct port) even when reusing an
+    existing state file, since the worker may still be booting vLLM."""
     state_path = _state_path(state_dir, run_id, model)
     if state_path.exists():
         log.info("reusing existing worker for %s", model)
-        return read_worker_state(state_path)  # type: ignore[return-value]
-    job_id = _submit_sbatch(model=model, model_cfg=model_cfg, run_id=run_id, cfg=cfg)
-    log.info("sbatch %s for %s", job_id, model)
-    state = _wait_state_file(state_path, timeout_s=600)
+        state = read_worker_state(state_path)  # type: ignore[assignment]
+    else:
+        job_id = _submit_sbatch(model=model, model_cfg=model_cfg, run_id=run_id, cfg=cfg)
+        log.info("sbatch %s for %s", job_id, model)
+        state = _wait_state_file(state_path, timeout_s=600)
+    assert state is not None
+    log.info("waiting for vLLM at %s:%s and DNT registration of %s",
+             state.node, state.sglang_port, model)
+    _wait_direct_ready(host=state.node, port=state.sglang_port, timeout_s=1800)
     _wait_dnt_ready(head_url=cfg["head_url"], model=model, timeout_s=600)
+    log.info("worker for %s is ready", model)
     return state
 
 

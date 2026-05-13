@@ -1,8 +1,7 @@
+# Re-run config: only Qwen3-32B. Append cells to an existing run_id by
+# exporting OTELA_BENCH_RUN_ID before invoking.
 head_url: http://148.187.108.172:8092
 models:
-  - name: Qwen/Qwen3-1.7B
-    gres: gpu:1
-    tp_size: 1
   - name: Qwen/Qwen3-32B
     gres: gpu:1
     tp_size: 1
@@ -12,9 +11,6 @@ duration_s: 120
 warmup_s: 30
 repetitions: 3
 sharegpt_path: ~/datasets/sharegpt.json
-# Fixed-length workload removes prompt and output variance — every request
-# hits the worker with an identical prompt and exactly N output tokens.
-# Drop the `workload:` block to fall back to ShareGPT random sampling.
 workload:
   kind: fixed
   input_tokens: 256
