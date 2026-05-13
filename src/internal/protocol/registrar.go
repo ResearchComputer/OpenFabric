@@ -180,6 +180,14 @@ func provideService(service Service) {
 	}
 }
 
+// ResetLocalServicesForTest is intended for tests that need a clean slate.
+// It is exported only so that test files in other packages can call it.
+func ResetLocalServicesForTest() {
+	localServicesLock.Lock()
+	defer localServicesLock.Unlock()
+	localServices = nil
+}
+
 // ReannounceLocalServices re-publishes this node's service entry, used after reconnects.
 // It merges services from the in-memory localServices list with any services already
 // in the node table (e.g. those registered via the HTTP API) to avoid overwriting them.

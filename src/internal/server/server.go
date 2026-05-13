@@ -265,6 +265,9 @@ func StartServer() {
 			common.ReportError(err, "Server failed to start")
 		}
 	}()
+	if viper.GetBool("admin.enabled") {
+		StartAdminServer()
+	}
 	go func() {
 		protocol.RegisterLocalServices()
 	}()
