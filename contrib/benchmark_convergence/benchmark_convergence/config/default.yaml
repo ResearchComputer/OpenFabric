@@ -1,0 +1,26 @@
+# Cluster-side paths and Slurm settings
+slurm:
+  account: ""              # e.g. es_yourgroup; required at submit time
+  time: "00:20:00"
+  cpus_per_task: 2
+  mem_per_cpu: "2G"
+
+paths:
+  otela_bin: "${SCRATCH}/opentela/otela"
+  run_root:  "${SCRATCH}/convbench"
+  config_root_in_task: "/tmp"   # used as parent for per-task otela --config-dir
+
+network:
+  otela_http_port: 8092
+  otela_admin_port: 8093
+  otela_libp2p_port: 43905
+  coordinator_tcp_port: 47001
+
+sweep:
+  sizes: [8, 16, 32, 64, 128]
+  reps: 3
+  writes_per_rep: 20
+  stabilization_timeout_s: 30
+  per_write_timeout_s: 30
+  poll_interval_ms: 50
+  inter_write_gap_ms: 500
