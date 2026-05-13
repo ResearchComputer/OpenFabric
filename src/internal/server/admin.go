@@ -53,15 +53,15 @@ func adminRegisterHandler(c *gin.Context) {
 	})
 }
 
-// StartAdminServer launches a separate http.Server bound to 127.0.0.1
-// exposing /v1/_admin/* routes. Used by contrib/benchmark_convergence
-// to inject CRDT writes. Bind address is hard-coded to loopback so a
-// misconfigured deployment cannot expose this route on the network.
+// StartAdminServer launches a separate http.Server exposing /v1/_admin/*
+// routes. Used by contrib/benchmark_convergence to inject CRDT writes.
+// The bind address defaults to 127.0.0.1 (loopback only) and can be
+// overridden via admin.bind (e.g. 0.0.0.0 in Docker integration tests).
 func StartAdminServer() {
 	adminR := gin.New()
 	adminR.POST("/v1/_admin/register", adminRegisterHandler)
 
-	addr := "127.0.0.1:" + viper.GetString("admin.port")
+	addr := viper.GetString("admin.bind") + ":" + viper.GetString("admin.port")
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: adminR,
