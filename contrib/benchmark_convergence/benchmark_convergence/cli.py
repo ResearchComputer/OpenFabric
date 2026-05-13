@@ -44,6 +44,49 @@ def submit(config: Path, run_id: str, n: int, rep: int) -> None:
     submit_cell(config=config, run_id=run_id, n=n, rep=rep)
 
 
+@cli.command("run-ssh")
+@click.option(
+    "--nodes", "nodes_file",
+    type=click.Path(exists=True, path_type=Path), required=True,
+    help="Text file with one SSH-reachable hostname per line. First line = coordinator.",
+)
+@click.option(
+    "--otela-bin", type=click.Path(exists=True, path_type=Path), required=True,
+    help="Path to the locally built otela binary (will be scp'd to each node).",
+)
+@click.option("--run-id", required=True, help="Run identifier; used as remote subdir.")
+@click.option(
+    "--output-dir", type=click.Path(path_type=Path),
+    default=Path("runs"),
+    help="Local directory under which results are written (default: ./runs).",
+)
+@click.option("--writes", type=int, default=20, help="Writes per cell.")
+@click.option("--poll-ms", type=int, default=50)
+@click.option("--per-write-timeout-s", type=int, default=30)
+@click.option("--stabilization-timeout-s", type=int, default=60)
+def run_ssh_cmd(nodes_file: Path, otela_bin: Path, run_id: str,
+                output_dir: Path, writes: int, poll_ms: int,
+                per_write_timeout_s: int, stabilization_timeout_s: int) -> None:
+    """Run one cell across a list of SSH-reachable nodes (no SLURM)."""
+    from benchmark_convergence.ssh_driver import run_ssh
+
+    raw = nodes_file.read_text().splitlines()
+    nodes = [
+        ln.strip() for ln in raw
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    if len(nodes) < 2:
+        raise click.UsageError(
+            f"{nodes_file} must contain at least 2 hostnames "
+            f"(found {len(nodes)})"
+        )
+    run_ssh(
+        nodes=nodes, otela_bin=otela_bin, run_id=run_id,
+        output_dir=output_dir, writes=writes, poll_ms=poll_ms,
+        stab_to=stabilization_timeout_s, write_to=per_write_timeout_s,
+    )
+
+
 @cli.command()
 @click.argument("run_dir", type=click.Path(exists=True, path_type=Path))
 def aggregate(run_dir: Path) -> None:

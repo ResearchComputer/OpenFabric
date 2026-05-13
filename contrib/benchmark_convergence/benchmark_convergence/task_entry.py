@@ -125,8 +125,15 @@ def main() -> None:
         )
         _wait_for(f"http://127.0.0.1:{http_port}/v1/health")
         my_addr = _read_my_multiaddr(http_port, libp2p_port)
+        # Two distribution channels for the multiaddr:
+        # 1. bootstrap.txt: used by the SLURM path (observers poll the
+        #    shared $RUN_DIR for this file).
+        # 2. stdout: used by the SSH driver (no shared filesystem; the
+        #    driver captures this line and passes it to observers via
+        #    BOOTSTRAP_ADDR env var).
         bootstrap_file.parent.mkdir(parents=True, exist_ok=True)
         bootstrap_file.write_text(my_addr)
+        print(f"BOOTSTRAP_ADDR={my_addr}", flush=True)
 
         from benchmark_convergence.coordinator import (
             CoordinatorContext, main as coord_main,
@@ -150,13 +157,17 @@ def main() -> None:
         proc.terminate()
         return
 
-    deadline = time.time() + 300
-    while not bootstrap_file.exists() and time.time() < deadline:
-        time.sleep(0.5)
-    if not bootstrap_file.exists():
-        print("bootstrap.txt never appeared", file=sys.stderr)
-        sys.exit(1)
-    bootstrap_addr = bootstrap_file.read_text().strip()
+    # Observers: prefer BOOTSTRAP_ADDR env var (SSH driver passes it
+    # directly). Fall back to bootstrap.txt for the SLURM path.
+    bootstrap_addr = os.environ.get("BOOTSTRAP_ADDR", "").strip()
+    if not bootstrap_addr:
+        deadline = time.time() + 300
+        while not bootstrap_file.exists() and time.time() < deadline:
+            time.sleep(0.5)
+        if not bootstrap_file.exists():
+            print("bootstrap.txt never appeared", file=sys.stderr)
+            sys.exit(1)
+        bootstrap_addr = bootstrap_file.read_text().strip()
 
     proc = _start_otela(
         bin_path=otela_bin, config_dir=config_dir,

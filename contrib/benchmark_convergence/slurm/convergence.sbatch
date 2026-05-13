@@ -20,7 +20,14 @@ module load eth_proxy
 : "${RUN_DIR:?RUN_DIR must be set}"
 : "${CONFIG_PATH:?CONFIG_PATH must be set}"
 
-cd "$(dirname "$CONFIG_PATH")/.."
+# Project root is two levels up from the config file
+# (.../benchmark_convergence/benchmark_convergence/config/<file>.yaml).
+PROJECT_ROOT="$(cd "$(dirname "$CONFIG_PATH")/../.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+export PATH="$HOME/.local/bin:$PATH"
+export UV_NO_CONFIG=1
+
+cd "$PROJECT_ROOT"
 
 srun --kill-on-bad-exit=1 \
      uv run python -m benchmark_convergence.task_entry

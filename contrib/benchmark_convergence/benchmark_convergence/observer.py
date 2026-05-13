@@ -30,9 +30,15 @@ def _chrony_offset_ns() -> int:
         System time     :  0.000123456 seconds fast of NTP time
     Sign: positive when local clock is "fast" (ahead of) reference.
     """
-    out = subprocess.run(
-        ["chronyc", "tracking"], capture_output=True, text=True, check=False
-    ).stdout
+    try:
+        out = subprocess.run(
+            ["chronyc", "tracking"], capture_output=True, text=True, check=False
+        ).stdout
+    except FileNotFoundError:
+        # No chronyc on this node (e.g. Euler login/compute). The kernel
+        # is still NTP-synced; treat offset as 0 and accept the residual
+        # NTP-level skew (~<1 ms on Euler) as noise.
+        return 0
     for line in out.splitlines():
         if line.lower().startswith("system time"):
             parts = line.split()

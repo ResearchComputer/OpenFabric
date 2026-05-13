@@ -39,12 +39,17 @@ def run(config: Path) -> None:
         failures += 1
 
     print("[doctor] tools")
-    for tool in ("sbatch", "srun", "chronyc"):
+    for tool in ("sbatch", "srun"):
         if shutil.which(tool):
             _ok(f"{tool} on PATH")
         else:
             _fail(f"{tool} not on PATH")
             failures += 1
+    if shutil.which("chronyc"):
+        _ok("chronyc on PATH (clock offset will be measured)")
+    else:
+        print("  warn  chronyc not on PATH; clock offsets will be 0 "
+              "(NTP-level skew remains as residual noise)")
 
     print("[doctor] slurm account")
     account = cfg["slurm"].get("account", "")
