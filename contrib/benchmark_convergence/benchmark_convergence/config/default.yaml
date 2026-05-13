@@ -22,5 +22,5 @@ sweep:
   writes_per_rep: 20
   stabilization_timeout_s: 30
   per_write_timeout_s: 30
-  poll_interval_ms: 50
+  poll_interval_ms: 5
   inter_write_gap_ms: 500

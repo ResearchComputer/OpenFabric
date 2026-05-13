@@ -1,0 +1,24 @@
+N=8 rep=1: sbatch failed (rc=143):
+stdout: Submitted batch job 66402567
+
+stderr: 
+N=8 rep=1: sbatch failed (rc=143):
+stdout: Submitted batch job 66404181
+
+stderr: 
+N=32 rep=2: sbatch failed (rc=143):
+stdout: Submitted batch job 66409651
+
+stderr: 
+N=64 rep=0: sbatch failed (rc=143):
+stdout: Submitted batch job 66410117
+
+stderr: 
+N=128 rep=0: sbatch failed (rc=143):
+stdout: Submitted batch job 66411778
+
+stderr: 
+N=128 rep=1: sbatch failed (rc=143):
+stdout: Submitted batch job 66412913
+
+stderr: 

@@ -20,7 +20,7 @@ def _hostname() -> str:
     return socket.getfqdn()
 
 
-def _wait_for(url: str, timeout_s: float = 60.0) -> None:
+def _wait_for(url: str, timeout_s: float = 240.0) -> None:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
@@ -33,8 +33,17 @@ def _wait_for(url: str, timeout_s: float = 60.0) -> None:
     raise RuntimeError(f"timeout waiting for {url}")
 
 
+def _libp2p_port_for_job() -> int:
+    """Derive a per-job libp2p TCP port to avoid collisions with stale
+    otela processes from earlier (killed) jobs on the same compute host.
+    Range: 40000-49999."""
+    job_id = int(os.environ.get("SLURM_JOB_ID", "0"))
+    return 40000 + (job_id % 10000)
+
+
 def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
-                 admin_port: int, bootstrap_addr: str | None,
+                 admin_port: int, libp2p_port: int,
+                 bootstrap_addr: str | None,
                  service_name: str) -> subprocess.Popen:
     """Launch a local otela process.
 
@@ -56,6 +65,7 @@ def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
     cmd = [
         str(bin_path), "start",
         "--config-dir", str(config_dir),
+        "--tcpport", str(libp2p_port),
         "--admin.enabled",
         "--admin.port", str(admin_port),
         "--service.name", service_name,
@@ -116,7 +126,9 @@ def main() -> None:
 
     http_port = int(net["otela_http_port"])
     admin_port = int(net["otela_admin_port"])
-    libp2p_port = int(net["otela_libp2p_port"])
+    # Use a per-SLURM-job libp2p port so a stale otela on a reused
+    # compute host (from a previous killed job) doesn't conflict.
+    libp2p_port = _libp2p_port_for_job()
     coord_port = int(net["coordinator_tcp_port"])
     poll_ms = int(sweep["poll_interval_ms"])
 
@@ -132,6 +144,7 @@ def main() -> None:
         proc = _start_otela(
             bin_path=otela_bin, config_dir=config_dir,
             http_port=http_port, admin_port=admin_port,
+            libp2p_port=libp2p_port,
             bootstrap_addr=None,
             service_name=f"convbench-node-{procid}",
         )
@@ -184,6 +197,7 @@ def main() -> None:
     proc = _start_otela(
         bin_path=otela_bin, config_dir=config_dir,
         http_port=http_port, admin_port=admin_port,
+        libp2p_port=libp2p_port,
         bootstrap_addr=bootstrap_addr,
         service_name=f"convbench-node-{procid}",
     )

@@ -1,8 +1,10 @@
 """Coordinator. Runs on the task with SLURM_PROCID == 0."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import random
 import socket
 import threading
 import time
@@ -220,8 +222,16 @@ def main(ctx: CoordinatorContext) -> None:
     flags: list[str] = []
     writes_record: list[dict[str, Any]] = []
 
+    # Writer rotation: uniform random across all N task ids. Seeded with
+    # a hash of (run_id, rep) so the choice is reproducible per cell.
+    seed_bytes = hashlib.sha256(
+        f"{ctx.run_id}|{ctx.rep}".encode("utf-8")
+    ).digest()
+    rng = random.Random(int.from_bytes(seed_bytes[:8], "big"))
+    writer_ids = [rng.randrange(ctx.n) for _ in range(ctx.writes_per_rep)]
+
     for seq in range(ctx.writes_per_rep):
-        writer_id = seq % ctx.n
+        writer_id = writer_ids[seq]
         name = f"convbench-w-{ctx.run_id}-s{seq}-{writer_id}"
 
         if writer_id == 0:
