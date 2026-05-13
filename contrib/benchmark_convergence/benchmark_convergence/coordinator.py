@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +183,7 @@ def _stop_all(state: _State) -> None:
 
 
 def main(ctx: CoordinatorContext) -> None:
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("0.0.0.0", ctx.listen_port))
@@ -271,7 +273,11 @@ def main(ctx: CoordinatorContext) -> None:
     state.chrony_end[ctx.host] = _chrony_offset_ns()
     self_stop.set()
     _stop_all(state)
-    time.sleep(1.0)
+    # Allow observers time to call chronyc tracking (subprocess; can be
+    # slow on loaded compute nodes) and send chrony_end + bye before we
+    # snapshot state for the results.json.
+    time.sleep(3.0)
+    finished_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     nodes = [{"task_id": 0, "host": ctx.host, "peer_id": "",
               "role": "coordinator"}]
@@ -290,8 +296,8 @@ def main(ctx: CoordinatorContext) -> None:
         "N": ctx.n,
         "rep": ctx.rep,
         "job_id": os.environ.get("SLURM_JOB_ID", ""),
-        "started_at": "",
-        "finished_at": "",
+        "started_at": started_at,
+        "finished_at": finished_at,
         "nodes": nodes,
         "clock_offsets_ns": {
             "start": dict(state.chrony_start),
