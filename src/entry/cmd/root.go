@@ -60,6 +60,10 @@ func init() {
 	startCmd.Flags().Bool("solana.skip_verification", defaultConfig.Solana.SkipVerification, "Skip Solana token ownership verification (use for testing only)")
 	startCmd.Flags().Bool("cleanslate", true, "Clean slate")
 	startCmd.Flags().String("role", "worker", "Node role (worker, head, relay)")
+	startCmd.Flags().Bool("admin.enabled", false, "Enable localhost-only admin HTTP route (for benchmarking)")
+	startCmd.Flags().String("admin.port", "8093", "Port for the admin HTTP route (bound to 127.0.0.1)")
+	_ = viper.BindPFlag("admin.enabled", startCmd.Flags().Lookup("admin.enabled"))
+	_ = viper.BindPFlag("admin.port", startCmd.Flags().Lookup("admin.port"))
 	rootcmd.AddCommand(initCmd)
 	rootcmd.AddCommand(startCmd)
 	rootcmd.AddCommand(versionCmd)
@@ -133,6 +137,12 @@ func initConfig(cmd *cobra.Command) error {
 	// Server-Timing per-request stage instrumentation (opt-in, disabled by default
 	// because emitting headers does ~6 time.Now() calls per request).
 	viper.SetDefault("observability.timing_headers", false)
+
+	// Localhost-only admin HTTP route used by contrib/benchmark_convergence
+	// to inject CRDT writes from the orchestrator. Off by default; bound to
+	// 127.0.0.1 only.
+	viper.SetDefault("admin.enabled", false)
+	viper.SetDefault("admin.port", "8093")
 
 	// Scalability feature flags (all default to false for safe rollout)
 	viper.SetDefault("scalability.swim_enabled", false)
