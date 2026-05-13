@@ -15,17 +15,19 @@ def write_message(stream: IO[bytes], msg: dict[str, Any]) -> None:
 def read_messages(stream: IO[bytes]) -> Iterable[dict[str, Any]]:
     """Yield complete JSON objects, one per newline-terminated frame.
 
-    Partial trailing data (no newline) is silently skipped.
+    Uses readline() rather than read(N): BufferedReader.read(N) on a
+    socket makefile blocks until N bytes OR EOF, which hangs on
+    sub-N-byte messages (the case for our protocol). readline() returns
+    as soon as it sees \\n or EOF.
     """
-    buf = b""
     while True:
-        chunk = stream.read(4096)
-        if not chunk:
+        line = stream.readline()
+        if not line:  # EOF
             break
-        buf += chunk
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            line = line.strip()
-            if not line:
-                continue
-            yield json.loads(line)
+        if not line.endswith(b"\n"):
+            # Partial frame at EOF — discard.
+            break
+        line = line.strip()
+        if not line:
+            continue
+        yield json.loads(line)

@@ -44,6 +44,15 @@ def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
     admin port (--admin.port) DO have flags.
     """
     config_dir.mkdir(parents=True, exist_ok=True)
+    # cfg.yaml overrides relevant flag defaults:
+    #   bootstrap.static = []  -> isolates test mesh from production
+    #   security.require_signed_binary = false  -> allow unsigned dev
+    #     binaries to accept each other's CRDT entries (default true
+    #     would silently drop peer entries from unsigned builds).
+    (config_dir / "cfg.yaml").write_text(
+        "bootstrap:\n  static: []\n"
+        "security:\n  require_signed_binary: false\n"
+    )
     cmd = [
         str(bin_path), "start",
         "--config-dir", str(config_dir),
@@ -54,6 +63,9 @@ def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
     ]
     if bootstrap_addr:
         cmd += ["--bootstrap.addr", bootstrap_addr]
+    else:
+        # Coordinator: standalone (no upstream — this is THE bootstrap).
+        cmd += ["--mode", "standalone"]
     env = os.environ.copy()
     env["OF_PORT"] = str(http_port)
     log = (config_dir / "otela.log").open("w")

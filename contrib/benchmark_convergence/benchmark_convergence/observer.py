@@ -34,10 +34,11 @@ def _chrony_offset_ns() -> int:
         out = subprocess.run(
             ["chronyc", "tracking"], capture_output=True, text=True, check=False
         ).stdout
-    except FileNotFoundError:
-        # No chronyc on this node (e.g. Euler login/compute). The kernel
-        # is still NTP-synced; treat offset as 0 and accept the residual
-        # NTP-level skew (~<1 ms on Euler) as noise.
+    except (FileNotFoundError, PermissionError, OSError):
+        # chronyc unusable on this node (missing, or present but not
+        # executable by the user — Euler compute nodes are the latter).
+        # The kernel is still NTP-synced; treat offset as 0 and accept
+        # the residual NTP-level skew (~<1 ms on Euler) as noise.
         return 0
     for line in out.splitlines():
         if line.lower().startswith("system time"):
@@ -125,6 +126,10 @@ def _handle_writes(ctx: ObserverContext, sock_lock: threading.Lock,
 
 def main(ctx: ObserverContext) -> None:
     s = socket.create_connection(ctx.coord_addr, timeout=30.0)
+    # The connect timeout above also becomes the socket's read/write
+    # timeout. Clear it so the control-channel reader can block
+    # indefinitely waiting for the next command from the coordinator.
+    s.settimeout(None)
     sock_r = s.makefile("rb")
     sock_w = s.makefile("wb")
     sock_lock = threading.Lock()
