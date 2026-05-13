@@ -166,7 +166,7 @@ def main() -> None:
             cell_dir=cell_dir,
             rep=rep,
         ))
-        proc.terminate()
+        _stop_otela(proc)
         return
 
     # Observers: prefer BOOTSTRAP_ADDR env var (SSH driver passes it
@@ -201,7 +201,23 @@ def main() -> None:
         poll_interval_ms=poll_ms,
         run_id=run_id,
     ))
+    _stop_otela(proc)
+
+
+def _stop_otela(proc: subprocess.Popen) -> None:
+    """Cleanly terminate the otela subprocess. Without explicit wait, the
+    Python parent exits, leaving otela's libp2p TCP port in TIME_WAIT.
+    If Slurm reallocates the same host to the next cell within ~60s, the
+    next otela startup hits 'bind: address already in use'."""
     proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 if __name__ == "__main__":

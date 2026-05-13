@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import yaml
 
 from benchmark_convergence.submit import submit_cell
+
+# Wait this long between cell submissions so that the previous cell's
+# libp2p TCP TIME_WAIT clears before SLURM possibly reuses the same
+# compute host. Linux default TIME_WAIT is 60s.
+_INTER_CELL_DELAY_S = 90
 
 
 def _status(cell_dir: Path) -> str:
@@ -24,6 +30,7 @@ def sweep(*, config: Path, run_id: str, resume: bool, retry_failed: bool) -> Non
     sizes = cfg["sweep"]["sizes"]
     reps = int(cfg["sweep"]["reps"])
 
+    first = True
     for n in sizes:
         for rep in range(reps):
             cell_dir = run_dir / f"N={n}" / f"rep={rep}"
@@ -34,6 +41,11 @@ def sweep(*, config: Path, run_id: str, resume: bool, retry_failed: bool) -> Non
             if st == "failed" and not retry_failed:
                 print(f"[skip] N={n} rep={rep} (failed; pass --retry-failed)")
                 continue
+            if not first:
+                print(f"[wait] {_INTER_CELL_DELAY_S}s before next cell "
+                      f"(libp2p TIME_WAIT margin)")
+                time.sleep(_INTER_CELL_DELAY_S)
+            first = False
             print(f"[submit] N={n} rep={rep}")
             try:
                 submit_cell(config=config, run_id=run_id, n=n, rep=rep)
