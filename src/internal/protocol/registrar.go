@@ -59,6 +59,14 @@ func snapshotLocalServices() []Service {
 	return out
 }
 
+// hasLocalServices reports whether any services have been registered locally,
+// without copying the slice.
+func hasLocalServices() bool {
+	localServicesLock.RLock()
+	defer localServicesLock.RUnlock()
+	return len(localServices) > 0
+}
+
 func RegisterLocalServices() {
 	serviceName := viper.GetString("service.name")
 	servicePort := viper.GetString("service.port")

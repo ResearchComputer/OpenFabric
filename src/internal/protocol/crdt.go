@@ -125,7 +125,12 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		common.ReportError(err, "Error while creating pubsub broadcaster")
 		opts := crdt.DefaultOptions()
 		opts.Logger = common.Logger
+		// 30 s is enough for a healthy bitswap session; anything longer just
+		// delays the next rebroadcast-driven retry without helping recovery.
 		opts.DAGSyncerTimeout = 30 * time.Second // reduced from 5min to prevent cascading blockage
+		// Process incoming heads concurrently so one slow bitswap fetch
+		// (e.g. a NAT'd peer) does not stall the entire receive loop.
+		opts.MultiHeadProcessing = true
 		if viper.GetBool("scalability.crdt_tuned") {
 			opts.RebroadcastInterval = viper.GetDuration("crdt.tuned_rebroadcast_interval") // default 60s
 			opts.NumWorkers = viper.GetInt("crdt.tuned_workers")                            // default 16

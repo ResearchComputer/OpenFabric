@@ -291,8 +291,12 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 				secProto = string(cs.Security)
 			}
 			common.Logger.Debugf("Connected to peer: %s  security=%s  conns=%d", c.RemotePeer(), secProto, len(n.Conns()))
-			// On (re)connections, re-announce local services
-			go ReannounceLocalServices()
+			// On (re)connections, re-announce local services — but skip until at
+			// least one service is registered; an empty publication would race
+			// with the real entry and take time to be overwritten on other nodes.
+			if hasLocalServices() {
+				go ReannounceLocalServices()
+			}
 
 			// Mark peer as connected in node table.
 			// If the peer is unknown, create a minimal entry so it is tracked
