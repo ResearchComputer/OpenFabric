@@ -137,6 +137,13 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		} else {
 			opts.RebroadcastInterval = 5 * time.Second
 		}
+		// Give up on a CID once we've failed to fetch it 50+ times spanning
+		// at least 6h. Past that point the block is almost certainly an
+		// orphan (producer is gone, no live replica has the data) and
+		// further retries are just log noise and CPU. Banned CIDs are
+		// persisted and survive restarts.
+		opts.MaxFetchFailures = 50
+		opts.MinFetchFailureAge = 6 * time.Hour
 		opts.PutHook = func(k ds.Key, v []byte) {
 			var peer Peer
 			err := json.Unmarshal(v, &peer)
