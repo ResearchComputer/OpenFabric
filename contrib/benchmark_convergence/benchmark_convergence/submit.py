@@ -1,4 +1,5 @@
 """Submit a single (N, rep) cell as an sbatch job and wait for it."""
+
 from __future__ import annotations
 
 import os
@@ -11,12 +12,19 @@ ROOT = Path(__file__).resolve().parent.parent  # contrib/benchmark_convergence/
 SBATCH_SCRIPT = ROOT / "slurm" / "convergence.sbatch"
 
 
-def submit_cell(*, config: Path, run_id: str, n: int, rep: int,
-                wait: bool = True) -> int:
+def submit_cell(
+    *, config: Path, run_id: str, n: int, rep: int, wait: bool = True
+) -> int:
     cfg = yaml.safe_load(config.read_text())
     run_dir = Path(os.path.expandvars(cfg["paths"]["run_root"])) / run_id
     cell_dir = run_dir / f"N={n}" / f"rep={rep}"
     cell_dir.mkdir(parents=True, exist_ok=True)
+    # On retry, wipe stale per-cell artifacts. A previous failed run
+    # could have left bootstrap.txt pointing at a coord IP that no
+    # longer exists; observers would read it and immediately
+    # ConnectionRefused.
+    for stale in ("bootstrap.txt", "results.json"):
+        (cell_dir / stale).unlink(missing_ok=True)
     (cell_dir / "status").write_text("running")
 
     env = {

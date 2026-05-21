@@ -53,6 +53,14 @@ func adminRegisterHandler(c *gin.Context) {
 	})
 }
 
+func adminResyncHandler(c *gin.Context) {
+	if err := protocol.TriggerResync(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 // StartAdminServer launches a separate http.Server exposing /v1/_admin/*
 // routes. Used by contrib/benchmark_convergence to inject CRDT writes.
 // The bind address defaults to 127.0.0.1 (loopback only) and can be
@@ -60,6 +68,7 @@ func adminRegisterHandler(c *gin.Context) {
 func StartAdminServer() {
 	adminR := gin.New()
 	adminR.POST("/v1/_admin/register", adminRegisterHandler)
+	adminR.POST("/v1/_admin/resync", adminResyncHandler)
 
 	addr := viper.GetString("admin.bind") + ":" + viper.GetString("admin.port")
 	srv := &http.Server{

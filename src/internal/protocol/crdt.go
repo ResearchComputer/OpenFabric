@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"opentela/internal/common"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -125,7 +126,16 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		common.ReportError(err, "Error while creating pubsub broadcaster")
 		opts := crdt.DefaultOptions()
 		opts.Logger = common.Logger
-		opts.DAGSyncerTimeout = 30 * time.Second // reduced from 5min to prevent cascading blockage
+		// Allow test override via env var for reproduction scenarios
+		if timeoutStr := os.Getenv("OF_CRDT_DAG_SYNCER_TIMEOUT"); timeoutStr != "" {
+			if timeout, err := time.ParseDuration(timeoutStr); err == nil {
+				opts.DAGSyncerTimeout = timeout
+			} else {
+				opts.DAGSyncerTimeout = 30 * time.Second // default fallback
+			}
+		} else {
+			opts.DAGSyncerTimeout = 30 * time.Second // reduced from 5min to prevent cascading blockage
+		}
 		if viper.GetBool("scalability.crdt_tuned") {
 			opts.RebroadcastInterval = viper.GetDuration("crdt.tuned_rebroadcast_interval") // default 60s
 			opts.NumWorkers = viper.GetInt("crdt.tuned_workers")                            // default 16
@@ -194,6 +204,15 @@ func Reconnect() {
 		time.Sleep(5 * time.Second)
 		MakeRelayReservations()
 	}()
+}
+
+// TriggerResync broadcasts all local CRDT heads unconditionally so that any
+// peer missing state will fetch it from this node.
+func TriggerResync() error {
+	if crdtStore == nil {
+		return fmt.Errorf("CRDT store not initialized")
+	}
+	return crdtStore.RebroadcastHeads(context.Background())
 }
 
 func ClearCRDTStore() {

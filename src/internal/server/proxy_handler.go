@@ -517,7 +517,12 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			target = url.URL{Scheme: "libp2p", Host: relayPeer, Path: relayPath}
 		}
 
-		rw := newRetryableResponseWriter(c.Writer, isStreaming, maxBuffer)
+		// Wrap c.Writer with a first-byte marker so we can measure the head's
+		// response-startup cost (time from ModifyResponse → first body byte on
+		// the wire to client). The marker fires inside retryableResponseWriter's
+		// passthrough Write path, so it captures the real first-write moment.
+		fbw := newFirstByteMarker(c.Writer, st, "head_first_byte_sent")
+		rw := newRetryableResponseWriter(fbw, isStreaming, maxBuffer)
 
 		director := func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
@@ -567,6 +572,21 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		}
 
 		proxy.ServeHTTP(rw, attemptReq)
+
+		// Surface the measured "head response startup" duration to the client
+		// as an SSE-comment line appended after the worker's body. Trailers
+		// would be the HTTP-idiomatic choice but Python HTTP clients (httpx,
+		// aiohttp ≤ 3.13) don't expose trailers, so we use a comment line
+		// (lines starting with `:` are no-ops in SSE consumers) carrying the
+		// timing for bench-side parsing. Streamed responses only.
+		if isStreaming && rw.headersSent {
+			if d, ok := fbw.Duration(); ok {
+				fmt.Fprintf(c.Writer, ": otela-head-first-byte=%.3f\n\n", d)
+				if f, ok := c.Writer.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+		}
 
 		if rw.isRetryable() {
 			routingRetriesTotal.WithLabelValues(serviceName, strconv.Itoa(attempt+1)).Inc()

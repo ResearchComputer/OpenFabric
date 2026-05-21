@@ -13,8 +13,9 @@ from typing import Any
 import numpy as np
 import yaml
 
-from benchmark_overhead.client import fire_open_loop
+from benchmark_overhead.client import fire_closed_loop, fire_open_loop
 from benchmark_overhead.deploy import WorkerState, ensure_worker
+from benchmark_overhead.probe_net import measure_net_rtt
 from benchmark_overhead.workload import fixed_prompt, load_sharegpt, poisson_schedule
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ def summarize_cell(rows: list[dict], *, cell_meta: dict) -> dict:
 
 def run_sweep(*, config_path: str, output_dir: str) -> None:
     import os
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -92,8 +94,11 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
             input_tokens=int(workload.get("input_tokens", 256)),
             output_tokens=int(workload.get("output_tokens", 128)),
         )
-        log.info("using fixed workload: input=%d tokens, output=%d tokens",
-                 workload.get("input_tokens", 256), workload.get("output_tokens", 128))
+        log.info(
+            "using fixed workload: input=%d tokens, output=%d tokens",
+            workload.get("input_tokens", 256),
+            workload.get("output_tokens", 128),
+        )
     else:
         prompts = load_sharegpt(
             cfg["sharegpt_path"], max_input_tokens=512, max_output_tokens=128
@@ -104,6 +109,7 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
 
     cells_rows: list[dict] = []
     import subprocess
+
     # Resume support: cells already present in raw.jsonl are skipped so a
     # crashed sweep can be relaunched with the same OTELA_BENCH_RUN_ID.
     done_keys = _existing_cell_keys(raw_path)
@@ -117,7 +123,11 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
             for rep in range(1, int(cfg["repetitions"]) + 1)
         ]
         if all(k in done_keys for k in all_cell_keys):
-            log.info("skip model %s — all %d cells already measured", m["name"], len(all_cell_keys))
+            log.info(
+                "skip model %s — all %d cells already measured",
+                m["name"],
+                len(all_cell_keys),
+            )
             continue
         state = ensure_worker(
             model=m["name"],
@@ -143,22 +153,59 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
                     if cell_key in done_keys:
                         log.info("skip cell (already measured): %s", cell_key)
                         cell_rows = _read_cell_rows(raw_path, cell_key)
-                        cells_rows.append(summarize_cell(cell_rows, cell_meta=cell_meta))
+                        cells_rows.append(
+                            summarize_cell(cell_rows, cell_meta=cell_meta)
+                        )
                         continue
                     log.info("cell: %s", cell_key)
+                    # Idle client<->origin RTT probe. The notebook subtracts
+                    # (otela.client_net_p50_ms - direct.client_net_p50_ms) from
+                    # the otherwise-unattributed `others` residual so it
+                    # reflects libp2p return-leg cost only.
+                    probe = measure_net_rtt(url)
+                    log.info(
+                        "net probe %s: p50=%.3fms p95=%.3fms n_ok=%d (%s)",
+                        path,
+                        probe["p50_ms"],
+                        probe["p95_ms"],
+                        probe["n_ok"],
+                        probe["probe_url"],
+                    )
+                    cell_meta = {
+                        **cell_meta,
+                        "client_net_p50_ms": probe["p50_ms"],
+                        "client_net_p95_ms": probe["p95_ms"],
+                        "client_net_mean_ms": probe["mean_ms"],
+                        "client_net_std_ms": probe["std_ms"],
+                        "client_net_n_ok": probe["n_ok"],
+                        "client_net_probe_url": probe["probe_url"],
+                    }
                     rng = np.random.default_rng(hash(cell_key) & 0xFFFFFFFF)
-                    asyncio.run(_run_cell(
-                        url=url, rps=rps, prompts=prompts, model=m["name"],
-                        warmup_s=cfg["warmup_s"], duration_s=cfg["duration_s"],
-                        cell_meta=cell_meta, raw_path=raw_path, rng=rng,
-                    ))
+                    asyncio.run(
+                        _run_cell(
+                            url=url,
+                            rps=rps,
+                            prompts=prompts,
+                            model=m["name"],
+                            warmup_s=cfg["warmup_s"],
+                            duration_s=cfg["duration_s"],
+                            cell_meta=cell_meta,
+                            raw_path=raw_path,
+                            rng=rng,
+                            closed_loop_requests=int(
+                                cfg.get("closed_loop_requests", 200)
+                            ),
+                        )
+                    )
                     cell_rows = _read_cell_rows(raw_path, cell_key)
                     cells_rows.append(summarize_cell(cell_rows, cell_meta=cell_meta))
         # Free GPU before the next model. Required when QOS caps jobs/user
         # (e.g. debug-qos: MaxJobsPerUser=1) — without this, the next
         # ensure_worker's sbatch sits PENDING forever.
         if i < len(cfg["models"]) - 1:
-            log.info("scancel worker %s for %s before next model", state.job_id, m["name"])
+            log.info(
+                "scancel worker %s for %s before next model", state.job_id, m["name"]
+            )
             subprocess.run(["scancel", state.job_id], check=False)
 
     _write_cells_csv(cells_path, cells_rows)
@@ -169,6 +216,7 @@ def run_sweep(*, config_path: str, output_dir: str) -> None:
 
 def _git_commit() -> str:
     import subprocess
+
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
@@ -177,23 +225,73 @@ def _git_commit() -> str:
         return "unknown"
 
 
-async def _run_cell(*, url: str, rps: int, prompts: list[dict], model: str,
-                     warmup_s: int, duration_s: int,
-                     cell_meta: dict, raw_path: Path, rng) -> None:
-    # Warmup: same arrivals, but write to /dev/null sink.
+async def _run_cell(
+    *,
+    url: str,
+    rps: int,
+    prompts: list[dict],
+    model: str,
+    warmup_s: int,
+    duration_s: int,
+    cell_meta: dict,
+    raw_path: Path,
+    rng,
+    closed_loop_requests: int = 0,
+) -> None:
+    # rps=0 is the magic value for closed-loop firing: one outstanding
+    # request at a time, exactly `closed_loop_requests` requests total.
+    # warmup_s and duration_s are ignored in closed-loop mode (closed_loop
+    # has no notion of duration -- it fires N requests serially).
+    if rps == 0:
+        warmup_path = raw_path.parent / ".warmup.jsonl"
+        # Modest warmup (10 requests) for closed-loop too -- gives the GPU
+        # time to thermal-stabilize before measurement.
+        await fire_closed_loop(
+            url=url,
+            n_requests=10,
+            prompts=prompts,
+            model=model,
+            output_path=warmup_path,
+            cell_meta={**cell_meta, "phase": "warmup"},
+            rng=rng,
+        )
+        warmup_path.unlink(missing_ok=True)
+        await fire_closed_loop(
+            url=url,
+            n_requests=closed_loop_requests,
+            prompts=prompts,
+            model=model,
+            output_path=raw_path,
+            cell_meta={**cell_meta, "phase": "measure"},
+            rng=rng,
+        )
+        return
+
+    # Open-loop (Poisson) path
     warmup_path = raw_path.parent / ".warmup.jsonl"
-    warmup_arrivals = poisson_schedule(rps=float(rps), duration_s=float(warmup_s), rng=rng)
+    warmup_arrivals = poisson_schedule(
+        rps=float(rps), duration_s=float(warmup_s), rng=rng
+    )
     await fire_open_loop(
-        url=url, arrivals_s=warmup_arrivals, prompts=prompts, model=model,
-        output_path=warmup_path, cell_meta={**cell_meta, "phase": "warmup"}, rng=rng,
+        url=url,
+        arrivals_s=warmup_arrivals,
+        prompts=prompts,
+        model=model,
+        output_path=warmup_path,
+        cell_meta={**cell_meta, "phase": "warmup"},
+        rng=rng,
     )
     warmup_path.unlink(missing_ok=True)
 
-    # Measure
     arrivals = poisson_schedule(rps=float(rps), duration_s=float(duration_s), rng=rng)
     await fire_open_loop(
-        url=url, arrivals_s=arrivals, prompts=prompts, model=model,
-        output_path=raw_path, cell_meta={**cell_meta, "phase": "measure"}, rng=rng,
+        url=url,
+        arrivals_s=arrivals,
+        prompts=prompts,
+        model=model,
+        output_path=raw_path,
+        cell_meta={**cell_meta, "phase": "measure"},
+        rng=rng,
     )
 
 
@@ -242,7 +340,10 @@ def _read_cell_rows(raw_path: Path, cell_key: str) -> list[dict]:
             except json.JSONDecodeError:
                 bad += 1
                 continue
-            if r.get("cell", {}).get("cell_key") == cell_key and r.get("cell", {}).get("phase") == "measure":
+            if (
+                r.get("cell", {}).get("cell_key") == cell_key
+                and r.get("cell", {}).get("phase") == "measure"
+            ):
                 rows.append(r)
     if bad:
         log.warning("skipped %d malformed jsonl lines in %s", bad, raw_path)

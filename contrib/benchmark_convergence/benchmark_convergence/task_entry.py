@@ -3,6 +3,7 @@
 Reads $SLURM_PROCID, starts a local otela process, then dispatches to
 either coordinator.main (procid 0) or observer.main (procid > 0).
 """
+
 from __future__ import annotations
 
 import os
@@ -33,18 +34,49 @@ def _wait_for(url: str, timeout_s: float = 240.0) -> None:
     raise RuntimeError(f"timeout waiting for {url}")
 
 
-def _libp2p_port_for_job() -> int:
-    """Derive a per-job libp2p TCP port to avoid collisions with stale
-    otela processes from earlier (killed) jobs on the same compute host.
-    Range: 40000-49999."""
+def _find_free_libp2p_port() -> int:
+    """Find a free TCP port for libp2p on this host.
+
+    Each task probes its own host's kernel for a free port. Coord encodes
+    its chosen port in the multiaddr it publishes; observers dial that.
+    Each task uses its own free port for its own otela listener.
+
+    We pick from a narrow range (40000-49999) deterministically by scanning
+    rather than relying on the kernel's ephemeral pool, because (a) we
+    want ports that won't conflict with kernel-assigned ephemeral
+    connections, and (b) some compute hosts may have stale otela
+    processes from earlier failed jobs squatting on past-derived ports —
+    we just skip those.
+    """
     job_id = int(os.environ.get("SLURM_JOB_ID", "0"))
-    return 40000 + (job_id % 10000)
+    procid = int(os.environ.get("SLURM_PROCID", "0"))
+    # Start at a job/procid-dependent offset so the first port we try
+    # already differs from any other concurrent job on the same host.
+    start = 40000 + ((job_id + procid * 31) % 10000)
+    for offset in range(10000):
+        port = 40000 + ((start - 40000 + offset) % 10000)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+        except OSError:
+            s.close()
+            continue
+        s.close()
+        return port
+    raise RuntimeError("no free libp2p port in 40000-49999")
 
 
-def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
-                 admin_port: int, libp2p_port: int,
-                 bootstrap_addr: str | None,
-                 service_name: str) -> subprocess.Popen:
+def _start_otela(
+    *,
+    bin_path: Path,
+    config_dir: Path,
+    http_port: int,
+    admin_port: int,
+    libp2p_port: int,
+    bootstrap_addr: str | None,
+    service_name: str,
+) -> subprocess.Popen:
     """Launch a local otela process.
 
     Note: there is no `--port` CLI flag for the HTTP port; it's set via
@@ -59,17 +91,22 @@ def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
     #     binaries to accept each other's CRDT entries (default true
     #     would silently drop peer entries from unsigned builds).
     (config_dir / "cfg.yaml").write_text(
-        "bootstrap:\n  static: []\n"
-        "security:\n  require_signed_binary: false\n"
+        "bootstrap:\n  static: []\n" "security:\n  require_signed_binary: false\n"
     )
     cmd = [
-        str(bin_path), "start",
-        "--config-dir", str(config_dir),
-        "--tcpport", str(libp2p_port),
+        str(bin_path),
+        "start",
+        "--config-dir",
+        str(config_dir),
+        "--tcpport",
+        str(libp2p_port),
         "--admin.enabled",
-        "--admin.port", str(admin_port),
-        "--service.name", service_name,
-        "--service.port", "65000",
+        "--admin.port",
+        str(admin_port),
+        "--service.name",
+        service_name,
+        "--service.port",
+        "65000",
     ]
     if bootstrap_addr:
         cmd += ["--bootstrap.addr", bootstrap_addr]
@@ -78,8 +115,16 @@ def _start_otela(*, bin_path: Path, config_dir: Path, http_port: int,
         cmd += ["--mode", "standalone"]
     env = os.environ.copy()
     env["OF_PORT"] = str(http_port)
+    # At 5ms poll cadence the GIN access log (on stdout) emits ~200 lines/sec
+    # per node which thrashes Lustre and slows otela itself. Drop stdout;
+    # keep stderr (real errors).
     log = (config_dir / "otela.log").open("w")
-    return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=log,
+        env=env,
+    )
 
 
 def _primary_ipv4() -> str:
@@ -128,7 +173,7 @@ def main() -> None:
     admin_port = int(net["otela_admin_port"])
     # Use a per-SLURM-job libp2p port so a stale otela on a reused
     # compute host (from a previous killed job) doesn't conflict.
-    libp2p_port = _libp2p_port_for_job()
+    libp2p_port = _find_free_libp2p_port()
     coord_port = int(net["coordinator_tcp_port"])
     poll_ms = int(sweep["poll_interval_ms"])
 
@@ -142,8 +187,10 @@ def main() -> None:
 
     if procid == 0:
         proc = _start_otela(
-            bin_path=otela_bin, config_dir=config_dir,
-            http_port=http_port, admin_port=admin_port,
+            bin_path=otela_bin,
+            config_dir=config_dir,
+            http_port=http_port,
+            admin_port=admin_port,
             libp2p_port=libp2p_port,
             bootstrap_addr=None,
             service_name=f"convbench-node-{procid}",
@@ -161,24 +208,28 @@ def main() -> None:
         print(f"BOOTSTRAP_ADDR={my_addr}", flush=True)
 
         from benchmark_convergence.coordinator import (
-            CoordinatorContext, main as coord_main,
+            CoordinatorContext,
+            main as coord_main,
         )
-        coord_main(CoordinatorContext(
-            task_id=0,
-            host=_hostname(),
-            n=n,
-            listen_port=coord_port,
-            local_otela_url=f"http://127.0.0.1:{http_port}",
-            local_admin_url=f"http://127.0.0.1:{admin_port}",
-            writes_per_rep=int(sweep["writes_per_rep"]),
-            stabilization_timeout_s=int(sweep["stabilization_timeout_s"]),
-            per_write_timeout_s=int(sweep["per_write_timeout_s"]),
-            inter_write_gap_ms=int(sweep["inter_write_gap_ms"]),
-            poll_interval_ms=poll_ms,
-            run_id=run_id,
-            cell_dir=cell_dir,
-            rep=rep,
-        ))
+
+        coord_main(
+            CoordinatorContext(
+                task_id=0,
+                host=_hostname(),
+                n=n,
+                listen_port=coord_port,
+                local_otela_url=f"http://127.0.0.1:{http_port}",
+                local_admin_url=f"http://127.0.0.1:{admin_port}",
+                writes_per_rep=int(sweep["writes_per_rep"]),
+                stabilization_timeout_s=int(sweep["stabilization_timeout_s"]),
+                per_write_timeout_s=int(sweep["per_write_timeout_s"]),
+                inter_write_gap_ms=int(sweep["inter_write_gap_ms"]),
+                poll_interval_ms=poll_ms,
+                run_id=run_id,
+                cell_dir=cell_dir,
+                rep=rep,
+            )
+        )
         _stop_otela(proc)
         return
 
@@ -195,8 +246,10 @@ def main() -> None:
         bootstrap_addr = bootstrap_file.read_text().strip()
 
     proc = _start_otela(
-        bin_path=otela_bin, config_dir=config_dir,
-        http_port=http_port, admin_port=admin_port,
+        bin_path=otela_bin,
+        config_dir=config_dir,
+        http_port=http_port,
+        admin_port=admin_port,
         libp2p_port=libp2p_port,
         bootstrap_addr=bootstrap_addr,
         service_name=f"convbench-node-{procid}",
@@ -206,15 +259,18 @@ def main() -> None:
     coord_ip = _coord_ip_from_multiaddr(bootstrap_addr)
 
     from benchmark_convergence.observer import ObserverContext, main as obs_main
-    obs_main(ObserverContext(
-        task_id=procid,
-        host=_hostname(),
-        coord_addr=(coord_ip, coord_port),
-        local_otela_url=f"http://127.0.0.1:{http_port}",
-        local_admin_url=f"http://127.0.0.1:{admin_port}",
-        poll_interval_ms=poll_ms,
-        run_id=run_id,
-    ))
+
+    obs_main(
+        ObserverContext(
+            task_id=procid,
+            host=_hostname(),
+            coord_addr=(coord_ip, coord_port),
+            local_otela_url=f"http://127.0.0.1:{http_port}",
+            local_admin_url=f"http://127.0.0.1:{admin_port}",
+            poll_interval_ms=poll_ms,
+            run_id=run_id,
+        )
+    )
     _stop_otela(proc)
 
 
