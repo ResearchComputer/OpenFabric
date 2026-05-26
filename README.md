@@ -36,7 +36,6 @@ Tela is the latin word for "Fabric", which refers to the interconnected network 
 
 ### Advanced Topics
 - [CRDT Internals](docs/content/docs/advanced/crdt-internals.mdx) — How CRDT synchronization works
-- [CRDT Tombstones](docs/content/docs/advanced/crdt-tombstones.mdx) — Node departure handling
 - [Security Hardening](docs/content/docs/advanced/security.mdx) — Build attestation, trust, and access control
 - [Performance Benchmark](docs/content/docs/advanced/performance-optimization.mdx) — Proxy latency measurements
 - [Large-Scale Simulation](docs/content/docs/advanced/benchmark.mdx) — Run 100+ node simulations
