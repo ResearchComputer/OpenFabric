@@ -26,26 +26,26 @@ Tela is the latin word for "Fabric", which refers to the interconnected network 
 ## Documentation
 
 ### Getting Started
-- [Installation](docs/tutorial/installation) — Download and install OpenTela
-- [Spin Up LLM Serving](docs/tutorial/spinup) — Set up multi-LLM serving cluster
-- [Request Routing](docs/tutorial/routing) — Understand how requests are routed
-- [Wallet & Ownership](docs/tutorial/owner) — Manage Solana wallets and node identity
-- [Solana Settlement](docs/tutorial/settlement) — Configure automated usage billing
-- [Docker Serving](docs/tutorial/docker-serving) — Use Docker containers for LLM serving
-- [Glossary](docs/tutorial/glossary) — Key terms and concepts
+- [Installation](docs/content/docs/tutorial/installation) — Download and install OpenTela
+- [Spin Up LLM Serving](docs/content/docs/tutorial/spinup) — Set up multi-LLM serving cluster
+- [Request Routing](docs/content/docs/tutorial/routing) — Understand how requests are routed
+- [Wallet & Ownership](docs/content/docs/tutorial/owner) — Manage Solana wallets and node identity
+- [Solana Settlement](docs/content/docs/tutorial/settlement) — Configure automated usage billing
+- [Docker Serving](docs/content/docs/tutorial/docker-serving) — Use Docker containers for LLM serving
+- [Glossary](docs/content/docs/tutorial/glossary) — Key terms and concepts
 
 ### Advanced Topics
-- [CRDT Internals](docs/advanced/crdt-internals) — How CRDT synchronization works
-- [CRDT Tombstones](docs/advanced/crdt-tombstones) — Node departure handling
-- [Security Hardening](docs/advanced/security) — Build attestation, trust, and access control
-- [Performance Benchmark](docs/advanced/performance-optimization) — Proxy latency measurements
-- [Large-Scale Simulation](docs/advanced/benchmark) — Run 100+ node simulations
+- [CRDT Internals](docs/content/docs/advanced/crdt-internals) — How CRDT synchronization works
+- [CRDT Tombstones](docs/content/docs/advanced/crdt-tombstones) — Node departure handling
+- [Security Hardening](docs/content/docs/advanced/security) — Build attestation, trust, and access control
+- [Performance Benchmark](docs/content/docs/advanced/performance-optimization) — Proxy latency measurements
+- [Large-Scale Simulation](docs/content/docs/advanced/benchmark) — Run 100+ node simulations
 
 ### Extensions
-- [Fleet Manager](docs/extensions/fleet-manager) — Deploy to SLURM clusters with otela-fleet
+- [Fleet Manager](docs/content/docs/extensions/fleet-manager) — Deploy to SLURM clusters with otela-fleet
 
 ### Others
-- [Artifact Guide for OSDI '26 Operational Systems](docs/blog/osdi26-trace-artifact) — Access the SwissAI serving trace and reproduce the figures from our OSDI '26 paper.
+- [Artifact Guide for OSDI '26 Operational Systems](docs/content/docs/blog/osdi26-trace-artifact) — Access the SwissAI serving trace and reproduce the figures from our OSDI '26 paper.
 
 ## Contributing
 
