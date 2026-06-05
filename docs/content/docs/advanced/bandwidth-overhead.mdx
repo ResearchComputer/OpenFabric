@@ -1,0 +1,167 @@
+---
+title: Bandwidth Overhead
+description: How much network bandwidth OpenTela adds to distribute a workload, and how to measure it yourself — the per-request data-plane cost, the idle control-plane chatter, and the cost of CRDT churn — using the in-tree bandwidth harness.
+---
+
+When you put a request through OpenTela instead of calling a backend directly, two kinds of extra bytes hit the wire:
+
+- **Data plane** — the per-request cost of forwarding a request from the head node to a worker over libp2p and streaming the response back. This scales with your *request rate*.
+- **Control plane** — the background gossip, CRDT sync, membership probing, and DHT traffic that every node generates just to stay in the mesh, *with no client workload at all*. This scales with your *mesh size*.
+
+This page documents a reproducible harness that measures both, and the numbers we collected with it. The short version: the data plane is cheap and flat (a fixed header tax per request, no payload bloat, no compression), while the control plane is the cost that grows with the network — roughly **O(N) per node** when idle, and sharply higher during registration churn.
+
+## The instrument
+
+libp2p ships a per-protocol byte counter, [`metrics.BandwidthCounter`](https://pkg.go.dev/github.com/libp2p/go-libp2p/core/metrics), which you attach to a host with the `libp2p.BandwidthReporter` option. It tags every stream by protocol ID, so we can separate:
+
+| Protocol ID | What it carries |
+|---|---|
+| `/libp2p-http` | **data plane** — forwarded requests/responses |
+| `/meshsub/1.3.0` | GossipSub: heartbeats, the 20s ping, CRDT head rebroadcast |
+| `/ipfs/bitswap/1.2.0` | CRDT DAG block transfer (only during writes) |
+| `/ipfs/{lan,wan}/kad/1.0.0` | Kademlia DHT |
+| `/ipfs/ping/1.0.0` | libp2p liveness ping |
+
+The harness lives at [`src/internal/server/bandwidth_overhead_test.go`](https://github.com/ResearchComputer/OpenTela/tree/main/src/internal/server/bandwidth_overhead_test.go) (data plane), [`controlplane_overhead_test.go`](https://github.com/ResearchComputer/OpenTela/tree/main/src/internal/server/controlplane_overhead_test.go) (control plane), and [`controlplane_tuning_test.go`](https://github.com/ResearchComputer/OpenTela/tree/main/src/internal/server/controlplane_tuning_test.go) (flag verification). Every test stands up the **real** OpenTela code paths in-process — the real forwarding transport, the real `gostream`/`/libp2p-http` listener, and the real `ipfs-lite` + GossipSub + `go-ds-crdt` stack from [`internal/protocol/crdt.go`](https://github.com/ResearchComputer/OpenTela/tree/main/src/internal/protocol/crdt.go) — so the byte counts reflect production wire behaviour, not a reimplementation.
+
+All of it is behind the `bandwidthbench` build tag, so it never runs in `make test` or CI:
+
+```bash
+cd src
+
+# Data plane: per-request overhead, end-to-end with production headers, compression check
+go test -tags bandwidthbench -run TestDataPlane -v ./internal/server/
+go test -tags bandwidthbench -run TestEndToEndProxy -v ./internal/server/
+
+# Control plane: idle (dense + sparse), and active CRDT churn
+go test -tags bandwidthbench -run TestControlPlane -v -timeout 1200s ./internal/server/
+
+# Verify the scalability tuning flags
+go test -tags bandwidthbench -run TestControlPlaneTuning -v -timeout 1200s ./internal/server/
+```
+
+> **Note** — The counter reports **application-level stream bytes**. The real wire adds TCP/IP plus Noise encryption and yamux framing — a low single-digit percent on top — which is inherent to any secure transport, not specific to OpenTela. Treat these numbers as the OpenTela-attributable overhead, not the literal Ethernet-frame count.
+
+## Data-plane overhead
+
+### Per-request, bare transport
+
+Forwarding requests of varying size between two hosts over the real `/libp2p-http` transport, with a kept-alive stream (steady state, handshake excluded):
+
+| Request payload | Bytes on wire / req | Overhead | wire / payload |
+|---:|---:|---:|---:|
+| 0 B | 173 B | 173 B | — |
+| 1 KiB | 1,200 B | 176 B | 1.17× |
+| 16 KiB | 16,561 B | 177 B | 1.011× |
+| 256 KiB | 262,322 B | 178 B | 1.0007× |
+| 1 MiB | 1,048,755 B | 179 B | 1.0002× |
+
+The overhead is a **fixed ~175 B constant** — the HTTP/1.1 request line plus headers — that grows by all of 6 bytes from an empty body to 1 MiB (the `Content-Length` digits). It is not a multiplier on the payload. The response direction behaves identically (~115–139 B constant).
+
+**No compression.** The decisive check: 1 MiB of zeros and 1 MiB of incompressible bytes both put **exactly 1,048,755 B** on the wire. Bodies are forwarded raw.
+
+**Connection handshake** is a one-time cost: a cold connect plus one tiny request totals ~616 B out / ~574 B in, of which ~**400 B each way** is the Noise + yamux + identify handshake. It is amortised across every request on the pooled stream.
+
+### End-to-end, with production headers
+
+The bare transport omits the headers the real [`GlobalServiceForwardHandler`](https://github.com/ResearchComputer/OpenTela/tree/main/src/internal/server/proxy_handler.go) attaches. Driving a real HTTP client → real Gin head node → `ReverseProxy` over libp2p → worker, with `X-Otela-Request-Id`, `X-Otela-Client-Wallet`, the rewritten `/v1/_service/...` path, and `X-Forwarded-For` all present:
+
+| req body | resp body | wire **out** / req | wire **in** / req | out − reqBody | in − respBody |
+|---:|---:|---:|---:|---:|---:|
+| 13 B | 2 B | 457 B | 117 B | **444 B** | 115 B |
+| 1 KiB | 1 KiB | 1,473 B | 1,142 B | **449 B** | 118 B |
+| 16 KiB | 64 KiB | 16,835 B | 65,674 B | **451 B** | 138 B |
+| 1 MiB | 2 B | 1,049,025 B | 117 B | **449 B** | 115 B |
+
+Two things stand out:
+
+1. **Still a fixed constant per direction** — ~449 B on the request leg, ~115–139 B on the response leg — independent of payload. At 1 MiB the ratio is 1.0004.
+2. **The directions are asymmetric, on purpose.** The request leg is heavier because the routing headers ride the mesh wire. The response leg stays as lean as the bare transport because **`X-Computing-Node` is added by the head node *locally* for the client — it never crosses the mesh.**
+
+**Takeaway:** distributing a workload costs a flat **~0.45 KB up + ~0.12 KB down per request**, with no payload bloat. That is under 1% for any payload of a few KB or more (an LLM prompt/completion, a streamed token batch). It only becomes a meaningful fraction for very small, very high-rate messages.
+
+## Control-plane overhead (idle)
+
+Here we boot the full real stack — `ipfs-lite` + dual DHT + GossipSub (D=6) + the 20s `ocf-crdt-net` ping + `go-ds-crdt` with the production 5s rebroadcast — on N connected nodes, each with its own counter, and let them sit idle.
+
+At idle, essentially **100% of the traffic is `/meshsub/1.3.0`** (GossipSub). That one protocol carries the pubsub heartbeats, the 20s ping, *and* the CRDT head rebroadcast. DHT, identify, and the ping protocol are all negligible (<1 B/s) once the mesh has settled.
+
+### Topology matters
+
+| Mesh size | Per-node | Topology |
+|---:|---:|---|
+| N=2 | 14 B/s | all-pairs |
+| N=4 | 127 B/s | all-pairs |
+| N=8 | 696 B/s | all-pairs |
+| N=10 | 1,123 B/s | sparse |
+| N=25 | 4,130 B/s | sparse |
+| N=50 | 7,943 B/s | sparse |
+
+The first three use an **all-pairs** connection graph, which at small N makes the GossipSub overlay nearly complete and *over-states* gossip amplification — use them only as a dense upper bound. The N=10/25/50 rows use a **sparse** bootstrap-style graph (each node connects to a bounded random set of peers), the regime a real bootstrap + DHT mesh converges to.
+
+### It scales O(N) per node, not O(1)
+
+The sparse numbers grow roughly **linearly per node** (per-node ≈ N^1.2 over this range, approaching N^1.0 at the top; whole-mesh ≈ N²). This is worth internalising: GossipSub's degree bound caps the fan-out *of each message*, but it does **not** bound per-node bandwidth, because the **number of distinct messages scales with N** — every node independently flood-publishes a liveness ping every 20s, so there are O(N) published messages per period and each node relays them regardless of mesh degree. (The CRDT rebroadcast carries nothing while idle — there are no writes — so the ping, not the rebroadcast, is the driver. The [tuning experiment](#tuning-the-control-plane) below proves this.)
+
+So the idle control plane is **O(N) per node / O(N²) mesh-wide**. It is modest through N≈50 (~8 KB/s/node ≈ 0.7 GB/node/day), but the linear-per-node trend is exactly what the [`scalability` flags](#tuning-the-control-plane) address.
+
+> **Caveat** — Gossip timing is stochastic; expect roughly ±30% run-to-run variance (we measured idle N=10 at both 1,123 and 1,508 B/s in separate runs). Compare configurations within a single run, not across runs.
+
+## Control-plane overhead (active churn)
+
+Idle is the floor. The interesting case is **churn** — peers joining and re-registering services, each of which writes a `Peer` record into the CRDT. With 10 nodes each re-registering a realistic **715 B** record every 3 seconds:
+
+| State | Per-node | vs idle |
+|---|---:|---:|
+| idle | 1,508 B/s | 1× |
+| **churn** | **40,579 B/s** | **27×** |
+
+Per-protocol *during churn* (whole mesh):
+
+| Protocol | Rate | What it is |
+|---|---:|---|
+| `/ipfs/bitswap/1.2.0` | 155 KB/s | peers fetching the new CRDT **DAG blocks** |
+| `/ipfs/lan/kad` (DHT) | 136 KB/s | provider lookups triggered by those fetches |
+| `/meshsub` (gossip) | 100 KB/s | head-CID broadcasts + gossip |
+| connection / identify | 15 KB/s | — |
+
+A single 715 B write costs roughly **117 KB of mesh-wide traffic** on a 10-node mesh — because a CRDT write is not just a gossip message. It creates a DAG block that **every peer pulls over bitswap**, and those block fetches kick off **DHT provider lookups**. The traffic profile is completely different from idle: bitswap- and DHT-dominated rather than pure gossip.
+
+> **Note** — The per-write figure is an **upper bound**. On a single-host loopback mesh the DHT can't resolve addresses well, so bitswap falls back to provider walks instead of fetching from already-connected peers via warm sessions — inflating the `/kad` term. A real mesh with healthy connectivity fetches blocks directly from mesh peers and the DHT surge shrinks. The qualitative result (writes trigger bitswap + DHT, ~1–2 orders above idle) is robust; the exact 117 KB is conservative.
+
+## Tuning the control plane
+
+OpenTela ships opt-in `scalability.*` flags (all off by default). We **expected `crdt_tuned` to be the big lever** — and measuring proved us wrong. Verified at N=25 on the sparse topology, all four configs in one run:
+
+| Config | Per-node | vs baseline |
+|---|---:|---:|
+| baseline (5s rebroadcast, D=6, 20s ping) | 3,926 B/s | 1.00× |
+| `crdt_tuned` (60s rebroadcast, D=10) | 4,281 B/s | 1.09× |
+| `swim_enabled` (no ping, 500ms probe) | 2,665 B/s | **0.68×** |
+| both | 2,503 B/s | **0.64×** |
+
+Two surprises:
+
+1. **`crdt_tuned` does not reduce idle bandwidth** — it nudged it slightly *up*. When the mesh is idle no `Peer` records are being written, so the CRDT rebroadcast carries no new heads; stretching its interval 5s→60s saves nothing. Meanwhile the flag *widens* GossipSub (`D` 6→10), which adds a little heartbeat/gossip traffic. `crdt_tuned` pays off under **churn** (fewer, batched rebroadcasts of real data) and at very large N — not at idle.
+
+2. **`swim_enabled` is the effective idle lever** (~32% off). The reason is only visible in the per-protocol split: with SWIM on, `/meshsub` traffic **collapses to near zero**. That proves the dominant idle GossipSub cost was never the rebroadcast — it was the **20s liveness ping**. Each flood-published ping enters GossipSub's message cache and drives IHAVE/IWANT gossip across the mesh for the following heartbeats; with ~N pings per period that *is* the O(N) idle term. [SWIM](https://en.wikipedia.org/wiki/SWIM_Protocol) replaces the flood-published ping with bounded point-to-point probing, so GossipSub goes quiet.
+
+> **Caveat** — SWIM is not free: it adds `/opentela/swim` probe traffic (~16 KB/s mesh) *and*, in this sparse single-host setup, a `/ipfs/lan/kad` surge (~41 KB/s), because each node probes random members it isn't directly connected to and must `FindPeer` them via the DHT. On loopback the DHT is inefficient, so that surge is inflated — a real mesh with cached peer addresses would see less. The net 0.68× is therefore **conservative**: the `/meshsub` collapse is real; the added DHT cost is partly an artifact.
+
+**Practical reading:** the idle floor is dominated by flood-published liveness gossip, so `swim_enabled` is the lever that bends it down; `crdt_tuned` targets the *churn* term (rebroadcast of real writes), not idle. For a large, mostly-idle mesh, turn on `swim_enabled`; add `crdt_tuned` if you also expect heavy registration churn.
+
+## Putting it together
+
+| Plane | Per-unit cost | Scales with | Magnitude |
+|---|---|---|---|
+| **Data** (per request) | ~449 B up + ~120 B down, flat | request rate | <1% for KB+ payloads; no compression |
+| **Control — idle** | gossip (5s rebroadcast + 20s ping) | **O(N)/node, O(N²) mesh** | ~8 KB/s/node @ N=50 |
+| **Control — churn** | bitswap DAG pull + DHT lookups | per write × write rate | ~27× idle; ~117 KB/write (loopback upper bound) |
+
+Workload distribution itself is cheap and flat — a small, fixed per-request header tax. The cost that **grows with the network** is the coordinator-free control plane: linear per node when idle, and an order of magnitude higher during registration churn. For a large, mostly-idle mesh, turn on `scalability.swim_enabled` to bend the idle curve down (it removes the flood-published liveness ping that dominates idle gossip); add `scalability.crdt_tuned` when you also expect heavy registration churn.
+
+## See also
+
+- [Network Profiling](/docs/advanced/network-profiling) — latency/throughput between nodes (raw IP vs libp2p)
+- [CRDT Internals](/docs/advanced/crdt-internals) — how the datastore, DAG, and tombstones work
+- [Performance Optimization](/docs/advanced/performance-optimization) — tuning the node for throughput

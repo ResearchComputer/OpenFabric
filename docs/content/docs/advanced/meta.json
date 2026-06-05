@@ -6,6 +6,7 @@
     "crdt-internals",
     "benchmark",
     "network-profiling",
+    "bandwidth-overhead",
     "performance-optimization"
   ]
 }
