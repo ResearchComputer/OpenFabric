@@ -7,6 +7,7 @@
     "benchmark",
     "network-profiling",
     "bandwidth-overhead",
-    "performance-optimization"
+    "performance-optimization",
+    "scheduling"
   ]
 }

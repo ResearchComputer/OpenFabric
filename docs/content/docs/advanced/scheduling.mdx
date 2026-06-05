@@ -1,0 +1,304 @@
+---
+title: Scheduling
+date: "2026-06-05"
+tldr: "Two layers of scheduling — per-request load balancing (random, round-robin, shortest-queue) and fleet-level orchestration — how to configure each, and how to implement your own, up to an end-to-end head-node relaunch controller."
+description: Request-level load balancing policies, how to implement a custom policy, and how to build a fleet-level scheduler that observes the network and re-launches head nodes.
+experimental: true
+---
+
+## Overview
+
+"Scheduling" in OpenTela happens at two independent layers. They answer different questions, run in different places, and are extended in different ways:
+
+| Layer | Question it answers | Where it runs | How you extend it |
+|-------|--------------------|----------------|--------------------|
+| **Request-level** (load balancing) | *Which worker handles this request?* | Inside the head node, per request | Implement the `LoadBalancer` interface (Go) |
+| **Fleet-level** (orchestration) | *Which nodes should exist, and where?* | An external control loop | An external process driving the CLI + HTTP/CRDT APIs |
+
+The first layer is built in and configured with the `--lb-policy` flag. The second layer is deliberately *not* built in — OpenTela exposes the observability and control surface, and you supply the policy (the [Fleet Manager](/docs/extensions/fleet-manager) is one reference implementation for the worker/relay part).
+
+This page covers both, and how to implement your own at each layer.
+
+---
+
+## 1. Request-level scheduling (load balancing)
+
+When a client sends a request to a head node at `/v1/service/:service/*path`, the head node has to pick one worker out of all the peers that offer that service. That selection is the request-level scheduler.
+
+### The routing pipeline
+
+`GlobalServiceForwardHandler` runs each request through a fixed pipeline. The load-balancing policy is the **last** step — everything before it narrows the candidate set:
+
+1. **Buffer the body.** The request body is read into memory so a transport-level failure can be transparently retried against a different worker.
+2. **Candidate selection + identity-group matching.** `selectCandidates` collects every connected provider for the service, then matches on the request's *identity group* (e.g. `model=Qwen/Qwen3-8B`). Matching is three-tier with fallback controlled by the `X-Otela-Fallback` header: exact (`model=Qwen/Qwen3-8B`) → wildcard (`model=*`) → catch-all (`all`). Default (`0`) is exact-only; `1` allows wildcard; `2` allows catch-all.
+3. **Trust filtering.** If the client sends `X-Otela-Trust: N`, candidates below trust level `N` are removed (see [Security → Trust-aware routing](/docs/advanced/security)). If none qualify, the head returns `503` rather than silently falling back.
+4. **Admission control.** If `scalability.admission_control` is enabled, the head probabilistically sheds load when the number of available workers is below `scalability.expected_workers`, returning `503` with `Retry-After: 5`.
+5. **Retry loop + policy selection.** For each attempt, peers already tried are excluded, then **one peer is chosen from the remaining candidates**:
+   - if `scalability.weighted_routing` is enabled → weighted random selection (`scoreCandidates` → `weightedRandomSelect`);
+   - otherwise → **the configured load-balancing policy** (`lb.Pick(remaining)`).
+
+   The request is then proxied to that peer (directly over libp2p, or via a relay if the peer is behind NAT). On a transport failure the loop retries against a different peer, up to `routing.max_retries`.
+
+The policy only ever sees the **remaining, trust-filtered, non-excluded** candidates for the current attempt — it does not need to re-implement matching, trust, or retry.
+
+### Built-in policies
+
+Select with `--lb-policy` (default `random`):
+
+| Policy | Strategy | State held | Good for |
+|--------|----------|------------|----------|
+| `random` *(default)* | Uniform random pick | none | Homogeneous workers; lowest overhead |
+| `round-robin` | Cycle through candidates via an atomic counter | one global counter | Even spread when request costs are uniform |
+| `shortest-queue` | Join-shortest-queue: pick the worker with the fewest in-flight requests | per-peer in-flight map | Heterogeneous request costs or worker speeds |
+
+`shortest-queue` tracks in-flight requests by bracketing each dispatch with `OnRequestStart`/`OnRequestEnd`. Because `ServeHTTP` is synchronous (it blocks until the response — including a streamed response — completes), a peer counts as "busy" for the full duration of its requests. The in-flight counters are reset to zero every 5 minutes to prevent drift from cancelled contexts that never call `OnRequestEnd`.
+
+### Configuration
+
+```bash
+# CLI flag
+otela start --component server --lb-policy shortest-queue
+```
+
+```yaml
+# ~/.config/opentela/cfg.yaml
+lb-policy: shortest-queue
+```
+
+The active policy is logged at startup: `Load balancing policy: shortest-queue`.
+
+### Related routing knobs
+
+These live under `scalability.*` and `routing.*` and interact with policy selection. All default off/conservative (see `entry/cmd/root.go`):
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `scalability.weighted_routing` | `false` | When on, **overrides** `--lb-policy` and uses weighted random selection via `scoreCandidates` |
+| `scalability.admission_control` | `false` | Probabilistic load shedding when workers are scarce |
+| `scalability.expected_workers` | `0` | Target worker count used by admission control (`0` = disabled) |
+| `routing.retry_enabled` | `true` | Re-route to a different worker on transport failure |
+| `routing.max_retries` | `3` | Maximum re-routes per request |
+
+Dotted keys also accept `OF_`-prefixed environment variables with dots replaced by underscores, e.g. `OF_SCALABILITY_WEIGHTED_ROUTING=true`.
+
+### Files
+
+| File | Role |
+|------|------|
+| `internal/server/loadbalancer.go` | `LoadBalancer` interface, `Policy` constants, the three policies, `SetLoadBalancerPolicy`, `GetLoadBalancer` |
+| `internal/server/proxy_handler.go` | `GlobalServiceForwardHandler`, `selectCandidates`, `parseFallbackLevel`, `filterByTrust`, `shouldShedLoad`, `scoreCandidates`, `weightedRandomSelect`, the retry loop |
+| `internal/server/server.go` | Reads `lb-policy` at startup and calls `SetLoadBalancerPolicy` |
+| `entry/cmd/root.go` | `--lb-policy` flag, `scalability.*` and `routing.*` defaults |
+
+---
+
+## 2. Implementing a custom load-balancing policy
+
+A request-level policy is a Go type satisfying one small interface. There is no runtime plugin system — you add the policy to the binary and select it by name.
+
+### The `LoadBalancer` interface
+
+```go
+// internal/server/loadbalancer.go
+type LoadBalancer interface {
+	// Pick returns the index of the chosen candidate. Called on the hot path
+	// with the remaining (trust-filtered, non-excluded) candidates for the
+	// current attempt — hold any locks briefly.
+	Pick(candidates []string) int
+	// OnRequestStart is called immediately before the request is dispatched.
+	OnRequestStart(peer string)
+	// OnRequestEnd is called immediately after the (synchronous) dispatch returns.
+	OnRequestEnd(peer string)
+}
+```
+
+`candidates` is a slice of libp2p peer IDs. For a stateless policy, `OnRequestStart`/`OnRequestEnd` are no-ops; for a load-aware policy, use them to maintain per-peer state (as `shortest-queue` does).
+
+### Example: a "least-recently-used" policy
+
+```go
+// internal/server/loadbalancer.go
+
+const PolicyLeastRecent Policy = "least-recent"
+
+type leastRecentLB struct {
+	mu       sync.Mutex
+	lastUsed map[string]time.Time
+}
+
+func (l *leastRecentLB) Pick(candidates []string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	best, bestT := 0, time.Now()
+	for i, c := range candidates {
+		t := l.lastUsed[c] // zero Time if never used → always wins first
+		if t.Before(bestT) {
+			bestT, best = t, i
+		}
+	}
+	l.lastUsed[candidates[best]] = time.Now()
+	return best
+}
+
+func (l *leastRecentLB) OnRequestStart(string) {}
+func (l *leastRecentLB) OnRequestEnd(string)   {}
+```
+
+### Wiring it in
+
+Add a `case` to the factory so the policy is selectable by name:
+
+```go
+func SetLoadBalancerPolicy(p Policy) {
+	switch p {
+	case PolicyRoundRobin:
+		globalLB = &roundRobinLB{}
+	case PolicyShortestQueue:
+		globalLB = newShortestQueueLB(5 * time.Minute)
+	case PolicyLeastRecent: // <- new
+		globalLB = &leastRecentLB{lastUsed: map[string]time.Time{}}
+	default:
+		globalLB = &randomLB{}
+	}
+}
+```
+
+Rebuild and run:
+
+```bash
+make build
+./build/entry start --component server --lb-policy least-recent
+```
+
+### Using richer signals (load, latency, hardware, trust)
+
+`Pick` only sees peer IDs. If your policy needs to know a worker's GPU type, in-flight load, or trust level, that data lives in the distributed node table — look the peer up with `protocol.GetPeerFromTable(id)`, which returns a `Peer` carrying `Hardware`, `TrustLevel`, `Service`, and attestation fields.
+
+For score-based selection specifically, the **weighted routing** path is the intended extension point: `scoreCandidates` currently returns a uniform weight of `1.0` for every peer, and `weightedRandomSelect` already turns weights into a proportional choice. Replace the body of `scoreCandidates` with your scoring (e.g. weight by free GPU memory or inverse of recent latency), then enable `scalability.weighted_routing`.
+
+---
+
+## 3. Fleet-level scheduling (custom orchestration)
+
+The second layer decides *which nodes exist*: how many workers run which models, where relays sit, and — the focus of this section — how head nodes are launched, replaced, and kept reachable. OpenTela provides the building blocks; the control policy is yours.
+
+### What a head node actually is
+
+A "head node" (dispatcher) is not a special binary. It is simply a node running the server component that clients point HTTP at:
+
+```bash
+otela start --component server --public-addr <IP> --seed <N> --port 8092
+```
+
+Notes that matter for orchestration:
+
+- **The global routing endpoints (`/v1/service/:service/*path`) are registered on every node**, regardless of role. Any node running the server can act as a dispatcher. `--role head` only *adds* the relay-registration endpoints (`/v1/dnt/challenge`, `/v1/dnt/register`); it does not change request routing.
+- **`--seed` fixes the libp2p peer ID.** A head relaunched on a different machine with the same seed keeps the same identity in the mesh.
+- **`--public-addr` makes it bootstrap-discoverable.** Heads with a public address can serve as bootstrap nodes for others.
+- **Head nodes are effectively stateless.** The shared state (which workers exist, which services they offer) lives in the replicated CRDT node table, not in any one head. A fresh head joins the gossip network and converges to the same view — workers do not need to re-register.
+
+### The control surface
+
+An external scheduler observes the fleet by polling these HTTP endpoints on any node (default port `8092`):
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /v1/health` | Liveness (`{"status":"ok"}`) |
+| `GET /v1/dnt/table` | The connected node table — peers and the services they offer |
+| `GET /v1/dnt/peers` | Connected peers |
+| `GET /v1/dnt/peers_status` | All known peers and their connectedness |
+| `GET /v1/dnt/bootstraps` | Known bootstrap multiaddrs |
+| `GET /v1/dnt/stats` | Connected/total peer counts and resource details |
+| `GET /metrics` | Prometheus metrics (request rates, routing, retries) |
+
+Because the node table is a CRDT, **every node converges to the same view** — you can poll any reachable node to observe the whole fleet. To write state, `POST /v1/dnt/_node` broadcasts a node update and `DELETE /v1/dnt/_node` announces a graceful leave.
+
+The optional ingest server (`--component ingress` or `all`, port `8081`) adds `/status` and `/health` with CPU, memory, and GPU telemetry per node.
+
+### The control-loop pattern
+
+Custom orchestration is an external **observe → decide → act** loop:
+
+1. **Observe** — poll `/v1/dnt/table`, `/v1/health`, and `/metrics` across the nodes you manage.
+2. **Decide** — compare the live state against your desired state (replica counts per model, head liveness, capacity headroom).
+3. **Act** — launch or stop nodes (SLURM jobs, cloud VMs, systemd units), and update the client-facing entry point (DNS / load balancer / bootstrap list).
+
+### End-to-end example: re-launching a head node
+
+There is **no built-in head-node failover or leader election** — heads coexist as peers, and you supply the controller. A minimal head-failover loop looks like this.
+
+**1. Provision heads with stable, interchangeable identities.** Fix the seed and the bootstrap list so a replacement rejoins the same mesh:
+
+```bash
+otela start --component server --role head \
+  --seed 1 \
+  --public-addr 203.0.113.10 --port 8092 --tcpport 43905 \
+  --bootstrap.static https://bootstraps.opentela.ai/v1/dnt/bootstraps \
+  --lb-policy shortest-queue
+```
+
+**2. Health-check and replace on failure:**
+
+```bash
+while true; do
+  if ! curl -fsS --max-time 3 http://$HEAD_IP:8092/v1/health >/dev/null; then
+    # Head is down. Launch a replacement with the SAME --seed so it keeps the
+    # same peer ID, on whatever infra you use (SLURM job, cloud VM, systemd):
+    launch_head --seed 1 --public-addr "$NEW_IP"
+    # Repoint clients at the new head (see step 3):
+    update_dns opentela-head "$NEW_IP"
+  fi
+  sleep 5
+done
+```
+
+**3. Redirect clients.** Since OpenTela has no client-side failover, put one of these in front of your heads:
+
+- **DNS** with a short TTL that the controller repoints, or
+- an **L4/L7 load balancer** spanning several heads, or
+- **multiple bootstrap addresses** in clients/relays, so traffic naturally flows to a live head.
+
+**4. (Optional) Drain gracefully.** Before killing the old head, call `DELETE /v1/dnt/_node` for it so the node table marks it as left immediately, instead of waiting for the gossip liveness timeout.
+
+Because every head shares the same replicated node table, **the replacement immediately sees the same workers and services** — there is no warm-up and workers do not re-register. Only the client entry point (DNS/LB/bootstrap) has to move. Running **two or more heads behind a load balancer** turns "relaunch on failure" into "drop from pool + add replacement," closing the request-path gap entirely; this is exactly what the two-head test mesh (`deploy/test/`) does — each head lists the other in its bootstrap config and both join the same CRDT topic.
+
+### Reusing the Fleet Manager
+
+The [Fleet Manager](/docs/extensions/fleet-manager) (`otela-fleet`) is a reference orchestrator for the **worker and relay** layer: it syncs binaries to SLURM clusters, ensures a relay is running, submits serving jobs, and reconciles desired vs. live replica counts (`otela-fleet apply`, GitOps-style, with jobs identified by a hash of `backend + cmd + preset`). It does **not** manage head nodes.
+
+A complete custom scheduler therefore usually combines three pieces:
+
+- `otela-fleet` (or your own equivalent) for **workers/relays**,
+- a small **head-failover controller** as above, and
+- your choice of **client-facing LB/DNS**.
+
+### Files
+
+| File | Role |
+|------|------|
+| `entry/cmd/start.go` | `--component server\|ingress\|all` dispatch |
+| `entry/cmd/root.go` | `--role`, `--seed`, `--public-addr`, `--bootstrap.static`/`--bootstrap.source`, `--tcpport`/`--udpport` flags |
+| `internal/server/server.go` | HTTP route registration (`/v1/health`, `/v1/dnt/*`, `/v1/service/*`); head-only relay endpoints |
+| `internal/protocol/node_table.go` | CRDT node table: `GetConnectedPeers`, `GetAllPeers`, `GetPeerFromTable`, `UpdateNodeTable` |
+| `internal/ingest/` | Telemetry server (port 8081): `/status`, `/health` |
+| `contrib/fleet_manager/` | Reference worker/relay orchestrator (`otela-fleet`) |
+
+---
+
+## Caveats and Limitations
+
+### Custom policies require a rebuild
+
+There is no runtime plugin system for load-balancing policies — a new policy is compiled into the binary. On networks with `security.require_signed_binary: true`, peers reject unsigned builds, so a custom binary must be signed (see [Security → Build Attestation](/docs/advanced/security)) or run on a network with that check disabled.
+
+### `shortest-queue` is a local, per-head view
+
+Each head node only counts the requests it forwarded, and counters reset every 5 minutes. With multiple heads, each has an independent picture of worker load; there is no globally shared queue depth.
+
+### No built-in head-node failover or leader election
+
+Heads coexist as equal peers. Health-checking, replacement, and client redirection are external concerns. The Fleet Manager does not provision or manage heads.
+
+### Admission control is per-head and probabilistic
+
+`shouldShedLoad` makes an independent probabilistic decision on each head based on that head's view of available workers; it is not a network-wide rate limit.
