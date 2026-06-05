@@ -1,9 +1,0 @@
-FROM alpine:edge
-
-WORKDIR /app
-
-COPY src/build/entry /app/otela-amd64
-
-RUN apk --no-cache add ca-certificates tzdata
-
-ENTRYPOINT ["/app/otela-amd64"]

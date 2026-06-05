@@ -1,0 +1,28 @@
+{
+  "run_id": "test-run",
+  "N": 3,
+  "rep": 0,
+  "job_id": "JOB1",
+  "started_at": "2026-05-13T08:00:00Z",
+  "finished_at": "2026-05-13T08:01:00Z",
+  "nodes": [
+    {"task_id": 0, "host": "eu-1", "peer_id": "12D3K_a", "role": "coordinator"},
+    {"task_id": 1, "host": "eu-2", "peer_id": "12D3K_b", "role": "observer"},
+    {"task_id": 2, "host": "eu-3", "peer_id": "12D3K_c", "role": "observer"}
+  ],
+  "clock_offsets_ns": {
+    "start": {"eu-1": 100, "eu-2": 200, "eu-3": -300},
+    "end":   {"eu-1": 110, "eu-2": 210, "eu-3": -290}
+  },
+  "stabilization": {"warmup_at_ns": 0, "stable_at_ns": 1000000, "duration_ms": 1},
+  "writes": [
+    {
+      "seq": 0,
+      "writer_task_id": 0,
+      "service_name": "convbench-w-test-run-s0-0",
+      "t_write_ns": 1000000000,
+      "seen": {"1": 1000200000, "2": "TIMEOUT"}
+    }
+  ],
+  "flags": []
+}

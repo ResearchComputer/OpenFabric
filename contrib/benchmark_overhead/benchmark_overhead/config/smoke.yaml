@@ -1,0 +1,23 @@
+# Smoke-test sweep — single model, low RPS, short duration. Use this to
+# validate end-to-end before kicking off the full sweep in default.yaml.
+head_url: http://148.187.108.172:8092
+models:
+  - name: Qwen/Qwen3-1.7B
+    gres: gpu:1
+    tp_size: 1
+arrival_rates_rps: [4]
+paths: [direct, otela]
+duration_s: 30
+warmup_s: 10
+repetitions: 1
+sharegpt_path: ~/datasets/sharegpt.json
+slurm:
+  partition: debug
+  account: a-infra02
+  time_limit: 00:30:00
+  bench_state_dir: /iopsstor/scratch/cscs/xyao/.opentela-bench
+  env_file: /capstor/store/cscs/swissai/infra02/xyao/envs/vllm-clariden.toml
+otela:
+  # Path inside the Pyxis container — /iopsstor/.../bin is mounted as /ocfbin.
+  binary_path: /ocfbin/otela-bench-arm
+  bootstrap_url: http://148.187.108.172:8092/v1/dnt/bootstraps

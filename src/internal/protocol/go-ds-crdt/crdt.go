@@ -608,6 +608,23 @@ func (store *Datastore) repair(ctx context.Context) {
 	}
 }
 
+// RebroadcastHeads broadcasts all current heads unconditionally, ignoring the
+// seenHeads filter. Use this to force peers to pull any state they are missing.
+func (store *Datastore) RebroadcastHeads(ctx context.Context) error {
+	heads, _, err := store.heads.List(ctx)
+	if err != nil {
+		return err
+	}
+	if len(heads) == 0 {
+		return nil
+	}
+	err = store.broadcast(ctx, heads)
+	store.seenHeadsMux.Lock()
+	store.seenHeads = make(map[cid.Cid]struct{})
+	store.seenHeadsMux.Unlock()
+	return err
+}
+
 // regularly send out a list of heads that we have not recently seen
 func (store *Datastore) rebroadcastHeads(ctx context.Context) {
 	// Get our current list of heads

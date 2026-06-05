@@ -72,8 +72,10 @@ func getGlobalTransport() *http.Transport {
 			ResponseHeaderTimeout: 10 * time.Minute, // Allow up to 10 minutes for response headers
 			IdleConnTimeout:       60 * time.Second, // Keep connections alive for 60 seconds
 			DisableKeepAlives:     false,            // Enable keep-alives for better performance
-			MaxIdleConns:          512,              // Support large peer sets
-			MaxIdleConnsPerHost:   4,                // Limit per-host to avoid head-of-line blocking
+			MaxIdleConns:          1024,             // Support large peer sets
+			MaxIdleConnsPerHost:   64,               // Larger pool so bursty per-peer forwards don't
+			//                                          have to open fresh libp2p streams (gostream.Dial
+			//                                          over a relay circuit is non-trivial).
 		}
 		globalTransport.RegisterProtocol("libp2p", newLibp2pHTTPRoundTripper(node))
 	})
@@ -148,6 +150,7 @@ func P2PForwardHandler(c *gin.Context) {
 
 // ServiceHandler
 func ServiceForwardHandler(c *gin.Context) {
+	st := newStageTimer()
 	serviceName := c.Param("service")
 	requestPath := c.Param("path")
 	service, err := protocol.GetService(serviceName)
@@ -167,6 +170,8 @@ func ServiceForwardHandler(c *gin.Context) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
 	}
+	st.Mark("local_proxy")
+
 	proxy := httputil.NewSingleHostReverseProxy(&target)
 	proxy.Director = director
 	// Use global transport here too if we want pooling to external HTTP services,
@@ -176,6 +181,12 @@ func ServiceForwardHandler(c *gin.Context) {
 	// Ideally we separate p2p transport from standard http transport, OR register protocols on one.
 	// Our getGlobalTransport() has registered libp2p, so it works for both (http falls back to standard).
 	proxy.Transport = getGlobalTransport()
+
+	proxy.ModifyResponse = func(r *http.Response) error {
+		st.Mark("sglang_ttft")
+		setWorkerTimingHeader(st, r)
+		return nil
+	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
@@ -369,11 +380,13 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	// Always buffer the request body so transport-level failures can retry
 	// against a different worker. The retry loop replays bodyBytes on each
 	// attempt.
+	st := newStageTimer()
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	st.Mark("head_recv")
 	c.Request = c.Request.WithContext(ctx)
 
 	// matchBody is used *only* by selectCandidates to pick the identity group.
@@ -408,6 +421,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	fallbackLevel := parseFallbackLevel(c.GetHeader("X-Otela-Fallback"))
 
 	candidates := selectCandidates(providers, serviceName, matchBody, fallbackLevel)
+	st.Mark("head_dnt")
 	routingFallbackTotal.WithLabelValues(serviceName, strconv.Itoa(fallbackLevel)).Inc()
 	if len(candidates) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No provider found for the requested service."})
@@ -479,6 +493,9 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			targetPeer = remaining[lb.Pick(remaining)]
 		}
 		excluded[targetPeer] = true
+		if attempt == 0 {
+			st.Mark("head_peer_select")
+		}
 
 		// Clone request — ReverseProxy mutates URL, Host, X-Forwarded-*
 		attemptReq := c.Request.Clone(ctx)
@@ -507,12 +524,17 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 			target = url.URL{Scheme: "libp2p", Host: relayPeer, Path: relayPath}
 		}
 
-		rw := newRetryableResponseWriter(c.Writer, isStreaming, maxBuffer)
+		// Wrap c.Writer with a first-byte marker so we can measure the head's
+		// response-startup cost (time from ModifyResponse → first body byte on
+		// the wire to client). The marker fires inside retryableResponseWriter's
+		// passthrough Write path, so it captures the real first-write moment.
+		fbw := newFirstByteMarker(c.Writer, st, "head_first_byte_sent")
+		rw := newRetryableResponseWriter(fbw, isStreaming, maxBuffer)
 
 		director := func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Path = target.Path
-			req.URL.Host = req.Host
+			req.URL.Host = target.Host
 			req.Host = target.Host
 			if clientWallet != "" {
 				req.Header.Set("X-Otela-Client-Wallet", clientWallet)
@@ -535,6 +557,11 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 		capturedPeer := targetPeer
 		proxy.ModifyResponse = func(r *http.Response) error {
+			st.Mark("head_p2p_to_worker_first_byte")
+			mergeWorkerTiming(st, r)
+			if hv := st.Header(); hv != "" {
+				r.Header.Set("Server-Timing", hv)
+			}
 			if err := rewriteHeader()(r); err != nil {
 				return err
 			}
@@ -557,6 +584,21 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		lb.OnRequestStart(targetPeer)
 		proxy.ServeHTTP(rw, attemptReq)
 		lb.OnRequestEnd(targetPeer)
+
+		// Surface the measured "head response startup" duration to the client
+		// as an SSE-comment line appended after the worker's body. Trailers
+		// would be the HTTP-idiomatic choice but Python HTTP clients (httpx,
+		// aiohttp ≤ 3.13) don't expose trailers, so we use a comment line
+		// (lines starting with `:` are no-ops in SSE consumers) carrying the
+		// timing for bench-side parsing. Streamed responses only.
+		if isStreaming && rw.headersSent {
+			if d, ok := fbw.Duration(); ok {
+				fmt.Fprintf(c.Writer, ": otela-head-first-byte=%.3f\n\n", d)
+				if f, ok := c.Writer.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+		}
 
 		if rw.isRetryable() {
 			routingRetriesTotal.WithLabelValues(serviceName, strconv.Itoa(attempt+1)).Inc()

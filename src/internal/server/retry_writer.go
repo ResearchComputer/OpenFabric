@@ -166,3 +166,52 @@ func (rw *retryableResponseWriter) flushToClient() {
 		rw.underlying.Write(rw.body.Bytes()) //nolint:errcheck
 	}
 }
+
+// firstByteMarker wraps an http.ResponseWriter and fires a stageTimer Mark
+// the first time a non-empty Write hits the wrapped writer. This measures
+// the head's "response startup" cost: time from when ModifyResponse fires
+// (worker headers arrived at head) to when the head actually puts the
+// first response byte on the outbound socket to the client.
+//
+// The measured duration (ms) is exposed via Duration() so the proxy
+// handler can stash it in a response trailer for the client to read.
+type firstByteMarker struct {
+	http.ResponseWriter
+	flusher http.Flusher
+	st      *stageTimer
+	name    string
+	fired   bool
+	durMs   float64
+}
+
+func newFirstByteMarker(w http.ResponseWriter, st *stageTimer, name string) *firstByteMarker {
+	var f http.Flusher
+	if fl, ok := w.(http.Flusher); ok {
+		f = fl
+	}
+	return &firstByteMarker{ResponseWriter: w, flusher: f, st: st, name: name}
+}
+
+func (m *firstByteMarker) Write(b []byte) (int, error) {
+	if !m.fired && len(b) > 0 {
+		m.st.Mark(m.name)
+		if n := len(m.st.stages); n > 0 {
+			m.durMs = m.st.stages[n-1].ms
+		}
+		m.fired = true
+	}
+	return m.ResponseWriter.Write(b)
+}
+
+func (m *firstByteMarker) Flush() {
+	if m.flusher != nil {
+		m.flusher.Flush()
+	}
+}
+
+// Duration returns the measured ms between the previous stageTimer Mark and
+// the first non-empty Write to the underlying writer. ok=false if Write was
+// never called (e.g. transport error before any body bytes).
+func (m *firstByteMarker) Duration() (float64, bool) {
+	return m.durMs, m.fired
+}

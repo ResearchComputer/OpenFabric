@@ -1,0 +1,30 @@
+head_url: http://148.187.108.172:8092
+models:
+  - name: Qwen/Qwen3-1.7B
+    gres: gpu:1
+    tp_size: 1
+  - name: Qwen/Qwen3-32B
+    gres: gpu:1
+    tp_size: 1
+arrival_rates_rps: [1, 4, 16, 64]
+paths: [direct, otela]
+duration_s: 120
+warmup_s: 30
+repetitions: 3
+sharegpt_path: ~/datasets/sharegpt.json
+# Fixed-length workload removes prompt and output variance — every request
+# hits the worker with an identical prompt and exactly N output tokens.
+# Drop the `workload:` block to fall back to ShareGPT random sampling.
+workload:
+  kind: fixed
+  input_tokens: 256
+  output_tokens: 128
+slurm:
+  partition: debug
+  account: a-infra02
+  time_limit: 01:30:00
+  bench_state_dir: /iopsstor/scratch/cscs/xyao/.opentela-bench
+  env_file: /capstor/store/cscs/swissai/infra02/xyao/envs/vllm-clariden.toml
+otela:
+  binary_path: /ocfbin/otela-bench-arm
+  bootstrap_url: http://148.187.108.172:8092/v1/dnt/bootstraps

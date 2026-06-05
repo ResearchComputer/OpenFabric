@@ -91,14 +91,27 @@ func RegisterLocalServices() {
 		return
 	}
 	identityGroup := viper.GetStringSlice("service.identity_group")
-	service := Service{
-		Name:          serviceName,
+	RegisterAdHocService(serviceName, servicePort, identityGroup)
+}
+
+// RegisterAdHocService injects a synthetic service entry into the local
+// CRDT-published service list, bypassing the health-check loop used by
+// RegisterLocalServices. Intended for benchmarking/admin use only.
+//
+// Safe to call before the CRDT store is ready: addLocalService only
+// touches in-memory state, and provideService is a no-op if the global
+// host/store are nil (returns inside GetCRDTStore -> sync.Once skipped).
+// In normal operation the admin route is only mounted after StartServer
+// has initialized both, so the CRDT publish path will run.
+func RegisterAdHocService(name, port string, identityGroup []string) {
+	svc := Service{
+		Name:          name,
 		Status:        "connected",
 		Host:          "localhost",
-		Port:          servicePort,
+		Port:          port,
 		IdentityGroup: identityGroup,
 	}
-	provideService(service)
+	provideService(svc)
 }
 
 func healthCheckRemote(port string, maxTries int) error {
@@ -173,6 +186,14 @@ func provideService(service Service) {
 	if err != nil {
 		common.Logger.Debug("Error while providing service: ", err)
 	}
+}
+
+// ResetLocalServicesForTest is intended for tests that need a clean slate.
+// It is exported only so that test files in other packages can call it.
+func ResetLocalServicesForTest() {
+	localServicesLock.Lock()
+	defer localServicesLock.Unlock()
+	localServices = nil
 }
 
 // ReannounceLocalServices re-publishes this node's service entry, used after reconnects.

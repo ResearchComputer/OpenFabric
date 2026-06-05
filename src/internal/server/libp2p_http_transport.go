@@ -58,8 +58,9 @@ func newLibp2pHTTPRoundTripper(h host.Host) *libp2pHTTPRoundTripper {
 			return gostream.Dial(dialCtx, h, pid, p2phttp.DefaultP2PProtocol)
 		},
 		DisableKeepAlives:     false,
-		MaxIdleConns:          256,
-		MaxIdleConnsPerHost:   4,
+		MaxIdleConns:          1024,
+		MaxIdleConnsPerHost:   64, // Bursty concurrent forwards to one worker reuse pooled
+		//                            libp2p streams instead of triggering gostream.Dial each time.
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Minute,
 	}
