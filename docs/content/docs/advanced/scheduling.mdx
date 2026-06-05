@@ -176,6 +176,10 @@ make build
 
 For score-based selection specifically, the **weighted routing** path is the intended extension point: `scoreCandidates` currently returns a uniform weight of `1.0` for every peer, and `weightedRandomSelect` already turns weights into a proportional choice. Replace the body of `scoreCandidates` with your scoring (e.g. weight by free GPU memory or inverse of recent latency), then enable `scalability.weighted_routing`.
 
+### Integrating a policy from the literature
+
+Because the policy logic is decoupled from the request mechanics, adopting an algorithm from a paper is a localized change: you implement one small interface and read whatever signals you need from the node table, leaving identity-group matching, trust filtering, retries, and relaying untouched. Take [Helix](https://arxiv.org/abs/2406.01566) (*Serving LLMs over Heterogeneous GPUs and Network via Max-Flow*), which routes each request along a path chosen by a max-flow plan over a graph of heterogeneous GPUs and network links. Its two halves land naturally on the two layers described here — the per-request "send this request along this path" decision becomes a `LoadBalancer` whose `Pick` (or a custom `scoreCandidates`) consults the precomputed flow plan, reading each candidate's hardware and load via `protocol.GetPeerFromTable`, while the "which GPU holds which model" placement decision is fleet-level scheduling (Section 3). The hard part — building the capacity graph and solving the optimization — stays inside your policy and is refreshed on whatever cadence you choose; OpenTela only ever asks it for an index. The research contribution lives in roughly one file, and the surrounding routing pipeline is reused unchanged.
+
 ---
 
 ## 3. Fleet-level scheduling (custom orchestration)
