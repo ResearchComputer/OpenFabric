@@ -471,6 +471,20 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	requestPath = "/v1/_service/" + serviceName + requestPath
 	clientWallet := resolveClientWallet(c)
 
+	// Resolve the model dimension once for analytics (OpenAI body field, with
+	// identity-group header fallback). Empty when analytics is disabled.
+	analyticsModel := ""
+	if getAnalytics() != nil {
+		if mv, _, _, mErr := jsonparser.Get(bodyBytes, "model"); mErr == nil {
+			analyticsModel = string(mv)
+		}
+		if analyticsModel == "" {
+			if ig := c.GetHeader("X-Otela-Identity-Group"); strings.HasPrefix(ig, "model=") {
+				analyticsModel = strings.TrimPrefix(ig, "model=")
+			}
+		}
+	}
+
 	// Load balancer configured via the lb-policy flag (random, round-robin,
 	// shortest-queue). Used for peer selection on the non-weighted path and to
 	// track in-flight requests per peer for queue-aware policies.
@@ -581,9 +595,11 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		// Track the in-flight request for queue-aware policies. ServeHTTP is
 		// synchronous (blocks until the response, including streaming, is
 		// complete), so the peer is considered busy for its whole duration.
+		conc := getAnalytics().Begin(serviceName, analyticsModel, targetPeer)
 		lb.OnRequestStart(targetPeer)
 		proxy.ServeHTTP(rw, attemptReq)
 		lb.OnRequestEnd(targetPeer)
+		getAnalytics().End(serviceName, analyticsModel, targetPeer)
 
 		// Surface the measured "head response startup" duration to the client
 		// as an SSE-comment line appended after the worker's body. Trailers
@@ -617,6 +633,9 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		status := strconv.Itoa(c.Writer.Status())
 		routingRequestsTotal.WithLabelValues(serviceName, status).Inc()
 		routingRequestDuration.WithLabelValues(serviceName).Observe(time.Since(routingStart).Seconds())
+		if rec := getAnalytics(); rec != nil {
+			rec.Observe(buildProxySample(serviceName, analyticsModel, targetPeer, rw, st, conc, time.Since(routingStart)))
+		}
 		return
 	}
 

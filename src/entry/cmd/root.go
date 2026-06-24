@@ -67,6 +67,12 @@ func init() {
 	_ = viper.BindPFlag("admin.enabled", startCmd.Flags().Lookup("admin.enabled"))
 	_ = viper.BindPFlag("admin.port", startCmd.Flags().Lookup("admin.port"))
 	_ = viper.BindPFlag("admin.bind", startCmd.Flags().Lookup("admin.bind"))
+	startCmd.Flags().Bool("analytics.enabled", false, "Enable PostHog performance analytics (head node)")
+	startCmd.Flags().String("analytics.posthog_api_key", "", "PostHog project API key")
+	startCmd.Flags().String("analytics.posthog_host", "https://us.i.posthog.com", "PostHog ingestion host (cloud US/EU or self-hosted)")
+	_ = viper.BindPFlag("analytics.enabled", startCmd.Flags().Lookup("analytics.enabled"))
+	_ = viper.BindPFlag("analytics.posthog_api_key", startCmd.Flags().Lookup("analytics.posthog_api_key"))
+	_ = viper.BindPFlag("analytics.posthog_host", startCmd.Flags().Lookup("analytics.posthog_host"))
 	rootcmd.AddCommand(initCmd)
 	rootcmd.AddCommand(startCmd)
 	rootcmd.AddCommand(versionCmd)
@@ -114,6 +120,14 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetDefault("billing.value_threshold", 10000000) // lamports
 	viper.SetDefault("billing.max_interval_minutes", 60)
 	viper.SetDefault("billing.dispute_threshold_pct", 10)
+
+	// Analytics (PostHog) — opt-in, disabled by default
+	viper.SetDefault("analytics.enabled", false)
+	viper.SetDefault("analytics.posthog_api_key", "")
+	viper.SetDefault("analytics.posthog_host", "https://us.i.posthog.com")
+	viper.SetDefault("analytics.flush_interval_seconds", 60)
+	viper.SetDefault("analytics.parse_usage_body", true)
+	viper.SetDefault("analytics.max_latency_samples", 512)
 
 	viper.SetDefault("role", "worker")
 	viper.SetDefault("security.require_signed_binary", true)

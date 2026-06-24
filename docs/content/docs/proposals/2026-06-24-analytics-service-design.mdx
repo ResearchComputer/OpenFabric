@@ -1,0 +1,242 @@
+---
+title: Analytics Service — head-node performance analytics to PostHog
+description: Design for a head-node analytics module that emits periodic per-model performance rollups (GPU usage, concurrency, input/output and cache-hit ratios, latency) to PostHog.
+---
+
+**Date:** 2026-06-24
+**Status:** Draft
+**Author:** Claude
+
+## Overview
+
+`internal/analytics` is a head-node module that observes every request the
+dispatcher forwards and emits **periodic, aggregated performance rollups** to
+[PostHog](https://posthog.com/docs). It answers operational questions about the
+inference fleet: which GPUs are serving each model, how many concurrent requests
+each model/worker is handling, the input/output token ratio, the prefix-cache
+hit ratio, and latency distributions.
+
+It is **opt-in and disabled by default** (`analytics.enabled=false`), mirroring
+the existing `billing.*` and `metrics.*` feature flags. When disabled it adds no
+runtime cost. When enabled it never blocks or slows request serving: observation
+is a non-blocking in-memory update, and all network I/O to PostHog happens on a
+background flush goroutine via the PostHog SDK's async batched client.
+
+It complements — does not replace — the existing telemetry: Prometheus
+(`internal/metrics`) for time-series scraping/alerting, Axiom
+(`internal/server/tracer.go`) for request tracing, and `internal/usage` for
+billing-grade dual-attestation. PostHog is chosen here for turnkey
+product-analytics dashboards (trends, breakdowns, group analytics) without
+standing up Grafana, with **per-model** aggregation as the primary lens.
+
+## Goals
+
+- **Per-model performance rollups** — one PostHog event per `(model, worker)`
+  per flush window, grouped by `model` via PostHog group analytics so dashboards
+  aggregate per model with worker/provider/GPU as filterable breakdowns.
+- **The three focus metrics** — (1) which GPUs each model's engine is using,
+  (2) concurrent requests in flight, (3) input/output token ratio — plus
+  prefix-cache hit ratio and latency percentiles as closely related signals.
+- **Head-node only** — capture entirely at the dispatcher from data it already
+  sees (response headers, buffered response body, node-table hardware specs). No
+  new worker-side code, no PostHog deployed on workers.
+- **Low event volume / cost** — periodic rollups, not per-request events.
+- **Zero impact on the request path** — observation is a cheap, non-blocking
+  map update; PostHog failures are swallowed by the async SDK.
+
+## Non-Goals
+
+- Per-request events in PostHog (rejected for volume/cost; rollups only).
+- Worker-side GPU/engine snapshots emitted directly from workers.
+- Replacing Prometheus, Axiom, or the usage/billing system.
+- Streaming (SSE) input/output token split in v1 (see Token Capture).
+
+## Decisions
+
+These were settled during design and are fixed for v1:
+
+| Decision | Choice |
+|---|---|
+| Capture point | Head node (dispatcher) request events |
+| Emission model | Periodic aggregated rollups (no per-request events) |
+| PostHog grouping | Group analytics, group type = `model` |
+| Token in/out source | Parse OpenAI `usage` object from response body |
+| Cached tokens | Captured from `usage.prompt_tokens_details.cached_tokens` |
+| Event name | `node_perf_rollup` |
+| Streaming token split | Deferred to a later iteration (count/latency/concurrency still captured) |
+| PostHog client | Official `github.com/posthog/posthog-go` SDK |
+
+## Architecture & Data Flow
+
+```
+proxy_handler.go (GlobalServiceForwardHandler)
+  ├─ on attempt dispatch:  Recorder.Begin(service,model,worker) → inflight++, sample concurrency, t0
+  └─ in ModifyResponse:    build Sample{...} → Recorder.Observe(sample); defer inflight--
+                                   │
+                    internal/analytics.Recorder
+                      ├─ Aggregator  (in-mem, keyed by (service,model,worker_peer))
+                      │     accumulates: counts, error count, token sums, gpu_ms,
+                      │     latency reservoir, ttft reservoir, concurrency samples
+                      ├─ flush ticker (analytics.flush_interval_seconds, default 60s)
+                      │     → build one PostHog event per (model,worker) per window → Sink
+                      └─ Sink (interface)  ──► posthog-go async batched HTTP
+```
+
+`Observe` is a non-blocking map update guarded by a mutex; it never touches the
+network. If `analytics.enabled=false` the recorder is `nil` and both `Begin` and
+`Observe` are no-ops (a single nil check). PostHog send failures are handled by
+the SDK's async client and never propagate to request serving.
+
+## Components
+
+Each unit has one purpose, a small interface, and is testable in isolation with
+a fake `Sink` (no network).
+
+- **`recorder.go`** — `Recorder` is the public seam used by the proxy:
+  `Begin(service, model, workerPeer) ConcurrencySnapshot`, `Observe(Sample)`,
+  and `Stop()`. Owns the per-key in-flight counters (concurrency) and the flush
+  ticker goroutine. Holds the `Aggregator` and the `Sink`.
+- **`aggregator.go`** — In-memory buckets keyed by `(service, model,
+  worker_peer)`. Accumulates sums/counts and bounded latency/ttft reservoirs.
+  `Flush()` snapshots and resets all buckets, returning `[]Rollup`.
+- **`rollup.go`** — Pure function mapping a `Rollup` snapshot to a PostHog event
+  (distinct_id, `$groups`, properties). No side effects; trivially unit-tested.
+- **`sink.go`** — `Sink` interface (`Enqueue(Event)`, `Close()`), a posthog-go
+  implementation, and a `fakeSink` capturing events in memory for tests.
+- **`usage_parse.go`** — Parses the OpenAI-compatible `usage` object out of a
+  response body (`prompt_tokens`, `completion_tokens`, `total_tokens`,
+  `prompt_tokens_details.cached_tokens`). Tolerant of absence/malformed JSON.
+- **`config.go`** — Typed load of the `analytics.*` Viper keys with validation
+  (enabled-but-no-key ⇒ disabled + warning).
+
+## Event Schema
+
+One event per `(model, worker)` per flush window.
+
+- **Event name:** `node_perf_rollup`
+- **distinct_id:** head node `peer_id`
+- **`$groups`:** `{ "model": "<model>" }` (PostHog group analytics)
+
+| Property | Source |
+|---|---|
+| `model`, `service` | identity group of the served request |
+| `worker_peer_id`, `provider_id` | serving peer |
+| `gpu_model`, `gpu_count` | serving `Peer.Hardware.GPUs[]` via node table |
+| `head_peer_id`, `window_seconds` | local context |
+| `request_count`, `error_count`, `requests_per_second` | throughput |
+| `concurrency_avg`, `concurrency_max` | in-flight sampled at dispatch |
+| `input_tokens_sum`, `output_tokens_sum`, `cached_tokens_sum`, `total_tokens_sum` | token sums |
+| `gpu_ms_sum` | `X-Usage-GPU-Ms` header |
+| `io_ratio` | `output_tokens_sum / input_tokens_sum` |
+| `cache_hit_ratio` | `cached_tokens_sum / input_tokens_sum` |
+| `latency_ms_p50/p95/avg` | head-observed end-to-end |
+| `ttft_ms_p50/p95` | existing `head_p2p_to_worker_first_byte` timing mark |
+
+> **Note:** TTFT (`ttft_ms_*`) is only populated when `observability.timing_headers=true`; otherwise it is 0.
+
+Percentiles are computed from a bounded reservoir (default 512 samples/key) so
+memory stays bounded regardless of request volume. Ratios are computed from
+window sums (not averaged per-request) so they are not skewed by tiny requests.
+
+## Token Capture (input / output / cached)
+
+The only token header today is `X-Usage-Tokens` (total); there is no prompt vs
+completion split, so the split is parsed from the response body.
+
+- **Non-streaming:** the head already buffers the full response for transparent
+  retry (`routing.max_response_buffer_bytes`). The parser reads the OpenAI
+  `usage` object from that **existing** buffer — no extra copy and no new
+  buffering. Missing/partial fields are tolerated (the corresponding sums simply
+  do not advance). Gated by `analytics.parse_usage_body` (default `true`) and
+  only attempted for JSON responses.
+- **Streaming (SSE):** v1 captures `request_count`, latency, ttft, concurrency,
+  and `gpu_ms` (header) but **skips** the token split unless a usage chunk is
+  already present in the stream. We will **not** add buffering that would break
+  streaming. Covering streaming (e.g. by injecting
+  `stream_options.include_usage`) is a documented later iteration.
+
+`gpu_ms_sum` continues to come from the `X-Usage-GPU-Ms` response header via the
+same extraction `internal/usage` already uses.
+
+## Configuration
+
+All keys live in the `analytics.*` namespace with defaults registered in
+`entry/cmd/root.go` (alongside `billing.*`/`metrics.*`). Off by default.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `analytics.enabled` | `false` | master switch |
+| `analytics.posthog_api_key` | `""` | project API key (also `OF_ANALYTICS_POSTHOG_API_KEY`) |
+| `analytics.posthog_host` | `https://us.i.posthog.com` | cloud US/EU or self-hosted endpoint |
+| `analytics.flush_interval_seconds` | `60` | rollup window length |
+| `analytics.parse_usage_body` | `true` | parse response `usage` for in/out/cached split |
+| `analytics.max_latency_samples` | `512` | reservoir size per aggregation key |
+
+If `analytics.enabled=true` but `posthog_api_key` is empty, the module logs a
+warning and stays disabled — the same guard pattern as the Axiom
+`AXIOM_DATASET`-empty check in `internal/server/tracer.go`.
+
+## Lifecycle
+
+The recorder is constructed in `StartServer()` (`internal/server/server.go`)
+when `analytics.enabled` is set, immediately after the other opt-in background
+components. The flush ticker runs until shutdown. On `ctx.Done()`, the existing
+graceful-shutdown block calls `Recorder.Stop()`, which flushes the final window
+and calls the SDK's `Close()` to drain its buffer before the process exits.
+
+## Integration Points
+
+- **`entry/cmd/root.go`** — register `analytics.*` defaults and CLI flags
+  (`--analytics.enabled`, `--analytics.posthog_api_key`, …), bound via
+  `viper.BindPFlag`.
+- **`internal/server/server.go`** — construct/start the recorder on enable;
+  `Stop()` it in graceful shutdown.
+- **`internal/server/proxy_handler.go`** — in `GlobalServiceForwardHandler`:
+  call `Recorder.Begin(...)` once a peer is selected (captures `t0` from the
+  existing `stageTimer` and an in-flight concurrency sample); in
+  `ModifyResponse`, build the `Sample` (status, latency, ttft from timing marks,
+  `gpu_ms` from header, parsed token split if buffered JSON, resolved
+  `gpu_model`/`gpu_count` from the node table) and call `Recorder.Observe(...)`;
+  `defer` the in-flight decrement when the response completes.
+
+## Error Handling
+
+- **Request path is sacrosanct.** `Begin`/`Observe` never return errors that can
+  affect serving; they update memory under a mutex and return. Any panic in the
+  analytics path is recovered and logged, never propagated to the proxy.
+- **PostHog unreachable.** The async SDK retries and ultimately drops events;
+  rollups for an unreachable window are lost (acceptable for analytics). No
+  back-pressure on the request path or the flush ticker.
+- **Malformed/absent `usage`.** The parser returns zero values; token sums and
+  derived ratios simply do not advance for that request.
+- **Missing hardware spec.** If the serving peer has no `Hardware.GPUs`,
+  `gpu_model`/`gpu_count` are emitted as empty/0 rather than blocking the event.
+- **Enabled without key.** Disabled with a warning at startup.
+- **All-workers-unreachable 502.** Requests where ALL workers are unreachable (the final 502 path) do not produce an analytics rollup event — they remain visible in the Prometheus `routingRequestsTotal{status="502"}` metric. Only responses returned by a worker (including 4xx/5xx) are counted in a rollup's `error_count`.
+
+## Testing (TDD)
+
+Unit tests use a `fakeSink` and never hit the network:
+
+- **usage_parse** — valid usage with and without `prompt_tokens_details`,
+  malformed JSON, missing `usage`, streaming body (skipped), large values.
+- **aggregator** — accumulation across keys, reservoir percentile correctness,
+  ratio computation from sums, reset-on-flush, bounded memory under many samples.
+- **rollup** — correct event name, `distinct_id`, `$groups`, and the full
+  property set for a known snapshot.
+- **config** — defaults, env override, enabled-but-no-key ⇒ disabled+warning.
+- **recorder** — `Begin`/`Observe` no-op when disabled; concurrency
+  inc/dec/max tracking; flush emits exactly one event per `(model, worker)`.
+
+The proxy hook itself is exercised by extending the existing
+`internal/server` proxy tests to assert that an enabled recorder receives one
+`Observe` per forwarded request and that a disabled recorder is untouched.
+
+## Open Questions / Future Work
+
+- **Streaming in/out split** — inject `stream_options.include_usage` or parse
+  the terminal SSE usage chunk to extend the in/out ratio to streaming requests.
+- **PostHog group properties** — optionally `GroupIdentify` each `model` group
+  with static metadata (param count, context length) for richer dashboards.
+- **Reasoning tokens** — capture `completion_tokens_details.reasoning_tokens`
+  for reasoning models if/when relevant.
