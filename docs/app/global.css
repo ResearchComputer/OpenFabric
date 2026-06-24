@@ -1,3 +1,47 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+
+/* OpenTela — Emerald accent (sglang "aspen"-inspired theme) */
+:root {
+  --color-fd-primary: #059669; /* emerald-600 */
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #059669;
+}
+
+.dark {
+  --color-fd-primary: #34d399; /* emerald-400 */
+  --color-fd-primary-foreground: #022c22; /* emerald-950 */
+  --color-fd-ring: #34d399;
+}
+
+/* Inter, loaded via next/font in app/layout.tsx */
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', sans-serif;
+}
+
+/* Subtle grid + emerald glow used behind the hero (sglang grid decoration) */
+.grid-bg {
+  background-image: linear-gradient(
+      to right,
+      color-mix(in oklab, var(--color-fd-border) 70%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--color-fd-border) 70%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(
+    ellipse 80% 60% at 50% 0%,
+    #000 35%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 80% 60% at 50% 0%,
+    #000 35%,
+    transparent 100%
+  );
+}

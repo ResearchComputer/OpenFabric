@@ -6,15 +6,15 @@ export function baseOptions(): BaseLayoutProps {
       title: 'OpenTela',
       url: '/',
     },
+    githubUrl: 'https://github.com/eth-easl/OpenTela',
     links: [
       {
         text: 'Docs',
         url: '/docs',
       },
       {
-        text: 'GitHub',
-        url: 'https://github.com/eth-easl/opentela',
-        external: true,
+        text: 'Blog',
+        url: '/docs/blog',
       },
     ],
   };

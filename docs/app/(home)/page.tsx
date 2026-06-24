@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
-const features = [
+const features: { title: string; description: string; icon: ReactNode }[] = [
   {
     title: 'Peer-to-Peer Orchestration',
     description:
@@ -54,55 +55,65 @@ const features = [
   },
 ];
 
-function MeshBackground() {
+const news: { tag: string; title: string; description: string; href: string }[] = [
+  {
+    tag: 'Deployment',
+    title: 'How SwissAI Uses OpenTela for Scalable LLM Serving',
+    description:
+      'How the Swiss AI Initiative leverages OpenTela to serve LLMs on HPC clusters, enabling researchers to access powerful models seamlessly.',
+    href: '/docs/blog/swissai',
+  },
+  {
+    tag: 'Research',
+    title: "Reproducing the Trace Analysis Figures from our OSDI '26 Paper",
+    description:
+      "Artifact guide for the trace-analysis figures in our OSDI '26 paper — find the SwissAI serving trace and regenerate the plots from the OpenTela repository.",
+    href: '/docs/blog/osdi26-trace-artifact',
+  },
+];
+
+const GitHubIcon = (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="size-5">
+    <path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.21 11.19.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.36-1.34-1.73-1.34-1.73-1.09-.73.08-.71.08-.71 1.2.08 1.84 1.21 1.84 1.21 1.07 1.79 2.81 1.27 3.49.97.11-.76.42-1.27.76-1.56-2.67-.3-5.47-1.31-5.47-5.81 0-1.28.47-2.33 1.24-3.15-.12-.3-.54-1.51.12-3.15 0 0 1.01-.32 3.3 1.2a11.6 11.6 0 0 1 3-.4c1.02 0 2.05.13 3 .4 2.29-1.52 3.3-1.2 3.3-1.2.66 1.64.24 2.85.12 3.15.77.82 1.24 1.87 1.24 3.15 0 4.51-2.81 5.5-5.49 5.79.43.36.81 1.08.81 2.18 0 1.58-.01 2.85-.01 3.24 0 .31.21.68.83.56C20.56 21.91 24 17.5 24 12.29 24 5.78 18.63.5 12 .5Z" />
+  </svg>
+);
+
+const community: { label: string; description: string; href: string; external?: boolean; icon: ReactNode }[] = [
+  {
+    label: 'GitHub',
+    description: 'Source, issues & releases',
+    href: 'https://github.com/eth-easl/OpenTela',
+    external: true,
+    icon: GitHubIcon,
+  },
+  {
+    label: 'Documentation',
+    description: 'Guides, tutorials & internals',
+    href: '/docs',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+      </svg>
+    ),
+  },
+  {
+    label: 'SwissAI',
+    description: 'Production deployment',
+    href: 'https://serving.swissai.cscs.ch/',
+    external: true,
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
+      </svg>
+    ),
+  },
+];
+
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <svg
-      className="pointer-events-none absolute inset-0 h-full w-full"
-      viewBox="0 0 800 400"
-      fill="none"
-      preserveAspectRatio="xMidYMid slice"
-    >
-      {/* Nodes */}
-      <circle cx="80" cy="80" r="3" className="fill-fd-primary/20" />
-      <circle cx="200" cy="50" r="4" className="fill-fd-primary/25" />
-      <circle cx="350" cy="90" r="3" className="fill-fd-primary/20" />
-      <circle cx="500" cy="60" r="4" className="fill-fd-primary/25" />
-      <circle cx="650" cy="85" r="3" className="fill-fd-primary/20" />
-      <circle cx="720" cy="45" r="3" className="fill-fd-primary/15" />
-      <circle cx="130" cy="180" r="3" className="fill-fd-primary/20" />
-      <circle cx="300" cy="200" r="4" className="fill-fd-primary/25" />
-      <circle cx="450" cy="170" r="3" className="fill-fd-primary/20" />
-      <circle cx="600" cy="210" r="3" className="fill-fd-primary/20" />
-      <circle cx="750" cy="180" r="4" className="fill-fd-primary/15" />
-      <circle cx="50" cy="300" r="3" className="fill-fd-primary/15" />
-      <circle cx="180" cy="320" r="3" className="fill-fd-primary/20" />
-      <circle cx="400" cy="310" r="4" className="fill-fd-primary/20" />
-      <circle cx="550" cy="330" r="3" className="fill-fd-primary/15" />
-      <circle cx="700" cy="300" r="3" className="fill-fd-primary/15" />
-      {/* Edges */}
-      <line x1="80" y1="80" x2="200" y2="50" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="200" y1="50" x2="350" y2="90" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="350" y1="90" x2="500" y2="60" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="500" y1="60" x2="650" y2="85" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="650" y1="85" x2="720" y2="45" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="80" y1="80" x2="130" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="200" y1="50" x2="300" y2="200" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="350" y1="90" x2="450" y2="170" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="500" y1="60" x2="600" y2="210" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="650" y1="85" x2="750" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="130" y1="180" x2="300" y2="200" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="300" y1="200" x2="450" y2="170" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="450" y1="170" x2="600" y2="210" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="600" y1="210" x2="750" y2="180" className="stroke-fd-primary/10" strokeWidth="0.5" />
-      <line x1="50" y1="300" x2="180" y2="320" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="180" y1="320" x2="400" y2="310" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="400" y1="310" x2="550" y2="330" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="550" y1="330" x2="700" y2="300" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="130" y1="180" x2="180" y2="320" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="300" y1="200" x2="400" y2="310" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="450" y1="170" x2="550" y2="330" className="stroke-fd-primary/8" strokeWidth="0.5" />
-      <line x1="600" y1="210" x2="700" y2="300" className="stroke-fd-primary/8" strokeWidth="0.5" />
-    </svg>
+    <p className="text-sm font-medium uppercase tracking-widest text-fd-muted-foreground">
+      {children}
+    </p>
   );
 }
 
@@ -110,86 +121,72 @@ export default function HomePage() {
   return (
     <main className="flex min-h-dvh flex-col">
       {/* Hero */}
-      <section className="relative flex flex-col items-center justify-center overflow-hidden px-6 pt-24 pb-16 text-center">
-        {/* Gradient blob */}
-        <div className="pointer-events-none absolute -top-32 h-[500px] w-[500px] rounded-full bg-fd-primary/10 blur-[120px]" />
+      <section className="relative overflow-hidden px-6 pt-24 pb-20">
+        {/* Grid background */}
+        <div className="grid-bg pointer-events-none absolute inset-0" />
+        {/* Emerald glow */}
+        <div className="pointer-events-none absolute -top-32 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-fd-primary/10 blur-[120px]" />
 
-        {/* Mesh */}
-        <MeshBackground />
-
-        <div className="relative">
-          <p className="mb-4 text-sm font-medium tracking-widest uppercase text-fd-primary">
-            Decentralized GPU Orchestration
-          </p>
-          <h1 className="mx-auto max-w-3xl text-5xl font-extrabold leading-tight tracking-tight sm:text-6xl">
-            Distribute compute{' '}
-            <span className="bg-gradient-to-r from-fd-primary to-fd-primary/60 bg-clip-text text-transparent">
-              across the mesh
-            </span>
-          </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-lg text-fd-muted-foreground leading-relaxed">
-            OpenTela is a peer-to-peer platform for orchestrating distributed GPU
-            resources.
-          </p>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-            <Link
-              href="/docs"
-              className="rounded-lg bg-fd-primary px-6 py-3 text-sm font-medium text-fd-primary-foreground shadow-lg shadow-fd-primary/20 hover:bg-fd-primary/90 transition-colors"
-            >
-              Get Started
-            </Link>
-            <a
-              href="https://github.com/eth-easl/opentela"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-lg border border-fd-border bg-fd-background px-6 py-3 text-sm font-medium text-fd-foreground hover:bg-fd-muted transition-colors"
-            >
-              GitHub
-            </a>
-          </div>
-        </div>
-
-        {/* Terminal preview */}
-        <div className="relative mt-14 w-full max-w-xl">
-          <div className="overflow-hidden rounded-xl border border-fd-border bg-fd-card shadow-xl shadow-fd-primary/5">
-            <div className="flex items-center gap-2 border-b border-fd-border px-4 py-3">
-              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
-              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
-              <div className="size-3 rounded-full bg-fd-muted-foreground/20" />
-              <span className="ml-2 text-xs text-fd-muted-foreground">terminal</span>
+        <div className="relative mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
+          {/* Slogan */}
+          <div className="text-center lg:text-left">
+            <p className="mb-4 text-sm font-medium tracking-widest uppercase text-fd-primary">
+              Peer-to-peer GPU mesh
+            </p>
+            <h1 className="text-5xl font-extrabold leading-tight tracking-tight sm:text-6xl">
+              Decentralized compute{' '}
+              <span className="bg-gradient-to-r from-fd-primary to-fd-primary/60 bg-clip-text text-transparent">
+                for AI
+              </span>
+            </h1>
+            <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-fd-muted-foreground lg:mx-0">
+              OpenTela pools GPUs across a peer-to-peer network into one
+              OpenAI-compatible endpoint — with no central coordinator.
+            </p>
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-4 lg:justify-start">
+              <Link
+                href="/docs"
+                className="rounded-lg bg-fd-primary px-6 py-3 text-sm font-medium text-fd-primary-foreground shadow-lg shadow-fd-primary/20 transition-colors hover:bg-fd-primary/90"
+              >
+                Get Started
+              </Link>
+              <a
+                href="https://github.com/eth-easl/OpenTela"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg border border-fd-border bg-fd-background px-6 py-3 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-muted"
+              >
+                {GitHubIcon}
+                GitHub
+              </a>
             </div>
-            <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed">
-              {/* <code>
-                <span className="text-fd-primary">$</span>
-                <span className="text-fd-foreground"> curl -fsSL https://get.opentela.dev | sh</span>
-                {'\n'}
-                <span className="text-fd-primary">$</span>
-                <span className="text-fd-foreground"> opentela start --role head</span>
-                {'\n'}
-                <span className="text-fd-muted-foreground">{'  '}Listening on :8080</span>
-                {'\n'}
-                <span className="text-fd-muted-foreground">{'  '}Discovered 12 peers via gossip</span>
-                {'\n'}
-                <span className="text-green-500">{'  '}✓ Mesh ready</span>
-              </code> */}
-            </pre>
+          </div>
+
+          {/* Illustration */}
+          <div className="flex justify-center lg:justify-end">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/hero.png"
+              alt="OpenTela mesh — GPUs and compute nodes connected to a central AI accelerator"
+              width={1005}
+              height={781}
+              className="h-auto w-full max-w-md lg:max-w-lg"
+            />
           </div>
         </div>
       </section>
 
-      {/* Features
-      <section className="mx-auto w-full max-w-6xl px-6 py-20">
-        <h2 className="mb-2 text-center text-sm font-medium tracking-widest uppercase text-fd-muted-foreground">
-          Features
-        </h2>
-        <p className="mx-auto mb-12 max-w-xl text-center text-2xl font-bold tracking-tight">
+      {/* Features */}
+      <section className="mx-auto w-full max-w-6xl px-6 py-16">
+        <SectionLabel>Features</SectionLabel>
+        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
           Everything you need for decentralized inference
         </p>
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
             <div
               key={feature.title}
-              className="group rounded-xl border border-fd-border bg-fd-card p-6 transition-colors hover:border-fd-primary/40 hover:bg-fd-card/80"
+              className="group rounded-xl border border-fd-border bg-fd-card p-6 transition-colors hover:border-fd-primary/40"
             >
               <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
                 {feature.icon}
@@ -201,7 +198,68 @@ export default function HomePage() {
             </div>
           ))}
         </div>
-      </section> */}
+      </section>
+
+      {/* News */}
+      <section className="mx-auto w-full max-w-6xl px-6 py-16">
+        <SectionLabel>News</SectionLabel>
+        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
+          From the OpenTela blog
+        </p>
+        <div className="grid gap-6 sm:grid-cols-2">
+          {news.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="group flex flex-col rounded-xl border border-fd-border bg-fd-card p-6 transition-colors hover:border-fd-primary/40"
+            >
+              <span className="mb-3 inline-flex w-fit rounded-full bg-fd-primary/10 px-3 py-1 text-xs font-medium text-fd-primary">
+                {item.tag}
+              </span>
+              <h3 className="mb-2 font-semibold leading-snug group-hover:text-fd-primary">
+                {item.title}
+              </h3>
+              <p className="text-sm leading-relaxed text-fd-muted-foreground">
+                {item.description}
+              </p>
+              <span className="mt-4 text-sm font-medium text-fd-primary">
+                Read more →
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* Community */}
+      <section className="mx-auto w-full max-w-6xl px-6 py-16">
+        <SectionLabel>Community</SectionLabel>
+        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
+          Get involved
+        </p>
+        <div className="grid gap-6 sm:grid-cols-3">
+          {community.map((item) => (
+            <a
+              key={item.label}
+              href={item.href}
+              target={item.external ? '_blank' : undefined}
+              rel={item.external ? 'noopener noreferrer' : undefined}
+              className="group flex items-center gap-4 rounded-xl border border-fd-border bg-fd-card p-5 transition-colors hover:border-fd-primary/40"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
+                {item.icon}
+              </div>
+              <div>
+                <h3 className="font-semibold group-hover:text-fd-primary">
+                  {item.label}
+                </h3>
+                <p className="text-sm text-fd-muted-foreground">
+                  {item.description}
+                </p>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
 
       {/* Footer */}
       <footer className="mt-auto border-t border-fd-border py-8">
@@ -210,14 +268,17 @@ export default function HomePage() {
             OpenTela &mdash; Open-source decentralized computing
           </p>
           <div className="flex gap-6">
-            <Link href="/docs" className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors">
+            <Link
+              href="/docs"
+              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+            >
               Documentation
             </Link>
             <a
-              href="https://github.com/eth-easl/opentela"
+              href="https://github.com/eth-easl/OpenTela"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               GitHub
             </a>
