@@ -3,6 +3,8 @@
   "pages": [
     "solana-settlement-design",
     "security-hardening",
+    "2026-07-07-token-manager-webapp",
+    "2026-07-07-onchain-reward-protocol",
     "2026-05-02-mesh-bench-design",
     "2026-06-24-analytics-service-design"
   ]

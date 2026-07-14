@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mr-tron/base58"
 )
 
 func TestNewWalletManager(t *testing.T) {
@@ -223,6 +225,168 @@ func TestWalletManagerLoadAccounts(t *testing.T) {
 			t.Errorf("Expected ProviderID %q, got %q", expected, wm.accounts[0].ProviderID)
 		}
 	})
+
+	t.Run("normalizes legacy base64 Solana public key on load", func(t *testing.T) {
+		baseDir := filepath.Join(tempDir, "normalize-solana")
+		if err := os.MkdirAll(baseDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyPublic := base64.StdEncoding.EncodeToString(public)
+		expectedPublic := base58.Encode(public)
+
+		legacyKeypair := filepath.Join(baseDir, accountsDirName, legacyPublic, "keypair.json")
+		if err := os.MkdirAll(filepath.Dir(legacyKeypair), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeSolanaKeypair(legacyKeypair, private); err != nil {
+			t.Fatal(err)
+		}
+
+		accountsFile := filepath.Join(baseDir, "accounts.json")
+		accounts := struct {
+			Accounts []Account `json:"accounts"`
+		}{
+			Accounts: []Account{
+				{
+					Type:       WalletTypeSolana,
+					PublicKey:  legacyPublic,
+					Private:    base64.StdEncoding.EncodeToString(private),
+					FilePath:   legacyKeypair,
+					CreatedAt:  time.Now().UTC(),
+					ProviderID: deriveProviderID(legacyPublic),
+				},
+			},
+		}
+		data, err := json.MarshalIndent(accounts, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(accountsFile, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		wm := &WalletManager{
+			storageDir:  baseDir,
+			storagePath: accountsFile,
+		}
+		if err := wm.loadAccounts(); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(wm.accounts) != 1 {
+			t.Fatalf("Expected 1 account, got %d", len(wm.accounts))
+		}
+		account := wm.accounts[0]
+		if account.PublicKey != expectedPublic {
+			t.Errorf("Expected public key %q, got %q", expectedPublic, account.PublicKey)
+		}
+		if !validSolanaPublicKey(account.PublicKey) {
+			t.Errorf("Expected valid base58 Solana public key, got %q", account.PublicKey)
+		}
+		if account.ProviderID != deriveProviderID(expectedPublic) {
+			t.Errorf("Expected ProviderID %q, got %q", deriveProviderID(expectedPublic), account.ProviderID)
+		}
+
+		expectedPath := filepath.Join(baseDir, accountsDirName, expectedPublic, "keypair.json")
+		if account.FilePath != expectedPath {
+			t.Errorf("Expected keypair path %q, got %q", expectedPath, account.FilePath)
+		}
+		normalizedKeypair, err := os.ReadFile(expectedPath)
+		if err != nil {
+			t.Fatalf("Expected normalized keypair file: %v", err)
+		}
+		parsed, err := parseSolanaKeypairJSON(normalizedKeypair)
+		if err != nil {
+			t.Fatalf("Failed to parse normalized keypair: %v", err)
+		}
+		if got := base58.Encode(parsed.Public().(ed25519.PublicKey)); got != expectedPublic {
+			t.Errorf("Normalized keypair public key %q, want %q", got, expectedPublic)
+		}
+
+		persisted, err := os.ReadFile(accountsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(persisted), legacyPublic) {
+			t.Errorf("Expected persisted account file to drop legacy public key %q", legacyPublic)
+		}
+		if !strings.Contains(string(persisted), expectedPublic) {
+			t.Errorf("Expected persisted account file to include normalized public key %q", expectedPublic)
+		}
+	})
+
+	t.Run("upgrades persisted OCF wallet to Solana on load", func(t *testing.T) {
+		baseDir := filepath.Join(tempDir, "upgrade-ocf")
+		if err := os.MkdirAll(baseDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyPublic := base64.StdEncoding.EncodeToString(public)
+		expectedPublic := base58.Encode(public)
+
+		legacyPath := filepath.Join(baseDir, legacyWalletFile)
+		if err := os.WriteFile(legacyPath, []byte(base64.StdEncoding.EncodeToString(private)), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		accountsFile := filepath.Join(baseDir, "accounts.json")
+		accounts := struct {
+			Accounts []Account `json:"accounts"`
+		}{
+			Accounts: []Account{
+				{
+					Type:       WalletTypeOCF,
+					PublicKey:  legacyPublic,
+					Private:    base64.StdEncoding.EncodeToString(private),
+					FilePath:   legacyPath,
+					CreatedAt:  time.Now().UTC(),
+					ProviderID: deriveProviderID(legacyPublic),
+				},
+			},
+		}
+		data, err := json.MarshalIndent(accounts, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(accountsFile, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		wm := &WalletManager{
+			storageDir:  baseDir,
+			storagePath: accountsFile,
+		}
+		if err := wm.loadAccounts(); err != nil {
+			t.Fatal(err)
+		}
+
+		account := wm.accounts[0]
+		if account.Type != WalletTypeSolana {
+			t.Errorf("Expected account type %s, got %s", WalletTypeSolana, account.Type)
+		}
+		if account.PublicKey != expectedPublic {
+			t.Errorf("Expected public key %q, got %q", expectedPublic, account.PublicKey)
+		}
+		if account.ProviderID != deriveProviderID(expectedPublic) {
+			t.Errorf("Expected ProviderID %q, got %q", deriveProviderID(expectedPublic), account.ProviderID)
+		}
+		expectedPath := filepath.Join(baseDir, accountsDirName, expectedPublic, "keypair.json")
+		if account.FilePath != expectedPath {
+			t.Errorf("Expected keypair path %q, got %q", expectedPath, account.FilePath)
+		}
+		if _, err := os.Stat(expectedPath); err != nil {
+			t.Fatalf("Expected migrated Solana keypair file: %v", err)
+		}
+	})
 }
 
 func TestWalletManagerMigrateLegacyWallet(t *testing.T) {
@@ -279,17 +443,21 @@ func TestWalletManagerMigrateLegacyWallet(t *testing.T) {
 		}
 
 		account := wm.accounts[0]
-		if account.Type != WalletTypeOCF {
-			t.Errorf("Expected account type %s, got %s", WalletTypeOCF, account.Type)
+		if account.Type != WalletTypeSolana {
+			t.Errorf("Expected account type %s, got %s", WalletTypeSolana, account.Type)
 		}
-		if account.PublicKey != base64.StdEncoding.EncodeToString(public) {
+		if account.PublicKey != base58.Encode(public) {
 			t.Error("Public key mismatch after migration")
 		}
 		if account.Private != privateEncoded {
 			t.Error("Private key mismatch after migration")
 		}
-		if account.FilePath != legacyPath {
+		expectedPath := filepath.Join(baseDir, accountsDirName, base58.Encode(public), "keypair.json")
+		if account.FilePath != expectedPath {
 			t.Error("File path mismatch after migration")
+		}
+		if _, err := os.Stat(expectedPath); err != nil {
+			t.Fatalf("Expected migrated Solana keypair file: %v", err)
 		}
 		if account.ProviderID == "" {
 			t.Error("ProviderID should be set after migration")
@@ -453,6 +621,9 @@ func TestWalletManagerAddSolanaAccount(t *testing.T) {
 	}
 	if account.PublicKey == "" {
 		t.Error("Public key should not be empty")
+	}
+	if !validSolanaPublicKey(account.PublicKey) {
+		t.Errorf("Public key should be base58 Solana public key, got %q", account.PublicKey)
 	}
 	if account.Private == "" {
 		t.Error("Private key should not be empty")

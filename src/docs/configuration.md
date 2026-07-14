@@ -63,6 +63,7 @@ in the bootstrap list served by connected peers at `/v1/dnt/bootstraps`.
 |-----|------|---------|-------------|
 | `service.name` | string | `""` | Service to register (e.g., `"llm"`) |
 | `service.port` | string | `""` | Local port the service listens on |
+| `service.health_path` | string | `"/health"` | HTTP path that must return `2xx` before the service is registered |
 
 ### CRDT / State Management
 

@@ -1,10 +1,45 @@
 package protocol
 
 import (
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestNormalizeHealthPath(t *testing.T) {
+	tests := map[string]string{
+		"":         "/health",
+		"   ":      "/health",
+		"status":   "/status",
+		" /ready ": "/ready",
+	}
+	for input, expected := range tests {
+		t.Run(input, func(t *testing.T) {
+			assert.Equal(t, expected, normalizeHealthPath(input))
+		})
+	}
+}
+
+func TestHealthCheckRemote_CustomPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	serverURL, err := url.Parse(server.URL)
+	assert.NoError(t, err)
+	_, port, err := net.SplitHostPort(serverURL.Host)
+	assert.NoError(t, err)
+	assert.NoError(t, healthCheckRemote(port, "/status", 1))
+}
 
 func TestRegisterAdHocService_AddsToLocalServices(t *testing.T) {
 	// Reset package state so test is isolated.

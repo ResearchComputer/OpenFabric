@@ -1,0 +1,217 @@
+---
+title: Register a non-LLM service
+description: Register and route to an already-running HTTP service without using the llm service type or the --subprocess flag.
+---
+
+OpenTela can register any local HTTP service; it does not need to be an LLM, and OpenTela does not need to start the process. The `--subprocess` flag only launches and supervises a child process. It is not required for service registration.
+
+This is useful when the service is already managed by systemd, Docker, Kubernetes, Slurm, or a separate terminal.
+
+## Requirements
+
+The service must:
+
+- run on the same machine as the OpenTela worker;
+- listen on a known local port; and
+- return a `2xx` response from the configured health-check path. The default is `GET /health`.
+
+Use a service name other than `llm`. The name `llm` has special registration behavior: OpenTela queries `/v1/models` and automatically creates `model=<model_id>` identity groups. For every other service name, you configure the identity groups yourself.
+
+## Example: register an existing image service
+
+First, start the service independently of OpenTela. The exact command depends on the service or process manager you use. In this example it listens on port `9000`:
+
+```bash
+image-resizer --listen 127.0.0.1:9000
+```
+
+Before starting the OpenTela worker, verify its health endpoint:
+
+```bash
+curl --fail http://127.0.0.1:9000/health
+```
+
+Add the service to the worker's OpenTela configuration, normally at `~/.config/opentela/cfg.yaml`:
+
+```yaml
+bootstrap:
+  addr: "/ip4/<HEAD_IP>/tcp/43905/p2p/<HEAD_PEER_ID>"
+
+service:
+  name: "image-resizer"
+  port: "9000"
+  health_path: "/health"
+  identity_group:
+    - "format=webp"
+```
+
+Then start OpenTela without `--subprocess`:
+
+```bash
+./otela start --config ~/.config/opentela/cfg.yaml --seed 1
+```
+
+You may override the service name and port with CLI flags while keeping `identity_group` in the configuration file:
+
+```bash
+./otela start \
+  --config ~/.config/opentela/cfg.yaml \
+  --service.name image-resizer \
+  --service.port 9000 \
+  --seed 1
+```
+
+In both forms, omit `--subprocess` because the image service is already running.
+
+OpenTela checks `http://localhost:9000/health`, registers the `image-resizer` service, and forwards matching requests to the already-running process. OpenTela does not manage that process's lifecycle, so your process manager remains responsible for restarts and shutdowns.
+
+## Route a request to the service
+
+Send requests through a head node using the registered service name:
+
+```bash
+curl --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{"format":"webp","source":"https://example.com/image.png"}' \
+  http://<HEAD_IP>:8092/v1/service/image-resizer/resize
+```
+
+The `format=webp` identity group matches the top-level `"format": "webp"` field in the JSON request. OpenTela selects a connected worker with that exact service and identity-group match, then proxies `/resize` to `http://localhost:9000/resize` on that worker.
+
+Identity groups support the following values:
+
+| Configuration | Matches |
+| :--- | :--- |
+| `format=webp` | A JSON body containing `"format": "webp"` |
+| `format=*` | A JSON body containing any `format` value; requires `X-Otela-Fallback: 1` or `2` |
+| `all` | Any request; requires `X-Otela-Fallback: 2` |
+
+Configure at least one identity group. A service with an empty `identity_group` is visible in the node table but is not eligible for global routing through `/v1/service/...`. See [Routing](/docs/tutorial/routing) for exact, wildcard, and catch-all matching behavior.
+
+## Verify registration
+
+Inspect the distributed node table on the head node:
+
+```bash
+curl http://<HEAD_IP>:8092/v1/dnt/table
+```
+
+The worker entry should include:
+
+```json
+{
+  "service": [
+    {
+      "name": "image-resizer",
+      "status": "connected",
+      "host": "localhost",
+      "port": "9000",
+      "identity_group": ["format=webp"]
+    }
+  ]
+}
+```
+
+If the service does not appear, check that `service.name` and `service.port` are set and that `service.health_path` returns a `2xx` response. OpenTela waits and retries the health check until the service becomes available or the startup retry limit is reached.
+
+## Registration modes compared
+
+| Mode | Who starts the service? | Registration metadata |
+| :--- | :--- | :--- |
+| Generic service without `--subprocess` | You or an external process manager | `service.name`, `service.port`, `service.health_path`, and `service.identity_group` from configuration |
+| Generic service with `--subprocess` | OpenTela | The same generic-service configuration |
+| `llm` service | Either you or OpenTela | Models discovered from `/v1/models`; `model=...` identity groups are created automatically |
+
+## Advertise the Flash Sandbox cluster API
+
+[Flash Sandbox](https://github.com/eth-easl/flash-sandbox) runs a public coordinator API and one or more internal worker nodes. Advertise only the coordinator through OpenTela:
+
+| Flash Sandbox process | Default API | OpenTela exposure |
+| :--- | :--- | :--- |
+| Coordinator (`cluster`) | `/sandboxes/...` on port `8080` | Advertise this service |
+| Worker (`node`) | Internal worker API on its own port | Keep internal; do not advertise it |
+
+This keeps scheduling and sandbox ownership inside the Flash Sandbox coordinator. OpenTela routes a request to the coordinator, and the coordinator selects the correct worker for both creation and stateful follow-up requests.
+
+The following commands assume you are in a Flash Sandbox checkout.
+
+### Start the Flash Sandbox cluster
+
+Build the coordinator and worker binaries:
+
+```bash
+make build
+```
+
+`make build` uses Docker. To build with an installed Go toolchain instead, use `make build-local`.
+
+Start the coordinator on port `8080`:
+
+```bash
+./bin/cluster --http-addr :8080
+```
+
+Start at least one worker on a different port and connect it to the coordinator:
+
+```bash
+./bin/node \
+  --http-port 8081 \
+  --coordinator-addr localhost:8080
+```
+
+Confirm that the coordinator sees a healthy worker:
+
+```bash
+curl --fail http://127.0.0.1:8080/status
+```
+
+### Advertise the coordinator through OpenTela
+
+The Flash Sandbox coordinator uses `/status` as its readiness endpoint. Set `service.health_path` so OpenTela checks that endpoint instead of the default `/health`:
+
+```bash
+OF_SERVICE_IDENTITY_GROUP=all otela start \
+  --bootstrap.addr "/ip4/<HEAD_OR_RELAY_IP>/tcp/43905/p2p/<PEER_ID>" \
+  --service.name sandbox \
+  --service.port 8080 \
+  --service.health_path /status
+```
+
+This command deliberately omits `--subprocess`: the Flash Sandbox coordinator and its workers are already running under their own process manager. OpenTela only advertises the coordinator and proxies requests to `localhost:8080`.
+
+The catch-all identity group is appropriate because the cluster API includes `GET` and `DELETE` requests and stateful follow-up calls whose bodies do not share a routing field. Calls through `/v1/service/sandbox/...` must therefore include `X-Otela-Fallback: 2`.
+
+### Use the cluster API through OpenTela
+
+Create a sandbox through the OpenTela head using the coordinator's `/sandboxes` path:
+
+```bash
+export SANDBOX_URL="http://<HEAD_IP>:8092/v1/service/sandbox"
+
+SID=$(curl --fail --silent --show-error \
+  --request POST \
+  --header 'X-Otela-Fallback: 2' \
+  --header 'Content-Type: application/json' \
+  --data '{"type":"docker","image":"alpine:latest","command":["sleep","infinity"]}' \
+  "$SANDBOX_URL/sandboxes" | jq -r .id)
+```
+
+Run a command in it, then clean it up through the same cluster API:
+
+```bash
+curl --fail --silent --show-error \
+  --request POST \
+  --header 'X-Otela-Fallback: 2' \
+  --header 'Content-Type: application/json' \
+  --data '{"command":["echo","hello from OpenTela"]}' \
+  "$SANDBOX_URL/sandboxes/$SID/exec"
+
+curl --fail --silent --show-error \
+  --request DELETE \
+  --header 'X-Otela-Fallback: 2' \
+  "$SANDBOX_URL/sandboxes/$SID?cleanup=true"
+```
+
+Keep one OpenTela provider for each independently stateful Flash Sandbox cluster service. Registering unrelated coordinators under the same `sandbox` name could route a follow-up request to a coordinator that does not own that sandbox. If you advertise multiple independent clusters, give each one a distinct service name.
+
+The example coordinator has no API key. For a production deployment, protect both the OpenTela entrypoint and the Flash Sandbox coordinator. OpenTela's startup health check does not send a Flash Sandbox `X-API-Key`, so the configured health path must remain locally accessible to OpenTela or be exposed through a local authenticated health-check arrangement.

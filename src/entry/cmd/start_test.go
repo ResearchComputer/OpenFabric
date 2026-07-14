@@ -58,7 +58,7 @@ func TestStartCommand(t *testing.T) {
 		},
 		{
 			name:    "start with service configuration",
-			args:    []string{"--service.name=test-service", "--service.port=3000"},
+			args:    []string{"--service.name=test-service", "--service.port=3000", "--service.health_path=/status"},
 			wantErr: false,
 		},
 		{
@@ -106,6 +106,7 @@ func TestStartCommand(t *testing.T) {
 			testCmd.Flags().String("public-addr", "", "Public address")
 			testCmd.Flags().String("service.name", "", "Service name")
 			testCmd.Flags().String("service.port", "", "Service port")
+			testCmd.Flags().String("service.health_path", "/health", "Service health path")
 			testCmd.Flags().String("solana.rpc", defaultConfig.Solana.RPC, "Solana RPC endpoint")
 			testCmd.Flags().String("solana.mint", defaultConfig.Solana.Mint, "SPL token mint")
 			testCmd.Flags().Bool("solana.skip_verification", defaultConfig.Solana.SkipVerification, "Skip verification")
@@ -156,6 +157,7 @@ func TestStartCommandFlags(t *testing.T) {
 		"public-addr",
 		"service.name",
 		"service.port",
+		"service.health_path",
 		"solana.rpc",
 		"solana.mint",
 		"solana.skip_verification",
@@ -176,6 +178,7 @@ func TestStartCommandFlagDefaults(t *testing.T) {
 	assert.Equal(t, "node", flags.Lookup("mode").DefValue)
 	assert.Equal(t, "43905", flags.Lookup("tcpport").DefValue)
 	assert.Equal(t, "59820", flags.Lookup("udpport").DefValue)
+	assert.Equal(t, "/health", flags.Lookup("service.health_path").DefValue)
 	assert.Equal(t, "true", flags.Lookup("cleanslate").DefValue)
 	assert.Equal(t, defaultConfig.Solana.RPC, flags.Lookup("solana.rpc").DefValue)
 	assert.Equal(t, defaultConfig.Solana.Mint, flags.Lookup("solana.mint").DefValue)

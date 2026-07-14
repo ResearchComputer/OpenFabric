@@ -65,9 +65,9 @@ func TestClientHasSPLToken(t *testing.T) {
 		expectError    bool
 	}{
 		{
-			name:           "valid owner with token balance",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "valid owner with token balance",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -94,9 +94,9 @@ func TestClientHasSPLToken(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name:           "valid owner with zero token balance",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "valid owner with zero token balance",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -123,9 +123,9 @@ func TestClientHasSPLToken(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name:           "valid owner with no token accounts",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "valid owner with no token accounts",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -138,9 +138,9 @@ func TestClientHasSPLToken(t *testing.T) {
 			expectError:    false,
 		},
 		{
-			name:           "token account with empty amount",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "token account with empty amount",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -185,9 +185,9 @@ func TestClientHasSPLToken(t *testing.T) {
 			expectError:    true,
 		},
 		{
-			name:           "RPC server error",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "RPC server error",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -219,9 +219,9 @@ func TestClientHasSPLToken(t *testing.T) {
 			expectError:    true,
 		},
 		{
-			name:           "malformed amount value",
-			owner:          validOwner,
-			mint:           validMint,
+			name:  "malformed amount value",
+			owner: validOwner,
+			mint:  validMint,
 			serverResponse: `{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -529,13 +529,14 @@ func TestGetTokenBalance_Success(t *testing.T) {
 						"data": {
 							"parsed": {
 								"info": {
-									"tokenAmount": {
-										"amount": "5000000",
-										"decimals": 6,
-										"uiAmount": 5.0
+										"tokenAmount": {
+											"amount": "5000000",
+											"decimals": 6,
+											"uiAmount": 5.0,
+											"uiAmountString": "5"
+										}
 									}
 								}
-							}
 						}
 					}
 				}]
@@ -556,6 +557,17 @@ func TestGetTokenBalance_Success(t *testing.T) {
 	}
 	if uiAmount != 5.0 {
 		t.Errorf("GetTokenBalance uiAmount = %f, want 5.0", uiAmount)
+	}
+
+	detailed, err := client.GetTokenBalanceDetails(ctx, "11111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+	if err != nil {
+		t.Fatalf("GetTokenBalanceDetails returned unexpected error: %v", err)
+	}
+	if detailed.UIAmountString != "5" {
+		t.Errorf("GetTokenBalanceDetails UIAmountString = %q, want 5", detailed.UIAmountString)
+	}
+	if detailed.Decimals != 6 {
+		t.Errorf("GetTokenBalanceDetails Decimals = %d, want 6", detailed.Decimals)
 	}
 }
 

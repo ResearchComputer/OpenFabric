@@ -257,6 +257,8 @@ func TestInitFunction(t *testing.T) {
 	assert.Contains(t, rootcmd.Commands(), initCmd)
 	assert.Contains(t, rootcmd.Commands(), versionCmd)
 	assert.Contains(t, rootcmd.Commands(), updateCmd)
+	assert.Contains(t, rootcmd.Commands(), balanceCmd)
+	assert.Contains(t, rootcmd.Commands(), walletCmd)
 }
 
 func TestRootCommandHelpFunctionality(t *testing.T) {

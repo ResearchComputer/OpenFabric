@@ -45,3 +45,476 @@ body {
     transparent 100%
   );
 }
+
+/* OpenTela Token Manager */
+.otm-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 44px;
+}
+
+.otm-topbar,
+.otm-panel-heading,
+.otm-wallet-actions,
+.otm-create-key-form,
+.otm-transfer-form,
+.otm-inline-auth,
+.otm-token-reveal,
+.otm-wallet-chip,
+.otm-primary-button,
+.otm-secondary-button,
+.otm-text-button,
+.otm-icon-button {
+  display: flex;
+  align-items: center;
+}
+
+.otm-topbar {
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 72px;
+}
+
+.otm-eyebrow {
+  margin: 0 0 3px;
+  color: color-mix(in oklab, var(--color-fd-primary) 72%, var(--color-fd-muted-foreground));
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.otm-shell h1,
+.otm-shell h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.otm-shell h1 {
+  color: var(--color-fd-foreground);
+  font-size: clamp(1.85rem, 4vw, 2.75rem);
+  line-height: 1.05;
+}
+
+.otm-shell h2 {
+  color: var(--color-fd-foreground);
+  font-size: 1.15rem;
+}
+
+.otm-wallet-actions {
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.otm-wallet-chip {
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 8px;
+  background: var(--color-fd-card);
+  color: var(--color-fd-foreground);
+  font-weight: 700;
+}
+
+.otm-primary-button,
+.otm-secondary-button,
+.otm-text-button,
+.otm-icon-button {
+  border: 0;
+  border-radius: 8px;
+  justify-content: center;
+}
+
+.otm-primary-button {
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  font-weight: 800;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.otm-primary-button:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.otm-secondary-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  font-weight: 800;
+}
+
+.otm-secondary-button:hover:not(:disabled) {
+  background: var(--color-fd-muted);
+}
+
+.otm-text-button {
+  min-height: 36px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--color-fd-muted-foreground);
+  font-weight: 800;
+}
+
+.otm-text-button:hover:not(:disabled) {
+  color: var(--color-fd-foreground);
+}
+
+.otm-icon-button {
+  width: 40px;
+  height: 40px;
+  background: color-mix(in oklab, var(--color-fd-muted) 88%, var(--color-fd-border));
+  color: var(--color-fd-foreground);
+}
+
+.otm-icon-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-fd-muted) 72%, var(--color-fd-border));
+}
+
+.otm-icon-button.danger {
+  color: #b23a3a;
+}
+
+.otm-shell button,
+.otm-shell input {
+  font: inherit;
+}
+
+.otm-shell button {
+  cursor: pointer;
+}
+
+.otm-shell button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.otm-notice {
+  margin: 18px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-fd-border);
+  background: var(--color-fd-card);
+  color: var(--color-fd-foreground);
+  font-weight: 700;
+}
+
+.otm-notice.success {
+  border-color: color-mix(in oklab, #22a35b 52%, var(--color-fd-border));
+  background: color-mix(in oklab, #22a35b 11%, var(--color-fd-card));
+  color: #17613a;
+}
+
+.otm-notice.error {
+  border-color: color-mix(in oklab, #c74747 52%, var(--color-fd-border));
+  background: color-mix(in oklab, #c74747 10%, var(--color-fd-card));
+  color: #9e3333;
+}
+
+.otm-status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 24px 0 18px;
+}
+
+.otm-metric-panel,
+.otm-panel {
+  border: 1px solid var(--color-fd-border);
+  border-radius: 8px;
+  background: var(--color-fd-card);
+  box-shadow: 0 16px 40px rgba(29, 44, 41, 0.06);
+}
+
+.otm-metric-panel {
+  min-height: 112px;
+  padding: 16px;
+}
+
+.otm-metric-panel span,
+.otm-token-reveal span,
+.otm-compact-detail-list dt,
+.otm-detail-list dt {
+  display: block;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.otm-metric-panel strong {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--color-fd-foreground);
+  font-size: 1.55rem;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.otm-metric-panel small {
+  color: var(--color-fd-muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.otm-metric-panel.accent {
+  border-color: color-mix(in oklab, var(--color-fd-primary) 24%, var(--color-fd-border));
+  background: color-mix(in oklab, var(--color-fd-primary) 6%, var(--color-fd-card));
+}
+
+.otm-rpc-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.otm-rpc-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.otm-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.otm-panel {
+  padding: 18px;
+}
+
+.otm-panel-heading {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.otm-empty-state,
+.otm-inline-auth {
+  min-height: 132px;
+  border: 1px dashed var(--color-fd-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-fd-muted) 48%, var(--color-fd-card));
+  color: var(--color-fd-muted-foreground);
+}
+
+.otm-empty-state {
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  text-align: center;
+}
+
+.otm-inline-auth {
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+}
+
+.otm-inline-auth p {
+  margin: 4px 0 0;
+  color: var(--color-fd-muted-foreground);
+}
+
+.otm-create-key-form,
+.otm-transfer-form {
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.otm-shell label {
+  display: grid;
+  gap: 6px;
+  color: color-mix(in oklab, var(--color-fd-foreground) 72%, var(--color-fd-muted-foreground));
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.otm-create-key-form label,
+.otm-transfer-form label {
+  flex: 1 1 180px;
+}
+
+.otm-shell input {
+  min-height: 40px;
+  width: 100%;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+}
+
+.otm-shell input:focus {
+  border-color: var(--color-fd-primary);
+  outline: 3px solid color-mix(in oklab, var(--color-fd-primary) 20%, transparent);
+}
+
+.otm-token-reveal {
+  justify-content: space-between;
+  gap: 14px;
+  margin: 8px 0 16px;
+  padding: 12px;
+  border: 1px solid #d8c16a;
+  border-radius: 8px;
+  background: color-mix(in oklab, #ffe89a 28%, var(--color-fd-card));
+}
+
+.otm-shell code {
+  color: color-mix(in oklab, var(--color-fd-primary) 72%, var(--color-fd-foreground));
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.otm-token-reveal code {
+  display: block;
+  margin-top: 5px;
+}
+
+.otm-table-wrap {
+  overflow-x: auto;
+}
+
+.otm-shell table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.otm-shell th,
+.otm-shell td {
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--color-fd-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.otm-shell th {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.otm-table-empty {
+  color: var(--color-fd-muted-foreground);
+  text-align: center;
+}
+
+.otm-status-pill {
+  display: inline-grid;
+  min-width: 74px;
+  min-height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.otm-status-pill.active {
+  background: color-mix(in oklab, #22a35b 16%, var(--color-fd-card));
+  color: #17613a;
+}
+
+.otm-status-pill.revoked {
+  background: color-mix(in oklab, #b23a3a 12%, var(--color-fd-card));
+  color: #8e3b3b;
+}
+
+.otm-transfer-form {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.otm-send-button {
+  width: 100%;
+}
+
+.otm-detail-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 0;
+}
+
+.otm-compact-detail-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.otm-compact-detail-list div,
+.otm-detail-list div {
+  display: grid;
+  gap: 3px;
+}
+
+.otm-compact-detail-list dd,
+.otm-detail-list dd {
+  margin: 0;
+  color: var(--color-fd-foreground);
+  font-weight: 800;
+}
+
+.otm-compact-detail-list dd {
+  font-size: 0.86rem;
+}
+
+.otm-tx-link {
+  display: inline-flex;
+  margin-top: 18px;
+  color: var(--color-fd-primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.otm-tx-link:hover {
+  text-decoration: underline;
+}
+
+.otm-success-icon {
+  color: #19834d;
+}
+
+.otm-spin {
+  animation: otm-spin 0.9s linear infinite;
+}
+
+@keyframes otm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .otm-shell {
+    width: min(100% - 24px, 680px);
+    padding-top: 18px;
+  }
+
+  .otm-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .otm-wallet-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .otm-status-grid,
+  .otm-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .otm-create-key-form,
+  .otm-inline-auth {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

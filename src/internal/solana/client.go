@@ -168,14 +168,32 @@ func (c *Client) GetBalanceSOL(ctx context.Context, pubkey string) (float64, err
 // GetTokenBalance – returns the SPL-token balance for an owner + mint
 // ---------------------------------------------------------------------------
 
+type TokenBalance struct {
+	RawAmount      string
+	UIAmount       float64
+	UIAmountString string
+	Decimals       int
+}
+
 // GetTokenBalance returns the raw token amount (as a string) and the
 // UI-friendly float amount for the given owner and mint.
 func (c *Client) GetTokenBalance(ctx context.Context, owner string, mint string) (rawAmount string, uiAmount float64, err error) {
-	if _, err = base58.Decode(owner); err != nil {
-		return "", 0, fmt.Errorf("invalid owner public key: %w", err)
+	balance, err := c.GetTokenBalanceDetails(ctx, owner, mint)
+	if err != nil {
+		return "", 0, err
 	}
-	if _, err = base58.Decode(mint); err != nil {
-		return "", 0, fmt.Errorf("invalid mint address: %w", err)
+	return balance.RawAmount, balance.UIAmount, nil
+}
+
+// GetTokenBalanceDetails returns the token balance metadata for the given
+// owner and mint. If the associated token account does not exist, the balance
+// is zero.
+func (c *Client) GetTokenBalanceDetails(ctx context.Context, owner string, mint string) (TokenBalance, error) {
+	if _, err := base58.Decode(owner); err != nil {
+		return TokenBalance{}, fmt.Errorf("invalid owner public key: %w", err)
+	}
+	if _, err := base58.Decode(mint); err != nil {
+		return TokenBalance{}, fmt.Errorf("invalid mint address: %w", err)
 	}
 
 	params := []any{
@@ -185,20 +203,25 @@ func (c *Client) GetTokenBalance(ctx context.Context, owner string, mint string)
 	}
 
 	var rpcResp tokenAccountsDetailedResponse
-	if err = c.call(ctx, "getTokenAccountsByOwner", params, &rpcResp); err != nil {
-		return "", 0, err
+	if err := c.call(ctx, "getTokenAccountsByOwner", params, &rpcResp); err != nil {
+		return TokenBalance{}, err
 	}
 	if rpcResp.Error != nil {
-		return "", 0, fmt.Errorf("solana rpc error (%d): %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		return TokenBalance{}, fmt.Errorf("solana rpc error (%d): %s", rpcResp.Error.Code, rpcResp.Error.Message)
 	}
 
 	for _, entry := range rpcResp.Result.Value {
 		ta := entry.Account.Data.Parsed.Info.TokenAmount
 		if ta.Amount != "" {
-			return ta.Amount, ta.UIAmount, nil
+			return TokenBalance{
+				RawAmount:      ta.Amount,
+				UIAmount:       ta.UIAmount,
+				UIAmountString: ta.UIAmountString,
+				Decimals:       ta.Decimals,
+			}, nil
 		}
 	}
-	return "0", 0, nil
+	return TokenBalance{RawAmount: "0", UIAmount: 0, UIAmountString: "0"}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -426,9 +449,10 @@ type tokenAccountsDetailedResponse struct {
 					Parsed struct {
 						Info struct {
 							TokenAmount struct {
-								Amount   string  `json:"amount"`
-								Decimals int     `json:"decimals"`
-								UIAmount float64 `json:"uiAmount"`
+								Amount         string  `json:"amount"`
+								Decimals       int     `json:"decimals"`
+								UIAmount       float64 `json:"uiAmount"`
+								UIAmountString string  `json:"uiAmountString"`
 							} `json:"tokenAmount"`
 						} `json:"info"`
 					} `json:"parsed"`

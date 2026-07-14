@@ -1,0 +1,351 @@
+---
+title: Token Manager Webapp
+description: Design for a small React app in the docs website where users connect a Solana wallet, view OTELA balances, transfer OTELA, and manage OpenTela API keys.
+---
+
+**Date:** 2026-07-07
+**Status:** Draft
+**Owner:** TBD
+
+## Overview
+
+The Token Manager is a small React webapp in the OpenTela docs website for end users who need
+to manage OpenTela access and OTELA funds without using the CLI. Users connect a
+Solana-compatible browser wallet, prove wallet ownership by signing an OpenTela
+challenge, then use the app to:
+
+- view SOL and OTELA balances for the connected wallet
+- create, label, list, and revoke OpenTela API keys
+- transfer OTELA to another Solana address
+- copy the bearer token returned at API-key creation time
+
+This proposal intentionally separates two concepts that are easy to confuse:
+
+- **OTELA tokens** are SPL tokens on Solana.
+- **OpenTela API keys** are bearer tokens created by `contrib/auth` and used as
+  `Authorization: Bearer <token>` when calling a head node.
+
+## Prototype Route
+
+An initial MVP route lives at `/token-manager` in the docs website. The code is
+under `docs/app/(home)/token-manager/` and uses the main `docs/package.json`.
+Run it with:
+
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+## Goals
+
+- **Wallet login** - authenticate with a browser wallet by signing a short
+  challenge, never by uploading private keys.
+- **API-key management** - provide a user-friendly equivalent to
+  `otela-auth create`, `otela-auth list`, and `otela-auth revoke`.
+- **Token visibility** - show the connected wallet, the configured OTELA mint,
+  SOL balance for fees, and OTELA balance.
+- **Token transfer** - let users send OTELA with a wallet-signed transaction.
+- **Docs-native delivery** - ship it as part of the existing docs website.
+- **Minimal backend changes** - reuse the existing FastAPI auth service where
+  possible and add only the missing challenge/session authorization endpoints.
+
+## Non-Goals
+
+- Custodial wallets or private-key storage in the browser.
+- Minting OTELA, changing mint authority, or token administration.
+- A full exchange, swap, bridge, or fiat on-ramp.
+- Replacing the OpenTela CLI wallet workflow for node operators.
+- Implementing staking until the staking program and contract semantics are
+  defined.
+
+## Existing OpenTela Surface
+
+The current repository already has most of the backend primitives:
+
+| Area | Existing component | Notes |
+|---|---|---|
+| API-key service | `contrib/auth/server.py` | Creates, lists, revokes, and verifies bearer tokens. |
+| API-key CLI | `contrib/auth/cli.py` | Signs `otela-auth:<wallet>:<unix_ts>` using a Solana keypair file. |
+| Wallet docs | `docs/content/docs/tutorial/owner.mdx` | Documents Solana-compatible OpenTela wallets and the OTELA mint. |
+| Security docs | `docs/content/docs/advanced/security.mdx` | Documents bearer-token auth and wallet-bound access control. |
+| CLI token ops | `contrib/cli/src/otela_cli/commands/wallet/cli.py` | Reads SPL balances and sends token transfers from a local keypair. |
+
+The webapp should call the auth service over HTTPS and call Solana RPC directly
+from the browser for read-only balance checks and wallet-signed transfers.
+
+## Recommended Stack
+
+| Layer | Choice | Reason |
+|---|---|---|
+| App shell | Next app-router route + client React component | Integrates with the existing docs website and navigation. |
+| Wallet connection | Wallet Standard-compatible Solana connector | Browser wallets handle private keys and transaction signing. |
+| Solana client | Solana TypeScript client libraries | Query balances, derive ATAs, build SPL transfer transactions. |
+| API client | `fetch` wrapper | The auth API is small and does not need a generated client initially. |
+| UI | Plain React components or existing OpenTela design tokens | Keep the app operational and compact rather than marketing-style. |
+| Testing | Vitest + React Testing Library + Playwright | Unit test API state and smoke test the wallet/login UI. |
+
+For a first implementation, use the current Solana frontend APIs only after a
+short dependency check. Solana's docs now show Wallet Standard oriented React
+hooks, while the Anza wallet-adapter packages remain a common React option. Pick
+one wallet layer for the MVP and avoid mixing both in the same codebase.
+
+## Configuration
+
+The frontend should be environment configured at build time:
+
+```bash
+NEXT_PUBLIC_AUTH_API_BASE_URL=https://auth.opentela.ai
+NEXT_PUBLIC_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+NEXT_PUBLIC_SOLANA_CLUSTER=mainnet-beta
+NEXT_PUBLIC_OTELA_MINT=EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR
+NEXT_PUBLIC_OTELA_DECIMALS=9
+NEXT_PUBLIC_TOKEN_PROGRAM_ID=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+NEXT_PUBLIC_REWARD_PROGRAM_ID=HMSLAjUbu7XkMmw74fmTMoksg2TSaatDYZ8VjQUU4HdE
+NEXT_PUBLIC_REWARD_CAMPAIGN=
+```
+
+The `/token-manager` route also lets users override the RPC URL at runtime and
+stores that override in browser `localStorage`. This is important because public
+Solana RPC endpoints can reject browser or unauthenticated mainnet traffic with
+`403 Access forbidden`.
+
+Before enabling transfers in production, verify the OTELA mint's token program
+on-chain and use that program consistently when deriving associated token
+accounts and building transfer instructions. Existing docs and prototype CLI
+code should be treated as implementation hints, not as the final source of truth
+for Token Program vs Token Extensions Program selection.
+
+The reward program and campaign addresses are public deployment configuration.
+After deploying `contrib/reward-program`, copy the deployed program ID and the
+initialized campaign PDA into `NEXT_PUBLIC_REWARD_PROGRAM_ID` and
+`NEXT_PUBLIC_REWARD_CAMPAIGN`. The browser wallet does not discover these
+addresses automatically.
+
+## Product Flows
+
+### 1. Connect Wallet
+
+1. User opens the app and clicks connect.
+2. Browser wallet prompts for connection.
+3. App stores only the public key in React state.
+4. App loads SOL and OTELA balances for that public key.
+
+The app is usable in read-only mode after connection. API-key management needs a
+signature proof.
+
+### 2. Login by Signature
+
+1. App requests a server-issued challenge from the auth API.
+2. User signs the challenge with the connected wallet.
+3. App submits `{ wallet, challenge, signature }` to the auth API.
+4. Auth API verifies the signature and starts a short-lived management session,
+   or returns an operation-scoped authorization result.
+
+The current auth service lets clients create a key by posting a signed
+`otela-auth:<wallet>:<unix_ts>` challenge. For a browser app, the backend should
+issue challenges instead of relying on client-generated timestamps so it can
+enforce replay prevention, TTLs, and origin-aware logging in one place.
+
+### 3. Create API Key
+
+1. User enters a short label, such as `laptop`, `prod-head-node`, or
+   `notebook`.
+2. App sends the label with the signed wallet proof or active management
+   session.
+3. Auth API creates the key, hashes the bearer token server-side, and returns
+   the raw token once.
+4. App displays the raw token in a one-time reveal panel with copy support.
+
+The app must not assume the token can be fetched later. After the user dismisses
+the reveal panel, only the key ID, label, creation time, and revoked state remain
+available.
+
+### 4. List and Revoke API Keys
+
+1. App fetches keys for the connected wallet after login.
+2. Keys are shown in a compact table: label, key ID, created time, status, and a
+   revoke action.
+3. Revoke asks for explicit confirmation because it invalidates the bearer token.
+4. On success, the row updates to revoked without requiring a full page reload.
+
+The current `GET /api/keys?wallet=<pubkey>` and
+`DELETE /api/keys/{id}?wallet=<pubkey>` endpoints should be hardened before
+production. Listing and revocation must require proof that the caller controls
+the wallet, not only possession of the wallet public key.
+
+### 5. Transfer OTELA
+
+1. User enters recipient address and OTELA amount.
+2. App validates the address, amount, mint, and connected-wallet balance.
+3. App derives sender and recipient associated token accounts.
+4. If the recipient ATA is missing, app includes an idempotent ATA creation
+   instruction.
+5. Wallet prompts the user to sign and submit the transaction.
+6. App displays pending, confirmed, and failed transaction states with a link to
+   the configured Solana explorer.
+
+Transfers should be disabled when the app cannot verify mint metadata, token
+program, decimals, or a healthy RPC connection.
+
+## Backend API Shape
+
+The MVP can use the existing `contrib/auth` service with the following small
+additions:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/auth/challenges` | Create a one-time challenge for a wallet. |
+| `POST` | `/api/auth/sessions` | Verify wallet signature and return a short-lived management session. |
+| `GET` | `/api/keys` | List keys for the authenticated wallet. |
+| `POST` | `/api/keys` | Create a key for the authenticated wallet. |
+| `DELETE` | `/api/keys/{key_id}` | Revoke a key owned by the authenticated wallet. |
+
+Challenge response:
+
+```json
+{
+  "challenge": "otela-auth:5YNm...:1799164800:8f13c9",
+  "expires_at": "2026-07-07T12:05:00Z"
+}
+```
+
+Session options:
+
+- **Cookie session:** server sets `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+  This gives the browser app a familiar login state but requires CSRF handling.
+- **Bearer management token:** server returns a short-lived JWT or opaque token
+  scoped to API-key management. This keeps the auth API stateless at the edge
+  but puts token storage decisions on the frontend.
+- **Per-operation signature:** no session. Every create/list/revoke request
+  includes a fresh challenge signature. This is simplest to reason about but
+  creates more wallet prompts.
+
+For the first webapp, a short-lived cookie session is the most ergonomic if the
+auth service and webapp share a controlled origin. Use per-operation signatures
+when embedding the app on untrusted origins or when avoiding cookies entirely.
+
+## Frontend Structure
+
+Current location in the repository:
+
+```text
+docs/app/(home)/token-manager/
+  page.tsx
+  token-manager-client.tsx
+  config.ts
+  wallet.ts
+  solana.ts
+  auth-api.ts
+  format.ts
+```
+
+The first screen should be the actual management dashboard. When disconnected,
+show a compact empty state with a wallet-connect action; after connection, keep
+balances, API keys, and transfer controls visible without navigating through a
+marketing page.
+
+## UI States
+
+The app should handle these states explicitly:
+
+- wallet not installed
+- wallet installed but disconnected
+- connected but not signature-authenticated
+- auth API unavailable
+- Solana RPC unavailable or lagging
+- OTELA associated token account missing
+- OTELA balance is zero
+- API key created and raw bearer token visible once
+- revoke pending, revoked, and revoke failed
+- transfer simulation failed
+- transfer submitted but not confirmed
+
+## Security Requirements
+
+- Never ask for or transmit a private key.
+- Never persist raw OpenTela bearer tokens automatically. Let the user copy the
+  token once and make dismissal explicit.
+- Require wallet proof for listing and revocation, not just key creation.
+- Bind challenges to wallet, purpose, nonce, issued time, expiration time, and
+  origin when possible.
+- Store used challenges server-side until they expire.
+- Use HTTPS only for the app, auth API, and RPC endpoint.
+- Restrict auth API CORS to approved webapp origins.
+- Add rate limits to challenge creation, key creation, and revocation.
+- Treat wallet public keys as stable identifiers in analytics and logs.
+- Validate recipient addresses and show the full recipient before signing a
+  transfer.
+- Simulate transactions before requesting wallet signature when the selected
+  Solana client supports it.
+
+## Implementation Plan
+
+### Phase 1 - Documentation and Backend Contract
+
+- Land this proposal.
+- Confirm the OTELA mint, decimals, and token program on-chain.
+- Add server-issued challenge and management-session endpoints to
+  `contrib/auth`.
+- Require authenticated wallet proof for list and revoke operations.
+
+### Phase 2 - Docs Route Skeleton
+
+- Add `/token-manager` to the existing docs Next app.
+- Add environment validation and runtime config display.
+- Add wallet connection and disconnected/connected UI states.
+- Add balance reads for SOL and OTELA.
+
+### Phase 3 - API-Key Management
+
+- Implement login by signature.
+- Implement create/list/revoke API-key flows.
+- Add one-time bearer-token reveal with copy and dismissal states.
+- Cover API client and key-management UI with unit tests.
+
+### Phase 4 - OTELA Transfers
+
+- Implement recipient validation and transfer preview.
+- Build wallet-signed SPL transfer transactions.
+- Include idempotent recipient ATA creation when required.
+- Add transaction status tracking and explorer links.
+
+### Phase 5 - Production Hardening
+
+- Add Playwright smoke tests for connect/login UI states with mocked wallets.
+- Add auth-service integration tests for challenge replay and authorization.
+- Add deployment config, CSP headers, CORS allowlist, and error monitoring.
+- Run against devnet or a controlled test mint before enabling mainnet
+  transfers.
+
+## Test Plan
+
+| Layer | Tests |
+|---|---|
+| Auth service | Challenge TTL, replay prevention, invalid signature, list/revoke authorization, CORS. |
+| API client | Happy path, expired session, revoked key, network failure, malformed responses. |
+| Solana helpers | ATA derivation, amount conversion with 9 decimals, invalid recipient, missing ATA handling. |
+| React UI | Disconnected state, connected state, create-key reveal, revoke flow, transfer validation. |
+| E2E | Mock wallet login, list keys, create key, revoke key, transfer form validation. |
+
+## Open Questions
+
+- Should management sessions be cookie-based, bearer-based, or per-operation
+  signatures?
+- Will the OTELA mint use the classic Token Program or Token Extensions Program
+  long term?
+- Should the app stay embedded in the docs website long term, or move to a
+  dedicated deployment once backend auth sessions are hardened?
+- Should transfers be mainnet-only, devnet-only for alpha, or cluster-selectable
+  behind an explicit advanced control?
+- Do API keys need scopes, expiration dates, or head-node allowlists in v1?
+
+## References
+
+- [Wallet & Ownership](/docs/tutorial/owner)
+- [Security Hardening](/docs/advanced/security)
+- [Solana Tokens](https://solana.com/docs/tokens)
+- [Solana Associated Token Accounts](https://solana.com/docs/tokens/basics/create-token-account)
+- [Solana Transfer Tokens](https://solana.com/docs/tokens/basics/transfer-tokens)
+- [Solana React Hooks](https://solana.com/docs/frontend/react-hooks)
+- [Wallet Adapter for Solana Apps](https://github.com/anza-xyz/wallet-adapter/blob/master/APP.md)

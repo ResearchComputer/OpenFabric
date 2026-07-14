@@ -1,0 +1,667 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Buffer } from 'buffer';
+import {
+  CheckCircle2,
+  Copy,
+  KeyRound,
+  Loader2,
+  LogIn,
+  LogOut,
+  RefreshCw,
+  Send,
+  Trash2,
+  Wallet,
+} from 'lucide-react';
+import { PublicKey } from '@solana/web3.js';
+import { tokenManagerConfig } from './config';
+import {
+  buildAuthChallenge,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  type ApiKeyInfo,
+  type CreatedApiKey,
+} from './auth-api';
+import { formatDate, middleEllipsis, uiAmountToRaw } from './format';
+import {
+  buildOtelaTransfer,
+  createConnection,
+  explorerTransactionUrl,
+  getWalletBalances,
+  parsePublicKey,
+  sendWalletTransaction,
+  type WalletBalances,
+} from './solana';
+import {
+  getInjectedWallet,
+  publicKeyString,
+  signWalletMessage,
+  type SolanaWalletProvider,
+} from './wallet';
+
+if (typeof globalThis !== 'undefined' && !('Buffer' in globalThis)) {
+  (globalThis as typeof globalThis & { Buffer: typeof Buffer }).Buffer = Buffer;
+}
+
+type NoticeKind = 'info' | 'success' | 'error';
+
+interface Notice {
+  kind: NoticeKind;
+  message: string;
+}
+
+interface SignedSession {
+  wallet: string;
+  challenge: string;
+  signature: string;
+  signedAt: string;
+}
+
+export default function TokenManagerClient() {
+  const [provider, setProvider] = useState<SolanaWalletProvider | null>(null);
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [session, setSession] = useState<SignedSession | null>(null);
+  const [balances, setBalances] = useState<WalletBalances | null>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
+  const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [label, setLabel] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [rpcUrl, setRpcUrl] = useState(tokenManagerConfig.solanaRpcUrl);
+  const [rpcDraftUrl, setRpcDraftUrl] = useState(tokenManagerConfig.solanaRpcUrl);
+  const [pending, setPending] = useState<string | null>(null);
+  const [txSignature, setTxSignature] = useState<string | null>(null);
+
+  const connection = useMemo(
+    () => createConnection(rpcUrl),
+    [rpcUrl],
+  );
+
+  useEffect(() => {
+    const injected = getInjectedWallet();
+    setProvider(injected);
+    if (injected) setWallet(publicKeyString(injected));
+
+    const savedRpcUrl = window.localStorage.getItem('opentela-token-manager-rpc');
+    if (savedRpcUrl) {
+      setRpcUrl(savedRpcUrl);
+      setRpcDraftUrl(savedRpcUrl);
+    }
+  }, []);
+
+  const showNotice = useCallback((kind: NoticeKind, message: string) => {
+    setNotice({ kind, message });
+  }, []);
+
+  const refreshBalances = useCallback(
+    async (walletAddress = wallet) => {
+      if (!walletAddress) return;
+      const owner = new PublicKey(walletAddress);
+      const nextBalances = await getWalletBalances({
+        connection,
+        owner,
+        mint: tokenManagerConfig.otelaMint,
+        tokenProgramId: tokenManagerConfig.tokenProgramId,
+        rpcUrl,
+      });
+      setBalances(nextBalances);
+    },
+    [connection, rpcUrl, wallet],
+  );
+
+  const refreshKeys = useCallback(
+    async (walletAddress = wallet) => {
+      if (!walletAddress || !session) return;
+      const keys = await listApiKeys(
+        tokenManagerConfig.authApiBaseUrl,
+        walletAddress,
+      );
+      setApiKeys(keys);
+    },
+    [session, wallet],
+  );
+
+  useEffect(() => {
+    if (!wallet) return;
+    refreshBalances().catch((error: unknown) => {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    });
+  }, [refreshBalances, showNotice, wallet]);
+
+  useEffect(() => {
+    if (!wallet || !session) return;
+    refreshKeys().catch((error: unknown) => {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    });
+  }, [refreshKeys, session, showNotice, wallet]);
+
+  async function connectWallet() {
+    if (!provider) {
+      showNotice('error', 'No Solana browser wallet detected');
+      return;
+    }
+    setPending('connect');
+    try {
+      const result = await provider.connect();
+      const nextWallet = result.publicKey.toBase58();
+      setWallet(nextWallet);
+      setSession(null);
+      setApiKeys([]);
+      await refreshBalances(nextWallet);
+      showNotice('success', 'Wallet connected');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function disconnectWallet() {
+    if (!provider) return;
+    setPending('disconnect');
+    try {
+      await provider.disconnect();
+      setWallet(null);
+      setSession(null);
+      setBalances(null);
+      setApiKeys([]);
+      setCreatedKey(null);
+      showNotice('info', 'Wallet disconnected');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function signIn() {
+    if (!provider || !wallet) return;
+    setPending('signin');
+    try {
+      const challenge = buildAuthChallenge(wallet);
+      const signature = await signWalletMessage(provider, challenge);
+      setSession({
+        wallet,
+        challenge,
+        signature,
+        signedAt: new Date().toISOString(),
+      });
+      showNotice('success', 'Wallet proof signed');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleCreateKey(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!provider || !wallet || !session) return;
+    setPending('create-key');
+    setCreatedKey(null);
+    try {
+      const challenge = buildAuthChallenge(wallet);
+      const signature = await signWalletMessage(provider, challenge);
+      const key = await createApiKey(tokenManagerConfig.authApiBaseUrl, {
+        wallet,
+        challenge,
+        signature,
+        label: label.trim(),
+      });
+      setCreatedKey(key);
+      setLabel('');
+      await refreshKeys(wallet);
+      showNotice('success', 'API key created');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleRevokeKey(key: ApiKeyInfo) {
+    if (!wallet) return;
+    const ok = window.confirm(`Revoke API key ${key.key_id}?`);
+    if (!ok) return;
+
+    setPending(key.key_id);
+    try {
+      await revokeApiKey(tokenManagerConfig.authApiBaseUrl, key.key_id, wallet);
+      await refreshKeys(wallet);
+      showNotice('success', 'API key revoked');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function copyToken() {
+    if (!createdKey) return;
+    await navigator.clipboard.writeText(createdKey.token);
+    showNotice('success', 'Bearer token copied');
+  }
+
+  async function handleTransfer(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!provider || !wallet) return;
+    setPending('transfer');
+    setTxSignature(null);
+    try {
+      const owner = parsePublicKey(wallet, 'wallet');
+      const to = parsePublicKey(recipient, 'recipient');
+      const rawAmount = uiAmountToRaw(amount, tokenManagerConfig.otelaDecimals);
+      const built = await buildOtelaTransfer({
+        connection,
+        owner,
+        recipient: to,
+        mint: tokenManagerConfig.otelaMint,
+        amountRaw: rawAmount,
+        decimals: tokenManagerConfig.otelaDecimals,
+        tokenProgramId: tokenManagerConfig.tokenProgramId,
+      });
+      const signature = await sendWalletTransaction({ connection, provider, built });
+      setTxSignature(signature);
+      setRecipient('');
+      setAmount('');
+      await refreshBalances(wallet);
+      showNotice('success', 'Transfer confirmed');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function applyRpcUrl(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextRpcUrl = rpcDraftUrl.trim();
+
+    try {
+      const parsed = new URL(nextRpcUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('RPC URL must start with http:// or https://');
+      }
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Invalid RPC URL');
+      return;
+    }
+
+    window.localStorage.setItem('opentela-token-manager-rpc', nextRpcUrl);
+    setRpcUrl(nextRpcUrl);
+    setBalances(null);
+    showNotice('info', 'RPC endpoint updated');
+
+    if (wallet) {
+      setPending('refresh-balances');
+      try {
+        const owner = new PublicKey(wallet);
+        const nextBalances = await getWalletBalances({
+          connection: createConnection(nextRpcUrl),
+          owner,
+          mint: tokenManagerConfig.otelaMint,
+          tokenProgramId: tokenManagerConfig.tokenProgramId,
+          rpcUrl: nextRpcUrl,
+        });
+        setBalances(nextBalances);
+      } catch (error) {
+        showNotice('error', error instanceof Error ? error.message : String(error));
+      } finally {
+        setPending(null);
+      }
+    }
+  }
+
+  async function resetRpcUrl() {
+    window.localStorage.removeItem('opentela-token-manager-rpc');
+    setRpcDraftUrl(tokenManagerConfig.solanaRpcUrl);
+    setRpcUrl(tokenManagerConfig.solanaRpcUrl);
+    setBalances(null);
+    showNotice('info', 'RPC endpoint reset to the site default');
+  }
+
+  const connected = Boolean(wallet);
+  const signedIn = Boolean(session);
+
+  return (
+    <main className="otm-shell">
+      <header className="otm-topbar">
+        <div>
+          <p className="otm-eyebrow">OpenTela</p>
+          <h1>Wallet</h1>
+        </div>
+        <div className="otm-wallet-actions">
+          {wallet ? (
+            <>
+              <span className="otm-wallet-chip" title={wallet}>
+                <Wallet size={16} />
+                {middleEllipsis(wallet)}
+              </span>
+              <button
+                type="button"
+                className="otm-icon-button"
+                onClick={disconnectWallet}
+                title="Disconnect wallet"
+                disabled={pending === 'disconnect'}
+              >
+                {pending === 'disconnect' ? (
+                  <Loader2 className="otm-spin" size={18} />
+                ) : (
+                  <LogOut size={18} />
+                )}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="otm-primary-button"
+              onClick={connectWallet}
+              disabled={!provider || pending === 'connect'}
+            >
+              {pending === 'connect' ? (
+                <Loader2 className="otm-spin" size={16} />
+              ) : (
+                <Wallet size={16} />
+              )}
+              {provider ? 'Connect' : 'Install Wallet'}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {notice ? (
+        <div className={`otm-notice ${notice.kind}`} role="status">
+          {notice.message}
+        </div>
+      ) : null}
+
+      <section className="otm-status-grid" aria-label="Wallet status">
+        <div className="otm-metric-panel">
+          <span>Network</span>
+          <strong>{tokenManagerConfig.solanaCluster}</strong>
+          <form className="otm-rpc-form" onSubmit={applyRpcUrl}>
+            <label>
+              RPC URL
+              <input
+                value={rpcDraftUrl}
+                onChange={(event) => setRpcDraftUrl(event.target.value)}
+                spellCheck={false}
+              />
+            </label>
+            <div className="otm-rpc-actions">
+              <button
+                type="submit"
+                className="otm-secondary-button"
+                disabled={pending === 'refresh-balances'}
+              >
+                Apply
+              </button>
+              <button type="button" className="otm-text-button" onClick={resetRpcUrl}>
+                Reset
+              </button>
+            </div>
+          </form>
+        </div>
+        <div className="otm-metric-panel">
+          <span>SOL</span>
+          <strong>{balances ? balances.sol.toFixed(4) : connected ? '...' : '-'}</strong>
+          <small>Fee balance</small>
+        </div>
+        <div className="otm-metric-panel accent">
+          <span>OTELA</span>
+          <strong>{balances ? balances.otela : connected ? '...' : '-'}</strong>
+          <small title={tokenManagerConfig.otelaMint.toBase58()}>
+            {middleEllipsis(tokenManagerConfig.otelaMint.toBase58())}
+          </small>
+        </div>
+        <div className="otm-metric-panel">
+          <span>Rewards</span>
+          <strong>{tokenManagerConfig.rewardCampaign ? 'Campaign' : 'Program'}</strong>
+          <dl className="otm-compact-detail-list">
+            <div>
+              <dt>Program</dt>
+              <dd title={tokenManagerConfig.rewardProgramId.toBase58()}>
+                {middleEllipsis(tokenManagerConfig.rewardProgramId.toBase58(), 8, 8)}
+              </dd>
+            </div>
+            <div>
+              <dt>Campaign</dt>
+              <dd title={tokenManagerConfig.rewardCampaign?.toBase58() ?? ''}>
+                {tokenManagerConfig.rewardCampaign
+                  ? middleEllipsis(tokenManagerConfig.rewardCampaign.toBase58(), 8, 8)
+                  : '-'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <div className="otm-workspace">
+        <section className="otm-panel otm-api-panel">
+          <div className="otm-panel-heading">
+            <div>
+              <p className="otm-eyebrow">Access</p>
+              <h2>API Keys</h2>
+            </div>
+            <button
+              type="button"
+              className="otm-icon-button"
+              onClick={() => {
+                refreshKeys().catch((error: unknown) =>
+                  showNotice(
+                    'error',
+                    error instanceof Error ? error.message : String(error),
+                  ),
+                );
+              }}
+              title="Refresh API keys"
+              disabled={!signedIn}
+            >
+              <RefreshCw size={18} />
+            </button>
+          </div>
+
+          {!connected ? (
+            <div className="otm-empty-state">Connect a Solana wallet to manage API keys.</div>
+          ) : !signedIn ? (
+            <div className="otm-inline-auth">
+              <div>
+                <strong>Wallet proof required</strong>
+                <p>Sign an OpenTela challenge before managing bearer tokens.</p>
+              </div>
+              <button
+                type="button"
+                className="otm-primary-button"
+                onClick={signIn}
+                disabled={pending === 'signin'}
+              >
+                {pending === 'signin' ? (
+                  <Loader2 className="otm-spin" size={16} />
+                ) : (
+                  <LogIn size={16} />
+                )}
+                Sign In
+              </button>
+            </div>
+          ) : (
+            <>
+              <form className="otm-create-key-form" onSubmit={handleCreateKey}>
+                <label>
+                  Label
+                  <input
+                    value={label}
+                    onChange={(event) => setLabel(event.target.value)}
+                    placeholder="notebook"
+                    maxLength={80}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="otm-primary-button"
+                  disabled={pending === 'create-key'}
+                >
+                  {pending === 'create-key' ? (
+                    <Loader2 className="otm-spin" size={16} />
+                  ) : (
+                    <KeyRound size={16} />
+                  )}
+                  Create
+                </button>
+              </form>
+
+              {createdKey ? (
+                <div className="otm-token-reveal">
+                  <div>
+                    <span>New bearer token</span>
+                    <code>{createdKey.token}</code>
+                  </div>
+                  <button
+                    type="button"
+                    className="otm-icon-button"
+                    onClick={copyToken}
+                    title="Copy bearer token"
+                  >
+                    <Copy size={18} />
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="otm-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Label</th>
+                      <th>Key ID</th>
+                      <th>Created</th>
+                      <th>Status</th>
+                      <th aria-label="Actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apiKeys.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="otm-table-empty">
+                          No API keys for this wallet.
+                        </td>
+                      </tr>
+                    ) : (
+                      apiKeys.map((key) => (
+                        <tr key={key.key_id}>
+                          <td>{key.label || '-'}</td>
+                          <td>
+                            <code>{key.key_id}</code>
+                          </td>
+                          <td>{formatDate(key.created_at)}</td>
+                          <td>
+                            <span
+                              className={`otm-status-pill ${
+                                key.revoked ? 'revoked' : 'active'
+                              }`}
+                            >
+                              {key.revoked ? 'Revoked' : 'Active'}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="otm-icon-button danger"
+                              onClick={() => handleRevokeKey(key)}
+                              disabled={key.revoked || pending === key.key_id}
+                              title="Revoke API key"
+                            >
+                              {pending === key.key_id ? (
+                                <Loader2 className="otm-spin" size={18} />
+                              ) : (
+                                <Trash2 size={18} />
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="otm-panel otm-transfer-panel">
+          <div className="otm-panel-heading">
+            <div>
+              <p className="otm-eyebrow">OTELA</p>
+              <h2>Transfer</h2>
+            </div>
+            {txSignature ? <CheckCircle2 className="otm-success-icon" size={22} /> : null}
+          </div>
+
+          <form className="otm-transfer-form" onSubmit={handleTransfer}>
+            <label>
+              Recipient
+              <input
+                value={recipient}
+                onChange={(event) => setRecipient(event.target.value)}
+                placeholder="Solana address"
+                disabled={!connected}
+              />
+            </label>
+            <label>
+              Amount
+              <input
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="0.00"
+                inputMode="decimal"
+                disabled={!connected}
+              />
+            </label>
+            <button
+              type="submit"
+              className="otm-primary-button otm-send-button"
+              disabled={!connected || pending === 'transfer'}
+            >
+              {pending === 'transfer' ? (
+                <Loader2 className="otm-spin" size={16} />
+              ) : (
+                <Send size={16} />
+              )}
+              Send OTELA
+            </button>
+          </form>
+
+          {balances?.ata ? (
+            <dl className="otm-detail-list">
+              <div>
+                <dt>Associated token account</dt>
+                <dd title={balances.ata}>{middleEllipsis(balances.ata, 8, 8)}</dd>
+              </div>
+              <div>
+                <dt>Token program</dt>
+                <dd title={tokenManagerConfig.tokenProgramId.toBase58()}>
+                  {middleEllipsis(tokenManagerConfig.tokenProgramId.toBase58(), 8, 8)}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+
+          {txSignature ? (
+            <a
+              className="otm-tx-link"
+              href={explorerTransactionUrl(
+                txSignature,
+                tokenManagerConfig.solanaCluster,
+              )}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View transaction
+            </a>
+          ) : null}
+        </section>
+      </div>
+    </main>
+  );
+}

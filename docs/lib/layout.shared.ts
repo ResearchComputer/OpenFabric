@@ -13,6 +13,10 @@ export function baseOptions(): BaseLayoutProps {
         url: '/docs',
       },
       {
+        text: 'Wallet',
+        url: '/wallet',
+      },
+      {
         text: 'Blog',
         url: '/docs/blog',
       },

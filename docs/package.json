@@ -14,10 +14,15 @@
   "type": "module",
   "dependencies": {
     "@opennextjs/cloudflare": "^1.16.3",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
     "@types/mdx": "^2.0.13",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
     "fumadocs-core": "^16.6.13",
     "fumadocs-mdx": "^14.2.9",
     "fumadocs-ui": "^16.6.13",
+    "lucide-react": "^1.23.0",
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

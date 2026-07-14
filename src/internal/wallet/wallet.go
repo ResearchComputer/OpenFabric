@@ -133,12 +133,27 @@ func (wm *WalletManager) loadAccounts() error {
 	wm.accounts = payload.Accounts
 
 	// Back-fill ProviderID for accounts that were persisted before this
-	// field existed.
+	// field existed. Older Solana accounts may also have persisted the public
+	// key as base64; repair those records from the private key so RPC calls get
+	// the base58 address Solana expects.
 	dirty := false
 	for i := range wm.accounts {
-		if wm.accounts[i].ProviderID == "" && wm.accounts[i].PublicKey != "" {
-			wm.accounts[i].ProviderID = deriveProviderID(wm.accounts[i].PublicKey)
-			dirty = true
+		if wm.accounts[i].Type == WalletTypeOCF {
+			if changed, err := wm.upgradeLegacyOCFAccount(&wm.accounts[i]); err == nil && changed {
+				dirty = true
+			}
+		}
+		if wm.accounts[i].Type == WalletTypeSolana {
+			if changed, err := wm.normalizeSolanaAccount(&wm.accounts[i]); err == nil && changed {
+				dirty = true
+			}
+		}
+		if wm.accounts[i].PublicKey != "" {
+			providerID := deriveProviderID(wm.accounts[i].PublicKey)
+			if wm.accounts[i].ProviderID != providerID {
+				wm.accounts[i].ProviderID = providerID
+				dirty = true
+			}
 		}
 	}
 	if dirty {
@@ -146,6 +161,168 @@ func (wm *WalletManager) loadAccounts() error {
 	}
 
 	return nil
+}
+
+func (wm *WalletManager) upgradeLegacyOCFAccount(acc *Account) (bool, error) {
+	private, err := solanaPrivateKeyFromAccount(*acc)
+	if err != nil {
+		return false, err
+	}
+
+	pub := private.Public().(ed25519.PublicKey)
+	pub58 := base58.Encode(pub)
+
+	changed := false
+	if acc.Type != WalletTypeSolana {
+		acc.Type = WalletTypeSolana
+		changed = true
+	}
+	if acc.PublicKey != pub58 {
+		acc.PublicKey = pub58
+		changed = true
+	}
+	privateEncoded := base64.StdEncoding.EncodeToString(private)
+	if acc.Private != privateEncoded {
+		acc.Private = privateEncoded
+		changed = true
+	}
+	if acc.ProviderID != deriveProviderID(pub58) {
+		acc.ProviderID = deriveProviderID(pub58)
+		changed = true
+	}
+	if pathChanged, err := wm.ensureManagedSolanaKeypair(acc, private); err != nil {
+		return changed, err
+	} else if pathChanged {
+		changed = true
+	}
+
+	return changed, nil
+}
+
+func (wm *WalletManager) normalizeSolanaAccount(acc *Account) (bool, error) {
+	if validSolanaPublicKey(acc.PublicKey) {
+		return wm.ensureManagedSolanaKeypair(acc, nil)
+	}
+
+	private, err := solanaPrivateKeyFromAccount(*acc)
+	if err != nil {
+		return false, err
+	}
+
+	pub := private.Public().(ed25519.PublicKey)
+	pub58 := base58.Encode(pub)
+
+	changed := false
+	if acc.PublicKey != pub58 {
+		acc.PublicKey = pub58
+		changed = true
+	}
+	privateEncoded := base64.StdEncoding.EncodeToString(private)
+	if acc.Private != privateEncoded {
+		acc.Private = privateEncoded
+		changed = true
+	}
+	if acc.ProviderID != deriveProviderID(pub58) {
+		acc.ProviderID = deriveProviderID(pub58)
+		changed = true
+	}
+	if pathChanged, err := wm.ensureManagedSolanaKeypair(acc, private); err != nil {
+		return changed, err
+	} else if pathChanged {
+		changed = true
+	}
+
+	return changed, nil
+}
+
+func validSolanaPublicKey(publicKey string) bool {
+	b, err := base58.Decode(publicKey)
+	return err == nil && len(b) == ed25519.PublicKeySize
+}
+
+func solanaPrivateKeyFromAccount(acc Account) (ed25519.PrivateKey, error) {
+	var firstErr error
+	if acc.Private != "" {
+		private, err := decodePrivateKey(acc.Private)
+		if err == nil {
+			return private, nil
+		}
+		firstErr = err
+	}
+
+	if acc.FilePath != "" {
+		data, err := os.ReadFile(acc.FilePath)
+		if err == nil {
+			private, err := parseSolanaKeypairJSON(data)
+			if err == nil {
+				return private, nil
+			}
+			private, legacyErr := decodePrivateKey(strings.TrimSpace(string(data)))
+			if legacyErr == nil {
+				return private, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return nil, errors.New("account has no private key material")
+}
+
+func (wm *WalletManager) ensureManagedSolanaKeypair(acc *Account, private ed25519.PrivateKey) (bool, error) {
+	if !validSolanaPublicKey(acc.PublicKey) {
+		return false, nil
+	}
+
+	target := filepath.Join(wm.storageDir, accountsDirName, acc.PublicKey, "keypair.json")
+	changed := acc.FilePath != target
+
+	if _, err := os.Stat(target); err == nil {
+		if changed {
+			acc.FilePath = target
+		}
+		return changed, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return changed, fmt.Errorf("failed to inspect Solana keypair file: %w", err)
+	}
+
+	if private == nil {
+		var err error
+		private, err = solanaPrivateKeyFromAccount(*acc)
+		if err != nil {
+			return false, nil
+		}
+	}
+	pub := private.Public().(ed25519.PublicKey)
+	if base58.Encode(pub) != acc.PublicKey {
+		return changed, fmt.Errorf("private key does not match public key")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return changed, fmt.Errorf("failed to create account directory: %w", err)
+	}
+	if err := writeSolanaKeypair(target, private); err != nil {
+		return changed, err
+	}
+	acc.FilePath = target
+	return true, nil
+}
+
+func decodePrivateKey(encoded string) (ed25519.PrivateKey, error) {
+	privateBytes, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode private key: %w", err)
+	}
+	if len(privateBytes) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("invalid private key length %d", len(privateBytes))
+	}
+	return ed25519.PrivateKey(privateBytes), nil
 }
 
 func (wm *WalletManager) migrateLegacyWallet() error {
@@ -167,14 +344,23 @@ func (wm *WalletManager) migrateLegacyWallet() error {
 	}
 
 	pub := ed25519.PrivateKey(privateBytes).Public().(ed25519.PublicKey)
-	pubEncoded := base64.StdEncoding.EncodeToString(pub)
+	pub58 := base58.Encode(pub)
+	accountDir := filepath.Join(wm.storageDir, accountsDirName, pub58)
+	if err := os.MkdirAll(accountDir, 0o700); err != nil {
+		return fmt.Errorf("failed to create migrated account directory: %w", err)
+	}
+	keypairPath := filepath.Join(accountDir, "keypair.json")
+	if err := writeSolanaKeypair(keypairPath, ed25519.PrivateKey(privateBytes)); err != nil {
+		return err
+	}
+
 	account := Account{
-		Type:       WalletTypeOCF,
-		PublicKey:  pubEncoded,
+		Type:       WalletTypeSolana,
+		PublicKey:  pub58,
 		Private:    base64.StdEncoding.EncodeToString(privateBytes),
-		FilePath:   legacyPath,
+		FilePath:   keypairPath,
 		CreatedAt:  time.Now().UTC(),
-		ProviderID: deriveProviderID(pubEncoded),
+		ProviderID: deriveProviderID(pub58),
 	}
 	wm.accounts = append(wm.accounts, account)
 	return wm.saveAccounts()

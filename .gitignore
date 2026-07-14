@@ -13,3 +13,11 @@ website/.source/
 .pista
 .claude/
 .venv/
+
+# Rust / Anchor build output
+target/
+contrib/reward-program/target/
+contrib/reward-program/node_modules/
+contrib/reward-program/.anchor/
+contrib/reward-program/test-ledger/
+contrib/reward-program/deployments/

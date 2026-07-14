@@ -1,0 +1,249 @@
+---
+title: On-Chain Reward Protocol
+description: Fully on-chain Solana reward protocol for paying OpenTela providers with OTELA after a served request is attested.
+---
+
+**Date:** 2026-07-07
+**Status:** Draft implementation
+**Owner:** TBD
+
+## Overview
+
+OpenTela can release OTELA as a public Solana token and use a Solana program to
+pay providers after they serve requests. The chain cannot observe arbitrary
+off-chain service execution by itself, so the reward protocol makes the
+settlement path fully on-chain while using an authorized OpenTela head node as
+the request attestor.
+
+The initial program scaffold lives in `contrib/reward-program/`. It uses Anchor,
+the SPL token interface, a PDA-owned reward vault, Solana's native Ed25519
+verification instruction, and one claim PDA per request to prevent duplicate
+payouts.
+
+## Token Release Model
+
+Use a standard Solana token mint for OTELA unless there is a concrete need for a
+Token Extensions feature such as transfer hooks, confidential transfers, or
+metadata pointers. A public release should define:
+
+| Field | Recommendation |
+|---|---|
+| Token mint | One canonical OTELA mint per cluster. |
+| Decimals | Keep the existing `9` decimal convention unless migration requires otherwise. |
+| Mint authority | Move to a multisig, governance address, or revoke after fixed supply. |
+| Freeze authority | Prefer revocation for a neutral public token, or governance for controlled beta launches. |
+| Metadata | Publish name, symbol, logo URI, and project links through the chosen token metadata path. |
+| Treasury | Fund reward campaign vaults from a transparent treasury account. |
+
+The token manager at `/token-manager` should treat token minting and treasury
+administration as out of scope. Its production role is wallet login, balance
+visibility, OTELA transfer, and OpenTela API-key management.
+
+## Reward Campaign
+
+Each campaign is a PDA-backed pool of OTELA that pays providers for verified
+usage:
+
+```text
+Treasury funds campaign vault
+        |
+Provider serves request
+        |
+Authorized head node signs usage receipt
+        |
+Provider submits Ed25519 verify ix + claim_reward ix
+        |
+Reward program transfers OTELA from PDA vault to provider ATA
+        |
+Claim PDA records request_id and blocks replay
+```
+
+The current implementation uses one authorized `head_authority` per campaign.
+That key is stored on-chain in the `RewardCampaign` account. A claimant cannot
+choose a different head key at claim time.
+
+## Program Instructions
+
+| Instruction | Caller | Purpose |
+|---|---|---|
+| `initialize_campaign(reward_per_unit, head_authority)` | Campaign authority | Creates the campaign PDA and PDA-owned reward vault. |
+| `set_reward_rate(reward_per_unit)` | Campaign authority | Updates payout rate for future receipts. |
+| `set_head_authority(head_authority)` | Campaign authority | Rotates the authorized receipt signer. |
+| `set_paused(paused)` | Campaign authority | Stops or resumes claims. |
+| `claim_reward(request_id, service_hash, units, reward_per_unit)` | Provider | Verifies the prior Ed25519 instruction, records the claim, and pays the provider. |
+| `withdraw_unclaimed(amount)` | Campaign authority | Recovers unused vault funds. |
+
+## Receipt Format
+
+The authorized head node signs this byte sequence:
+
+```text
+"OPENTELA_REWARD_V1"
+campaign pubkey          32 bytes
+request_id               32 bytes
+provider wallet pubkey   32 bytes
+service_hash             32 bytes
+units                    u64 little-endian
+reward_per_unit          u64 little-endian
+```
+
+`service_hash` should commit to the service type, model or worker class, request
+metadata, response hash, and any usage counters that matter for audit. The
+on-chain program only needs the hash; richer evidence can live in OpenTela logs,
+content-addressed storage, or a later dispute program.
+
+## Claim Transaction
+
+A valid provider claim transaction contains two adjacent instructions:
+
+1. A native Ed25519 verification instruction for the head signature over the
+   receipt bytes.
+2. `opentela_rewards::claim_reward` with matching request, provider, service
+   hash, units, and reward rate.
+
+If the Ed25519 signature is invalid, Solana aborts the transaction before the
+reward program executes. If the signature is valid but does not match the
+campaign's on-chain `head_authority` or the expected receipt message, the reward
+program rejects the claim.
+
+## Why This Is On-Chain
+
+- Reward funds sit in a PDA-controlled SPL token vault.
+- Claim authorization is checked by Solana instructions and program state.
+- Duplicate payouts are blocked by deterministic claim PDAs.
+- Token transfer is a program-signed SPL `TransferChecked` CPI.
+- Rate, pause state, vault address, reward mint, and head authority are stored
+  in the campaign account.
+- Claims emit events and leave durable `ClaimReceipt` accounts for indexing.
+
+The only oracle assumption is whether the authorized head node truthfully signs
+that a request was served. A later version can replace the single head signer
+with an on-chain head registry, quorum signatures, stake-slashing, or a dispute
+window.
+
+## Build and Deploy
+
+```bash
+cd contrib/reward-program
+cargo test
+anchor build
+```
+
+The current declared program ID is:
+
+```text
+HMSLAjUbu7XkMmw74fmTMoksg2TSaatDYZ8VjQUU4HdE
+```
+
+Program deployment requires a local program keypair whose public key matches
+the ID compiled into `declare_id!`. Program keypairs are secrets and should not
+be committed. For a fresh deployment, generate a program keypair, run
+`anchor keys sync`, then review and commit the changed program ID in
+`Anchor.toml`, `lib.rs`, and this document.
+
+## Scripted Launch
+
+The launch steps can be scripted. The reward-program workspace includes:
+
+| Script | Purpose |
+|---|---|
+| `npm run create-token` | Runs `scripts/create-token.sh` to create a classic SPL or Token Extensions mint, optionally mint initial supply, and optionally revoke authorities. |
+| `npm run deploy:program` | Runs `scripts/deploy-program.sh` to build and deploy the Anchor program after checking the program keypair matches `declare_id!`. |
+| `npm run init:campaign` | Runs `scripts/initialize-campaign.mjs` to initialize the reward campaign PDA, create the PDA-owned vault, and optionally fund it. |
+
+Example devnet flow:
+
+```bash
+cd contrib/reward-program
+cp .env.example .env
+npm install
+
+# Edit .env for SOLANA_CLUSTER, WALLET, TOKEN_INITIAL_SUPPLY,
+# TOKEN_PROGRAM, PROGRAM_KEYPAIR, REWARD_PER_UNIT, and HEAD_AUTHORITY.
+npm run create-token
+
+# For a new program ID, generate a keypair and sync Anchor source first:
+solana-keygen new --no-bip39-passphrase \
+  -o target/deploy/opentela_rewards-keypair.json
+anchor keys sync
+
+npm run deploy:program
+npm run init:campaign
+```
+
+The scripts write generated launch data to
+`contrib/reward-program/deployments/<cluster>/`, which is intentionally ignored
+by git.
+
+The deployment wallet is required and is controlled by `WALLET` in
+`contrib/reward-program/.env`. It pays deployment fees and is the upgrade
+authority unless you move that authority after deployment.
+
+You can create that wallet with OpenTela and feed its Solana-compatible keypair
+path into the reward scripts:
+
+```bash
+otela wallet create
+otela wallet info
+
+# Copy the printed "Keypair file" path into contrib/reward-program/.env:
+WALLET=$HOME/.config/opentela/accounts/<wallet-pubkey>/keypair.json
+TOKEN_AUTHORITY_KEYPAIR=$WALLET
+```
+
+On devnet, fund the wallet before running token or deploy scripts:
+
+```bash
+otela wallet airdrop --solana.rpc https://api.devnet.solana.com 2
+solana balance --url devnet -k "$WALLET"
+```
+
+After the program is deployed and a campaign is initialized, configure the docs
+wallet app with the public addresses:
+
+```bash
+NEXT_PUBLIC_REWARD_PROGRAM_ID=<deployed-program-id>
+NEXT_PUBLIC_REWARD_CAMPAIGN=<initialized-campaign-pda>
+NEXT_PUBLIC_OTELA_MINT=<token-mint>
+NEXT_PUBLIC_TOKEN_PROGRAM_ID=<token-program-id>
+```
+
+The docs app cannot infer the reward program from a connected wallet. It uses
+these `NEXT_PUBLIC_*` values to decide which cluster, mint, token program,
+reward program, and campaign it is showing or interacting with.
+
+For devnet, that sequence creates the OTELA mint, deploys the program, creates
+the reward campaign and vault, then writes `token.env`, `program.env`, and
+`campaign.env` under `contrib/reward-program/deployments/devnet/`.
+
+Before a public deployment:
+
+- create or confirm the canonical OTELA mint for the target cluster
+- deploy the reward program with an audited upgrade authority policy
+- initialize a campaign with the OTELA mint and authorized head authority
+- transfer OTELA from treasury into the campaign vault
+- publish the program ID, campaign address, mint address, and IDL
+- configure head nodes to sign receipt bytes exactly as specified
+- configure providers or the token manager to submit claim transactions
+
+For mainnet, use a private or paid RPC endpoint, keep production keypairs out of
+the repository, set `CONFIRM_MAINNET=yes` only for an intentional launch, and
+decide whether mint and upgrade authorities belong to governance, multisig, or
+should be permanently revoked.
+
+## Relationship to Earlier Settlement Design
+
+This design supersedes the older head-orchestrated direct transfer model for
+provider rewards. Head nodes no longer need to hold consumer private keys or
+submit direct transfers. Instead, a public reward vault is pre-funded and
+providers claim from it with on-chain receipt verification.
+
+## Open Questions
+
+- Whether OTELA should use the classic Token Program or Token Extensions on
+  mainnet.
+- Whether campaign rates should be epoch-based so old signed receipts remain
+  claimable after a rate update.
+- Whether head authorities should be a single campaign key, an on-chain
+  allowlist, or a stake-weighted quorum.
+- Whether high-value rewards need a challenge period before payout.

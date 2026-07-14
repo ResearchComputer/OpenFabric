@@ -215,56 +215,80 @@ or export one from Solflare / Phantom and convert it.`,
 
 var walletBalanceCmd = &cobra.Command{
 	Use:   "balance",
-	Short: "Show the SOL and token balance of the default wallet",
+	Short: "Show the SOL and OTELA balance of the default wallet",
 	Long: `Query the Solana cluster for the native SOL balance of the
-default wallet and, if a mint is configured, the SPL token balance.
+default wallet and the configured OTELA SPL token balance.
 
-By default the mainnet-beta RPC is used. Override with --solana.rpc.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		wm, err := wallet.NewWalletManager()
-		if err != nil {
-			fmt.Printf("Failed to initialize wallet manager: %v\n", err)
-			return
-		}
+By default the mainnet-beta RPC and configured solana.mint are used.
+Override with --solana.rpc and --solana.mint.`,
+	Run: runWalletBalance,
+}
 
-		acc, err := wm.DefaultAccount()
-		if err != nil {
-			fmt.Println("No default wallet. Run `otela wallet create` first.")
-			return
-		}
+var balanceCmd = &cobra.Command{
+	Use:   "balance",
+	Short: "Show the SOL and OTELA balance of the default wallet",
+	Long:  walletBalanceCmd.Long,
+	Run:   runWalletBalance,
+}
 
-		rpcEndpoint := viper.GetString("solana.rpc")
-		if rpcEndpoint == "" {
-			rpcEndpoint = defaultConfig.Solana.RPC
-		}
-		client := solana.NewClient(rpcEndpoint)
+func runWalletBalance(cmd *cobra.Command, args []string) {
+	wm, err := wallet.NewWalletManager()
+	if err != nil {
+		fmt.Printf("Failed to initialize wallet manager: %v\n", err)
+		return
+	}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+	acc, err := wm.DefaultAccount()
+	if err != nil {
+		fmt.Println("No default wallet. Run `otela wallet create` first.")
+		return
+	}
 
-		pubkey := acc.PublicKey
-		fmt.Printf("Wallet: %s\n", pubkey)
-		fmt.Printf("RPC:    %s\n\n", rpcEndpoint)
+	rpcEndpoint := viper.GetString("solana.rpc")
+	if rpcEndpoint == "" {
+		rpcEndpoint = defaultConfig.Solana.RPC
+	}
+	client := solana.NewClient(rpcEndpoint)
 
-		// SOL balance
-		solBal, err := client.GetBalanceSOL(ctx, pubkey)
-		if err != nil {
-			fmt.Printf("  SOL balance: (error: %v)\n", err)
-		} else {
-			fmt.Printf("  SOL balance: %.9f SOL\n", solBal)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-		// SPL token balance (if mint configured)
-		mint := viper.GetString("solana.mint")
-		if mint != "" {
-			raw, ui, err := client.GetTokenBalance(ctx, pubkey, mint)
-			if err != nil {
-				fmt.Printf("  Token (%s): (error: %v)\n", mint, err)
-			} else {
-				fmt.Printf("  Token (%s): %s (%.6f)\n", mint, raw, ui)
-			}
-		}
-	},
+	pubkey := acc.PublicKey
+	fmt.Printf("Wallet: %s\n", pubkey)
+	fmt.Printf("RPC:    %s\n\n", rpcEndpoint)
+
+	solBal, err := client.GetBalanceSOL(ctx, pubkey)
+	if err != nil {
+		fmt.Printf("  SOL balance:   (error: %v)\n", err)
+	} else {
+		fmt.Printf("  SOL balance:   %.9f SOL\n", solBal)
+	}
+
+	mint := viper.GetString("solana.mint")
+	if mint == "" {
+		fmt.Println("  OTELA balance: (skipped: no solana.mint configured)")
+		return
+	}
+
+	balance, err := client.GetTokenBalanceDetails(ctx, pubkey, mint)
+	if err != nil {
+		fmt.Printf("  OTELA balance: (error: %v)\n", err)
+		fmt.Printf("  OTELA mint:    %s\n", mint)
+		return
+	}
+
+	amount := balance.UIAmountString
+	if amount == "" {
+		amount = strconv.FormatFloat(balance.UIAmount, 'f', -1, 64)
+	}
+	fmt.Printf("  OTELA balance: %s OTELA\n", amount)
+	fmt.Printf("  OTELA raw:     %s base units\n", balance.RawAmount)
+	fmt.Printf("  OTELA mint:    %s\n", mint)
+}
+
+func addWalletBalanceFlags(cmd *cobra.Command) {
+	cmd.Flags().String("solana.rpc", "", "Solana RPC endpoint override")
+	cmd.Flags().String("solana.mint", defaultConfig.Solana.Mint, "OTELA SPL token mint address")
 }
 
 // ── transfer ────────────────────────────────────────────────────────────
@@ -389,7 +413,8 @@ func init() {
 	walletExportCmd.Flags().String("pubkey", "", "public key of the wallet to export (default: the active wallet)")
 	walletExportCmd.Flags().String("file", "", "write keypair in Solana-CLI JSON format to this path instead of printing base58")
 
-	walletBalanceCmd.Flags().String("solana.rpc", "", "Solana RPC endpoint override")
+	addWalletBalanceFlags(walletBalanceCmd)
+	addWalletBalanceFlags(balanceCmd)
 	walletTransferCmd.Flags().String("solana.rpc", "", "Solana RPC endpoint override")
 	walletAirdropCmd.Flags().String("solana.rpc", "", "Solana RPC endpoint override")
 

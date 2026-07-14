@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"opentela/internal/common"
-
-	"opentela/internal/platform"
+	"strings"
 	"sync"
 	"time"
+
+	"opentela/internal/common"
+	"opentela/internal/platform"
 
 	ds "github.com/ipfs/go-datastore"
 	"github.com/spf13/viper"
@@ -70,12 +71,13 @@ func hasLocalServices() bool {
 func RegisterLocalServices() {
 	serviceName := viper.GetString("service.name")
 	servicePort := viper.GetString("service.port")
+	healthPath := normalizeHealthPath(viper.GetString("service.health_path"))
 	if serviceName == "" || servicePort == "" {
 		return
 	}
 	if serviceName == "llm" {
 		// register the service by first fetch available models on the port
-		err := healthCheckRemote(servicePort, 6000)
+		err := healthCheckRemote(servicePort, healthPath, 6000)
 		if err != nil {
 			common.Logger.Error("could not health check LLM service: ", err)
 			return
@@ -85,7 +87,7 @@ func RegisterLocalServices() {
 		return
 	}
 	// Generic service: health-check then register with the configured name.
-	err := healthCheckRemote(servicePort, 6000)
+	err := healthCheckRemote(servicePort, healthPath, 6000)
 	if err != nil {
 		common.Logger.Errorf("could not health check service %s: %v", serviceName, err)
 		return
@@ -114,13 +116,25 @@ func RegisterAdHocService(name, port string, identityGroup []string) {
 	provideService(svc)
 }
 
-func healthCheckRemote(port string, maxTries int) error {
+func normalizeHealthPath(healthPath string) string {
+	healthPath = strings.TrimSpace(healthPath)
+	if healthPath == "" {
+		return "/health"
+	}
+	if !strings.HasPrefix(healthPath, "/") {
+		return "/" + healthPath
+	}
+	return healthPath
+}
+
+func healthCheckRemote(port, healthPath string, maxTries int) error {
 	const retryInterval = 10 * time.Second
 	const logEveryN = 10 // log every 10 retries (~100s)
 	start := time.Now()
+	healthURL := "http://localhost:" + port + normalizeHealthPath(healthPath)
 
 	for tries := 1; tries <= maxTries; tries++ {
-		_, err := common.RemoteGET("http://localhost:" + port + "/health")
+		_, err := common.RemoteGET(healthURL)
 		if err == nil {
 			elapsed := time.Since(start).Truncate(time.Second)
 			common.Logger.Infof("Health check passed after %d/%d attempts (%s elapsed)", tries, maxTries, elapsed)

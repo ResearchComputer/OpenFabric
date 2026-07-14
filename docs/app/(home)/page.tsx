@@ -97,6 +97,18 @@ const community: { label: string; description: string; href: string; external?: 
     ),
   },
   {
+    label: 'Wallet',
+    description: 'Wallet & API key dashboard',
+    href: '/token-manager',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.75V9.75A2.25 2.25 0 0 0 18.75 7.5H5.25A2.25 2.25 0 0 0 3 9.75v8.25A2.25 2.25 0 0 0 5.25 20.25h13.5A2.25 2.25 0 0 0 21 18v-3" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75h4.125c.483 0 .875.392.875.875v1.75a.875.875 0 0 1-.875.875H16.5a1.75 1.75 0 1 1 0-3.5Z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5V5.625A1.875 1.875 0 0 1 8.625 3.75h8.25A1.875 1.875 0 0 1 18.75 5.625V7.5" />
+      </svg>
+    ),
+  },
+  {
     label: 'SwissAI',
     description: 'Production deployment',
     href: 'https://serving.swissai.cscs.ch/',
@@ -273,6 +285,12 @@ export default function HomePage() {
               className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Documentation
+            </Link>
+            <Link
+              href="/wallet"
+              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+            >
+              Wallet
             </Link>
             <a
               href="https://github.com/eth-easl/OpenTela"

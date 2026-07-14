@@ -267,6 +267,8 @@ You generally don't call this directly from outside the cluster. It is automatic
 
 For LLM services, identity groups are configured **automatically**. When a worker registers its `llm` service, OpenTela queries the serving engine's `/v1/models` endpoint and creates one `model=<model_id>` entry per available model.
 
+For other service names, set `service.identity_group` explicitly in the worker configuration. The service may already be running and managed outside OpenTela; `--subprocess` is not required. See [Register a non-LLM service](/docs/tutorial/register-service) for a complete configuration and request example.
+
 You can also use the special values to control routing behavior:
 
 - **`all`** — makes a worker accept every request for a service, regardless of what's in the body. Use this for catch-all or fallback nodes. This has the **lowest** routing priority and is only reached when the caller sets `X-Otela-Fallback: 2`.
