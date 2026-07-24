@@ -8,11 +8,12 @@ export function isNeonConfigured(): boolean {
   return Boolean(tokenManagerConfig.neonAuthUrl);
 }
 
-export const authClient = isNeonConfigured()
-  ? createAuthClient(tokenManagerConfig.neonAuthUrl, {
-      adapter: BetterAuthReactAdapter(),
-    })
-  : null;
+export const authClient =
+  isNeonConfigured() && typeof window !== 'undefined'
+    ? createAuthClient(tokenManagerConfig.neonAuthUrl, {
+        adapter: BetterAuthReactAdapter(),
+      })
+    : null;
 
 export async function getAuthJwt(): Promise<string> {
   if (!authClient) {
