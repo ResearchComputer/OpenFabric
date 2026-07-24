@@ -27,7 +27,14 @@ import {
   type CreatedApiKey,
 } from './auth-api';
 import { formatDate, middleEllipsis, uiAmountToRaw } from './format';
-import { authClient, isNeonConfigured } from './neon-auth';
+import {
+  createManageKey,
+  listManageKeys,
+  revokeManageKey,
+  type ManageKey,
+  type CreatedManageKey,
+} from './manage-api';
+import { authClient, isNeonConfigured, getAuthJwt } from './neon-auth';
 import {
   buildOtelaTransfer,
   createConnection,
@@ -79,6 +86,9 @@ export default function AccountClient() {
   const [txSignature, setTxSignature] = useState<string | null>(null);
   const [neonUser, setNeonUser] = useState<{ id: string; email?: string } | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [skKeys, setSkKeys] = useState<ManageKey[]>([]);
+  const [lastCreatedSk, setLastCreatedSk] = useState<CreatedManageKey | null>(null);
+  const [skLabel, setSkLabel] = useState('');
 
   const connection = useMemo(
     () => createConnection(rpcUrl),
@@ -158,6 +168,60 @@ export default function AccountClient() {
       showNotice('error', error instanceof Error ? error.message : String(error));
     });
   }, [refreshKeys, session, showNotice, wallet]);
+
+  const refreshSkKeys = useCallback(async () => {
+    if (!neonUser) return;
+    const jwt = await getAuthJwt();
+    setSkKeys(await listManageKeys(tokenManagerConfig.apiBaseUrl, jwt));
+  }, [neonUser]);
+
+  useEffect(() => {
+    if (!neonUser) {
+      setSkKeys([]);
+      return;
+    }
+    refreshSkKeys().catch((e: unknown) =>
+      showNotice('error', e instanceof Error ? e.message : String(e)),
+    );
+  }, [neonUser, refreshSkKeys, showNotice]);
+
+  async function handleCreateSkKey(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!neonUser) return;
+    setPending('create-sk');
+    setLastCreatedSk(null);
+    try {
+      const jwt = await getAuthJwt();
+      const created = await createManageKey(
+        tokenManagerConfig.apiBaseUrl,
+        jwt,
+        skLabel.trim() || undefined,
+      );
+      setLastCreatedSk(created);
+      setSkLabel('');
+      await refreshSkKeys();
+      showNotice('success', 'API key created — copy it now, it is shown once');
+    } catch (e) {
+      showNotice('error', e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleRevokeSkKey(id: string) {
+    if (!window.confirm(`Revoke API key ${id}?`)) return;
+    setPending(`sk-${id}`);
+    try {
+      const jwt = await getAuthJwt();
+      await revokeManageKey(tokenManagerConfig.apiBaseUrl, jwt, id);
+      await refreshSkKeys();
+      showNotice('success', 'API key revoked');
+    } catch (e) {
+      showNotice('error', e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(null);
+    }
+  }
 
   async function connectWallet() {
     if (!provider) {
@@ -485,12 +549,111 @@ export default function AccountClient() {
           ) : !mounted ? (
             <div className="otm-empty-state">Loading…</div>
           ) : neonUser ? (
-            <div className="otm-inline-auth">
-              <div>
-                <strong>Signed in</strong>
-                <p>{neonUser.email ?? neonUser.id}</p>
+            <>
+              <p className="otm-eyebrow">
+                Signed in as {neonUser.email ?? neonUser.id}
+              </p>
+              <form className="otm-create-key-form" onSubmit={handleCreateSkKey}>
+                <label>
+                  Label
+                  <input
+                    value={skLabel}
+                    onChange={(e) => setSkLabel(e.target.value)}
+                    placeholder="laptop"
+                    maxLength={100}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="otm-primary-button"
+                  disabled={pending === 'create-sk'}
+                >
+                  {pending === 'create-sk' ? (
+                    <Loader2 className="otm-spin" size={16} />
+                  ) : (
+                    <KeyRound size={16} />
+                  )}
+                  Create sk- key
+                </button>
+              </form>
+
+              {lastCreatedSk ? (
+                <div className="otm-token-reveal">
+                  <div>
+                    <span>New API key (shown once)</span>
+                    <code>{lastCreatedSk.key}</code>
+                  </div>
+                  <button
+                    type="button"
+                    className="otm-icon-button"
+                    title="Copy API key"
+                    onClick={() => {
+                      navigator.clipboard.writeText(lastCreatedSk.key);
+                      showNotice('success', 'API key copied');
+                    }}
+                  >
+                    <Copy size={18} />
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="otm-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Prefix</th>
+                      <th>Created</th>
+                      <th>Status</th>
+                      <th aria-label="Actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skKeys.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="otm-table-empty">
+                          No API keys for this account.
+                        </td>
+                      </tr>
+                    ) : (
+                      skKeys.map((k) => (
+                        <tr key={k.id}>
+                          <td>{k.name || '-'}</td>
+                          <td>
+                            <code>{k.prefix}</code>
+                          </td>
+                          <td>{formatDate(k.created_at)}</td>
+                          <td>
+                            <span
+                              className={`otm-status-pill ${
+                                k.revoked_at ? 'revoked' : 'active'
+                              }`}
+                            >
+                              {k.revoked_at ? 'Revoked' : 'Active'}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="otm-icon-button danger"
+                              onClick={() => handleRevokeSkKey(k.id)}
+                              disabled={Boolean(k.revoked_at) || pending === `sk-${k.id}`}
+                              title="Revoke API key"
+                            >
+                              {pending === `sk-${k.id}` ? (
+                                <Loader2 className="otm-spin" size={18} />
+                              ) : (
+                                <Trash2 size={18} />
+                              )}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
-            </div>
+            </>
           ) : authClient ? (
             <NeonAuthUIProvider authClient={authClient}>
               <AuthView pathname="sign-in" />
@@ -504,7 +667,7 @@ export default function AccountClient() {
           <div className="otm-panel-heading">
             <div>
               <p className="otm-eyebrow">Access</p>
-              <h2>API Keys</h2>
+              <h2>Wallet Keys</h2>
             </div>
             <button
               type="button"
