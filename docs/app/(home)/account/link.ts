@@ -28,7 +28,9 @@ export function writeLink(input: {
     neonUserId: input.neonUserId,
     linkedAt: new Date().toISOString(),
   };
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(link));
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(link));
+  }
   return link;
 }
 
