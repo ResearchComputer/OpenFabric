@@ -32,6 +32,11 @@ export const tokenManagerConfig = {
   authApiBaseUrl:
     process.env.NEXT_PUBLIC_AUTH_API_BASE_URL?.replace(/\/+$/, '') ??
     'http://localhost:8090',
+  apiBaseUrl:
+    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') ??
+    'https://api.opentela.ai',
+  neonAuthUrl:
+    process.env.NEXT_PUBLIC_NEON_AUTH_URL?.replace(/\/+$/, '') ?? '',
   solanaRpcUrl:
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
     'https://api.mainnet-beta.solana.com',
