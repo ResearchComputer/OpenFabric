@@ -23,7 +23,7 @@ export async function createManageKey(
     body: JSON.stringify(name ? { name } : {}),
   });
   if (res.status === 401) throw new Error('Not authenticated — sign in again');
-  if (res.status === 409) throw new Error('Key limit reached (max 10 active keys)');
+  if (res.status === 409) throw new Error('Key limit reached');
   if (res.status === 400) throw new Error('Bad request (name too long?)');
   if (!res.ok) throw new Error(`Create failed: ${res.status}`);
   return (await res.json()) as CreatedManageKey;
@@ -49,5 +49,5 @@ export async function revokeManageKey(
     headers: authHeaders(jwt),
   });
   if (res.status === 404) throw new Error('No such key for this account');
-  if (res.status !== 204) throw new Error(`Revoke failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Revoke failed: ${res.status}`);
 }

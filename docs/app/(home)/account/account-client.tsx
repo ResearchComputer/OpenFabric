@@ -71,6 +71,22 @@ interface SignedSession {
   signedAt: string;
 }
 
+function NeonSessionSync({
+  client,
+  onUser,
+}: {
+  client: NonNullable<typeof authClient>;
+  onUser: (user: { id: string; email?: string } | null) => void;
+}) {
+  const { data } = client.useSession();
+  const userId = data?.user?.id;
+  const userEmail = data?.user?.email;
+  useEffect(() => {
+    onUser(userId ? { id: userId, email: userEmail ?? undefined } : null);
+  }, [userId, userEmail, onUser]);
+  return null;
+}
+
 export default function AccountClient() {
   const [provider, setProvider] = useState<SolanaWalletProvider | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
@@ -124,18 +140,6 @@ export default function AccountClient() {
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  useEffect(() => {
-    if (!mounted || !authClient) return;
-    authClient
-      .getSession()
-      .then((res: { data?: { user?: { id: string; email?: string } } | null }) => {
-        if (res?.data?.user) {
-          setNeonUser({ id: res.data.user.id, email: res.data.user.email });
-        }
-      })
-      .catch(() => undefined);
-  }, [mounted]);
 
   const showNotice = useCallback((kind: NoticeKind, message: string) => {
     setNotice({ kind, message });
@@ -192,6 +196,8 @@ export default function AccountClient() {
   useEffect(() => {
     if (!neonUser) {
       setSkKeys([]);
+      setLastCreatedSk(null);
+      setServicesKey('');
       return;
     }
     refreshSkKeys().catch((e: unknown) =>
@@ -296,7 +302,11 @@ export default function AccountClient() {
   }
 
   function handleNeonSignOut() {
-    authClient?.signOut().finally(() => setNeonUser(null));
+    authClient?.signOut().finally(() => {
+      setNeonUser(null);
+      setLastCreatedSk(null);
+      setServicesKey('');
+    });
   }
 
   function handleLink() {
@@ -462,6 +472,9 @@ export default function AccountClient() {
 
   return (
     <main className="otm-shell">
+      {mounted && authClient ? (
+        <NeonSessionSync client={authClient} onUser={setNeonUser} />
+      ) : null}
       <header className="otm-topbar">
         <div>
           <p className="otm-eyebrow">OpenTela</p>
@@ -731,7 +744,7 @@ export default function AccountClient() {
             </>
           ) : authClient ? (
             <NeonAuthUIProvider authClient={authClient}>
-              <AuthView pathname="sign-in" />
+              <AuthView pathname="sign-in" redirectTo="/account" />
             </NeonAuthUIProvider>
           ) : (
             <div className="otm-empty-state">Account sign-in unavailable.</div>
