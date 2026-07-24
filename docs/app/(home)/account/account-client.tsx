@@ -35,6 +35,7 @@ import {
   type CreatedManageKey,
 } from './manage-api';
 import { authClient, isNeonConfigured, getAuthJwt } from './neon-auth';
+import { readLink, writeLink, clearLink, type AccountLink } from './link';
 import { listModels, type ServiceModel } from './services';
 import {
   buildOtelaTransfer,
@@ -92,6 +93,16 @@ export default function AccountClient() {
   const [skLabel, setSkLabel] = useState('');
   const [models, setModels] = useState<ServiceModel[]>([]);
   const [servicesKey, setServicesKey] = useState('');
+  const [accountLink, setAccountLink] = useState<AccountLink | null>(null);
+
+  useEffect(() => {
+    setAccountLink(readLink());
+  }, []);
+
+  const canLink = Boolean(wallet && neonUser);
+  const isLinked = Boolean(
+    accountLink && wallet === accountLink.wallet && neonUser?.id === accountLink.neonUserId,
+  );
 
   const connection = useMemo(
     () => createConnection(rpcUrl),
@@ -288,6 +299,18 @@ export default function AccountClient() {
     authClient?.signOut().finally(() => setNeonUser(null));
   }
 
+  function handleLink() {
+    if (!wallet || !neonUser) return;
+    setAccountLink(writeLink({ wallet, neonUserId: neonUser.id }));
+    showNotice('success', 'Wallet and account linked in this browser');
+  }
+
+  function handleUnlink() {
+    clearLink();
+    setAccountLink(null);
+    showNotice('info', 'Link removed');
+  }
+
   async function signIn() {
     if (!provider || !wallet) return;
     setPending('signin');
@@ -480,6 +503,29 @@ export default function AccountClient() {
               {provider ? 'Connect' : 'Install Wallet'}
             </button>
           )}
+          {isLinked ? (
+            <span
+              className="otm-wallet-chip"
+              title="Local link only — not a verified binding"
+            >
+              Linked
+              <button
+                type="button"
+                className="otm-text-button"
+                onClick={handleUnlink}
+              >
+                Unlink
+              </button>
+            </span>
+          ) : canLink ? (
+            <button
+              type="button"
+              className="otm-secondary-button"
+              onClick={handleLink}
+            >
+              Link
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -487,6 +533,13 @@ export default function AccountClient() {
         <div className={`otm-notice ${notice.kind}`} role="status">
           {notice.message}
         </div>
+      ) : null}
+
+      {canLink || isLinked ? (
+        <p className="otm-eyebrow">
+          Linking pairs your wallet and account in this browser only — it is a
+          local convenience, not a server-verified binding.
+        </p>
       ) : null}
 
       <section className="otm-status-grid" aria-label="Wallet status">
