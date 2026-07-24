@@ -14,6 +14,8 @@
   },
   "type": "module",
   "dependencies": {
+    "@neondatabase/auth": "^0.4.2-beta",
+    "@neondatabase/auth-ui": "^0.2.1-beta",
     "@neondatabase/neon-js": "^0.6.2-beta",
     "@opennextjs/cloudflare": "^1.16.3",
     "@solana/spl-token": "^0.4.14",

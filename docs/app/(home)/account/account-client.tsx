@@ -15,6 +15,8 @@ import {
   Wallet,
 } from 'lucide-react';
 import { PublicKey } from '@solana/web3.js';
+import '@neondatabase/auth-ui/css';
+import { NeonAuthUIProvider, AuthView } from '@neondatabase/auth-ui';
 import { tokenManagerConfig } from './config';
 import {
   buildAuthChallenge,
@@ -25,6 +27,7 @@ import {
   type CreatedApiKey,
 } from './auth-api';
 import { formatDate, middleEllipsis, uiAmountToRaw } from './format';
+import { authClient, isNeonConfigured } from './neon-auth';
 import {
   buildOtelaTransfer,
   createConnection,
@@ -74,6 +77,8 @@ export default function AccountClient() {
   const [rpcDraftUrl, setRpcDraftUrl] = useState(tokenManagerConfig.solanaRpcUrl);
   const [pending, setPending] = useState<string | null>(null);
   const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [neonUser, setNeonUser] = useState<{ id: string; email?: string } | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const connection = useMemo(
     () => createConnection(rpcUrl),
@@ -91,6 +96,22 @@ export default function AccountClient() {
       setRpcDraftUrl(savedRpcUrl);
     }
   }, []);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || !authClient) return;
+    authClient
+      .getSession()
+      .then((res: { data?: { user?: { id: string; email?: string } } | null }) => {
+        if (res?.data?.user) {
+          setNeonUser({ id: res.data.user.id, email: res.data.user.email });
+        }
+      })
+      .catch(() => undefined);
+  }, [mounted]);
 
   const showNotice = useCallback((kind: NoticeKind, message: string) => {
     setNotice({ kind, message });
@@ -175,6 +196,10 @@ export default function AccountClient() {
     } finally {
       setPending(null);
     }
+  }
+
+  function handleNeonSignOut() {
+    authClient?.signOut().finally(() => setNeonUser(null));
   }
 
   async function signIn() {
@@ -440,6 +465,41 @@ export default function AccountClient() {
       </section>
 
       <div className="otm-workspace">
+        <section className="otm-panel">
+          <div className="otm-panel-heading">
+            <div>
+              <p className="otm-eyebrow">Account</p>
+              <h2>Sign in</h2>
+            </div>
+            {neonUser ? (
+              <button type="button" className="otm-text-button" onClick={handleNeonSignOut}>
+                Sign out
+              </button>
+            ) : null}
+          </div>
+
+          {!isNeonConfigured() ? (
+            <div className="otm-empty-state">
+              Account sign-in is not configured on this deployment.
+            </div>
+          ) : !mounted ? (
+            <div className="otm-empty-state">Loading…</div>
+          ) : neonUser ? (
+            <div className="otm-inline-auth">
+              <div>
+                <strong>Signed in</strong>
+                <p>{neonUser.email ?? neonUser.id}</p>
+              </div>
+            </div>
+          ) : authClient ? (
+            <NeonAuthUIProvider authClient={authClient}>
+              <AuthView pathname="sign-in" />
+            </NeonAuthUIProvider>
+          ) : (
+            <div className="otm-empty-state">Account sign-in unavailable.</div>
+          )}
+        </section>
+
         <section className="otm-panel otm-api-panel">
           <div className="otm-panel-heading">
             <div>
