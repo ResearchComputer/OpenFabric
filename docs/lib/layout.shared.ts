@@ -13,8 +13,8 @@ export function baseOptions(): BaseLayoutProps {
         url: '/docs',
       },
       {
-        text: 'Wallet',
-        url: '/wallet',
+        text: 'Account',
+        url: '/account',
       },
       {
         text: 'Blog',

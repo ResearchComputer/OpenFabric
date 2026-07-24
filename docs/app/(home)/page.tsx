@@ -97,9 +97,9 @@ const community: { label: string; description: string; href: string; external?: 
     ),
   },
   {
-    label: 'Wallet',
-    description: 'Wallet & API key dashboard',
-    href: '/token-manager',
+    label: 'Account',
+    description: 'API keys & wallet dashboard',
+    href: '/account',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.75V9.75A2.25 2.25 0 0 0 18.75 7.5H5.25A2.25 2.25 0 0 0 3 9.75v8.25A2.25 2.25 0 0 0 5.25 20.25h13.5A2.25 2.25 0 0 0 21 18v-3" />
@@ -287,10 +287,10 @@ export default function HomePage() {
               Documentation
             </Link>
             <Link
-              href="/wallet"
+              href="/account"
               className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
-              Wallet
+              Account
             </Link>
             <a
               href="https://github.com/eth-easl/OpenTela"

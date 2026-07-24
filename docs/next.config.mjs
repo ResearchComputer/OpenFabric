@@ -12,6 +12,12 @@ const config = {
       },
     ],
   },
+  async redirects() {
+    return [
+      { source: '/wallet', destination: '/account', permanent: true },
+      { source: '/token-manager', destination: '/account', permanent: true },
+    ];
+  },
 };
 
 export default withMDX(config);

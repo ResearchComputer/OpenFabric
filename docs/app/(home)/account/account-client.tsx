@@ -59,7 +59,7 @@ interface SignedSession {
   signedAt: string;
 }
 
-export default function TokenManagerClient() {
+export default function AccountClient() {
   const [provider, setProvider] = useState<SolanaWalletProvider | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
   const [session, setSession] = useState<SignedSession | null>(null);
@@ -331,7 +331,7 @@ export default function TokenManagerClient() {
       <header className="otm-topbar">
         <div>
           <p className="otm-eyebrow">OpenTela</p>
-          <h1>Wallet</h1>
+          <h1>Account</h1>
         </div>
         <div className="otm-wallet-actions">
           {wallet ? (
