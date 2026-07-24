@@ -72,6 +72,9 @@ npm install
 npm run dev
 ```
 
+**Pages:**
+- `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and a live `/v1/models` services catalog. Account sign-in requires `NEXT_PUBLIC_NEON_AUTH_URL` plus backend `CORS_ALLOWED_ORIGINS` allow-listing and a Neon trusted-domain registration.
+
 The OpenTela binary source code is available at [eth-easl/OpenTela](https://github.com/eth-easl/OpenTela).
 
 ## License
