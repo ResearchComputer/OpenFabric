@@ -35,6 +35,7 @@ import {
   type CreatedManageKey,
 } from './manage-api';
 import { authClient, isNeonConfigured, getAuthJwt } from './neon-auth';
+import { listModels, type ServiceModel } from './services';
 import {
   buildOtelaTransfer,
   createConnection,
@@ -89,6 +90,8 @@ export default function AccountClient() {
   const [skKeys, setSkKeys] = useState<ManageKey[]>([]);
   const [lastCreatedSk, setLastCreatedSk] = useState<CreatedManageKey | null>(null);
   const [skLabel, setSkLabel] = useState('');
+  const [models, setModels] = useState<ServiceModel[]>([]);
+  const [servicesKey, setServicesKey] = useState('');
 
   const connection = useMemo(
     () => createConnection(rpcUrl),
@@ -185,6 +188,10 @@ export default function AccountClient() {
     );
   }, [neonUser, refreshSkKeys, showNotice]);
 
+  useEffect(() => {
+    if (lastCreatedSk?.key) setServicesKey(lastCreatedSk.key);
+  }, [lastCreatedSk]);
+
   async function handleCreateSkKey(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!neonUser) return;
@@ -217,6 +224,21 @@ export default function AccountClient() {
       await refreshSkKeys();
       showNotice('success', 'API key revoked');
     } catch (e) {
+      showNotice('error', e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleLoadServices(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!servicesKey.trim()) return;
+    setPending('services');
+    try {
+      setModels(await listModels(tokenManagerConfig.apiBaseUrl, servicesKey.trim()));
+      showNotice('success', 'Services loaded');
+    } catch (e) {
+      setModels([]);
       showNotice('error', e instanceof Error ? e.message : String(e));
     } finally {
       setPending(null);
@@ -883,6 +905,84 @@ export default function AccountClient() {
               View transaction
             </a>
           ) : null}
+        </section>
+
+        <section className="otm-panel">
+          <div className="otm-panel-heading">
+            <div>
+              <p className="otm-eyebrow">Permissionless</p>
+              <h2>Running Services</h2>
+            </div>
+          </div>
+          <form className="otm-create-key-form" onSubmit={handleLoadServices}>
+            <label>
+              API key
+              <input
+                value={servicesKey}
+                onChange={(e) => setServicesKey(e.target.value)}
+                placeholder="sk-…"
+                spellCheck={false}
+              />
+            </label>
+            <button
+              type="submit"
+              className="otm-primary-button"
+              disabled={pending === 'services'}
+            >
+              {pending === 'services' ? (
+                <Loader2 className="otm-spin" size={16} />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+              Load
+            </button>
+          </form>
+          {models.length === 0 ? (
+            <div className="otm-empty-state">
+              Enter an API key and load to list running models (needs a valid key; may be
+              blocked by CORS from some origins).
+            </div>
+          ) : (
+            <div className="otm-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Endpoint</th>
+                    <th aria-label="curl" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {models.map((m) => {
+                    const curl = `curl ${tokenManagerConfig.apiBaseUrl}/v1/chat/completions \\\n  -H "Authorization: Bearer ${servicesKey.trim()}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${m.id}","messages":[{"role":"user","content":"hello"}]}'`;
+                    return (
+                      <tr key={m.id}>
+                        <td>
+                          <code>{m.id}</code>
+                        </td>
+                        <td>
+                          <code>/v1/chat/completions</code>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="otm-icon-button"
+                            title="Copy curl"
+                            onClick={() => {
+                              navigator.clipboard.writeText(curl);
+                              showNotice('success', 'curl copied');
+                            }}
+                          >
+                            <Copy size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </main>
