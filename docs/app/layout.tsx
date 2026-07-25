@@ -18,7 +18,10 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <body>
+      {/* suppressHydrationWarning: browser extensions (wallet, Grammarly, etc.)
+          inject attributes on <body> before React hydrates; this silences that
+          one-level attribute diff only, not mismatches in our own tree. */}
+      <body suppressHydrationWarning>
         <RootProvider>{children}</RootProvider>
       </body>
     </html>
