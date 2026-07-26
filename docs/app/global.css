@@ -1,6 +1,22 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+/* Neon auth UI theme + class safelist. This is the "consumers WITH Tailwind v4"
+   entry point and MUST stay after the tailwindcss import. Do NOT switch to
+   '@neondatabase/auth-ui/css': that ships a second full Tailwind build including
+   preflight, which Next appends on client-side navigation to /account and never
+   removes — it then resets padding/borders site-wide (e.g. collapsing the docs
+   search box from 36px to 24px). */
+/* Referenced by explicit path: the package's own './tailwind' entry re-imports
+   these relatively, and those nested paths do not resolve through the bare
+   specifier in this build. theme.css is variables/@property only and
+   theme-inline.css is an `@theme inline` token map, so neither adds element
+   selectors that could leak into the rest of the site. */
+@import '../node_modules/@neondatabase/auth-ui/dist/theme.css';
+@import '../node_modules/@neondatabase/auth-ui/dist/theme-inline.css';
+/* Generate the utility classes the auth components use (they live in vendor
+   markup Tailwind would not otherwise scan). */
+@source '../node_modules/@neondatabase/auth-ui/dist/.safelist.html';
 
 /* OpenTela — Emerald accent (sglang "aspen"-inspired theme) */
 :root {
@@ -46,439 +62,665 @@ body {
   );
 }
 
-/* OpenTela Token Manager */
-.otm-shell {
-  width: min(1180px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 28px 0 44px;
+/* ==========================================================================
+   Account console
+   A standalone app shell: grey canvas, fixed sidebar, white content panel.
+   Emerald accent (brand), theme-aware via --color-fd-* plus the tokens below.
+   ========================================================================== */
+
+:root {
+  --ac-canvas: #f4f4f5;
+  --ac-panel: #ffffff;
+  --ac-line: #e7e7ea;
+  --ac-line-soft: #f0f0f2;
+  --ac-band: #fafafa;
+  --ac-ink: #18181b;
+  --ac-muted: #71717a;
+  --ac-accent: var(--color-fd-primary);
+  --ac-accent-tint: color-mix(in oklab, var(--color-fd-primary) 11%, transparent);
+  --ac-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
 }
 
-.otm-topbar,
-.otm-panel-heading,
-.otm-wallet-actions,
-.otm-create-key-form,
-.otm-transfer-form,
-.otm-inline-auth,
-.otm-token-reveal,
-.otm-wallet-chip,
-.otm-primary-button,
-.otm-secondary-button,
-.otm-text-button,
-.otm-icon-button {
+.dark {
+  --ac-canvas: #0b0b0c;
+  --ac-panel: #131316;
+  --ac-line: #26262b;
+  --ac-line-soft: #1d1d21;
+  --ac-band: #191920;
+  --ac-ink: #f4f4f5;
+  --ac-muted: #a1a1aa;
+  --ac-shadow: none;
+}
+
+/* --------------------------------------------------------------- app shell */
+
+.acct-shell {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  min-height: 100dvh;
+  background: var(--ac-canvas);
+  color: var(--ac-ink);
+}
+
+.acct-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 14px 16px;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.acct-brand {
   display: flex;
   align-items: center;
+  gap: 9px;
+  padding: 4px 10px 16px;
+  color: var(--ac-ink);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-decoration: none;
 }
 
-.otm-topbar {
-  justify-content: space-between;
-  gap: 20px;
-  min-height: 72px;
+.acct-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--ac-accent);
+  color: var(--color-fd-primary-foreground);
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
-.otm-eyebrow {
-  margin: 0 0 3px;
-  color: color-mix(in oklab, var(--color-fd-primary) 72%, var(--color-fd-muted-foreground));
-  font-size: 0.78rem;
+.acct-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.acct-nav-label {
+  margin: 16px 0 4px;
+  padding: 0 10px;
+  color: var(--ac-muted);
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 
-.otm-shell h1,
-.otm-shell h2 {
-  margin: 0;
-  letter-spacing: 0;
-}
-
-.otm-shell h1 {
-  color: var(--color-fd-foreground);
-  font-size: clamp(1.85rem, 4vw, 2.75rem);
-  line-height: 1.05;
-}
-
-.otm-shell h2 {
-  color: var(--color-fd-foreground);
-  font-size: 1.15rem;
-}
-
-.otm-wallet-actions {
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.otm-wallet-chip {
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 8px;
-  background: var(--color-fd-card);
-  color: var(--color-fd-foreground);
-  font-weight: 700;
-}
-
-.otm-primary-button,
-.otm-secondary-button,
-.otm-text-button,
-.otm-icon-button {
-  border: 0;
-  border-radius: 8px;
-  justify-content: center;
-}
-
-.otm-primary-button {
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  background: var(--color-fd-primary);
-  color: var(--color-fd-primary-foreground);
-  font-weight: 800;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-}
-
-.otm-primary-button:hover:not(:disabled) {
-  filter: brightness(0.94);
-}
-
-.otm-secondary-button {
-  min-height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--color-fd-border);
-  background: var(--color-fd-background);
-  color: var(--color-fd-foreground);
-  font-weight: 800;
-}
-
-.otm-secondary-button:hover:not(:disabled) {
-  background: var(--color-fd-muted);
-}
-
-.otm-text-button {
-  min-height: 36px;
-  padding: 0 8px;
-  background: transparent;
-  color: var(--color-fd-muted-foreground);
-  font-weight: 800;
-}
-
-.otm-text-button:hover:not(:disabled) {
-  color: var(--color-fd-foreground);
-}
-
-.otm-icon-button {
-  width: 40px;
-  height: 40px;
-  background: color-mix(in oklab, var(--color-fd-muted) 88%, var(--color-fd-border));
-  color: var(--color-fd-foreground);
-}
-
-.otm-icon-button:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--color-fd-muted) 72%, var(--color-fd-border));
-}
-
-.otm-icon-button.danger {
-  color: #b23a3a;
-}
-
-.otm-shell button,
-.otm-shell input {
-  font: inherit;
-}
-
-.otm-shell button {
-  cursor: pointer;
-}
-
-.otm-shell button:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.otm-notice {
-  margin: 18px 0;
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--color-fd-border);
-  background: var(--color-fd-card);
-  color: var(--color-fd-foreground);
-  font-weight: 700;
-}
-
-.otm-notice.success {
-  border-color: color-mix(in oklab, #22a35b 52%, var(--color-fd-border));
-  background: color-mix(in oklab, #22a35b 11%, var(--color-fd-card));
-  color: #17613a;
-}
-
-.otm-notice.error {
-  border-color: color-mix(in oklab, #c74747 52%, var(--color-fd-border));
-  background: color-mix(in oklab, #c74747 10%, var(--color-fd-card));
-  color: #9e3333;
-}
-
-.otm-status-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 24px 0 18px;
-}
-
-.otm-metric-panel,
-.otm-panel {
-  border: 1px solid var(--color-fd-border);
-  border-radius: 8px;
-  background: var(--color-fd-card);
-  box-shadow: 0 16px 40px rgba(29, 44, 41, 0.06);
-}
-
-.otm-metric-panel {
-  min-height: 112px;
-  padding: 16px;
-}
-
-.otm-metric-panel span,
-.otm-token-reveal span,
-.otm-compact-detail-list dt,
-.otm-detail-list dt {
-  display: block;
-  color: var(--color-fd-muted-foreground);
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-
-.otm-metric-panel strong {
-  display: block;
-  margin: 8px 0 4px;
-  color: var(--color-fd-foreground);
-  font-size: 1.55rem;
-  line-height: 1.1;
-  overflow-wrap: anywhere;
-}
-
-.otm-metric-panel small {
-  color: var(--color-fd-muted-foreground);
-  overflow-wrap: anywhere;
-}
-
-.otm-metric-panel.accent {
-  border-color: color-mix(in oklab, var(--color-fd-primary) 24%, var(--color-fd-border));
-  background: color-mix(in oklab, var(--color-fd-primary) 6%, var(--color-fd-card));
-}
-
-.otm-rpc-form {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.otm-rpc-actions {
+.acct-nav-link {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--ac-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.otm-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
-  gap: 18px;
-  align-items: start;
+.acct-nav-link:hover {
+  background: color-mix(in oklab, var(--ac-ink) 5%, transparent);
+  color: var(--ac-ink);
 }
+
+.acct-nav-link.active {
+  background: var(--ac-accent-tint);
+  color: var(--ac-accent);
+  font-weight: 600;
+}
+
+.acct-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+.acct-footer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.acct-footer-links a {
+  padding: 5px 10px;
+  border-radius: 7px;
+  color: var(--ac-muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.acct-footer-links a:hover {
+  color: var(--ac-ink);
+}
+
+.acct-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--ac-line);
+  border-radius: 9px;
+  background: var(--ac-panel);
+  color: var(--ac-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+}
+
+.acct-user span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ content pane */
+
+.acct-main {
+  min-width: 0;
+  margin: 10px 10px 10px 0;
+  border: 1px solid var(--ac-line);
+  border-radius: 14px;
+  background: var(--ac-panel);
+  box-shadow: var(--ac-shadow);
+  overflow: hidden;
+}
+
+.acct-page {
+  padding: 30px 32px 40px;
+}
+
+.acct-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 26px;
+}
+
+.acct-page-head h1 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-size: clamp(1.6rem, 2.6vw, 1.95rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.acct-page-sub {
+  margin: 7px 0 0;
+  max-width: 60ch;
+  color: var(--ac-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.acct-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* toolbar: filter row above a table */
+.acct-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.acct-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.acct-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 240px;
+}
+
+.acct-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--ac-muted);
+  pointer-events: none;
+}
+
+.acct-search input {
+  padding-left: 32px;
+}
+
+/* section label above a group of rows/cards */
+.acct-section-label {
+  margin: 0 0 10px;
+  color: var(--ac-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------- signature: credential chip
+   Every machine-readable value in this product (key prefixes, model ids,
+   addresses, program ids) is something you copy. One consistent mono chip
+   marks them all. */
+
+.acct-chip,
+.acct-shell code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in oklab, var(--ac-accent) 22%, var(--ac-line));
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--ac-accent) 7%, transparent);
+  color: color-mix(in oklab, var(--ac-accent) 78%, var(--ac-ink));
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------- surfaces */
 
 .otm-panel {
-  padding: 18px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-panel);
+  overflow: hidden;
+}
+
+.otm-panel + .otm-panel,
+.acct-page > .otm-panel + .otm-panel {
+  margin-top: 16px;
 }
 
 .otm-panel-heading {
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.otm-empty-state,
-.otm-inline-auth {
-  min-height: 132px;
-  border: 1px dashed var(--color-fd-border);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--color-fd-muted) 48%, var(--color-fd-card));
-  color: var(--color-fd-muted-foreground);
-}
-
-.otm-empty-state {
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  text-align: center;
-}
-
-.otm-inline-auth {
-  justify-content: space-between;
-  gap: 18px;
-  padding: 18px;
-}
-
-.otm-inline-auth p {
-  margin: 4px 0 0;
-  color: var(--color-fd-muted-foreground);
-}
-
-.otm-create-key-form,
-.otm-transfer-form {
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.otm-shell label {
-  display: grid;
-  gap: 6px;
-  color: color-mix(in oklab, var(--color-fd-foreground) 72%, var(--color-fd-muted-foreground));
-  font-size: 0.86rem;
-  font-weight: 800;
-}
-
-.otm-create-key-form label,
-.otm-transfer-form label {
-  flex: 1 1 180px;
-}
-
-.otm-shell input {
-  min-height: 40px;
-  width: 100%;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 8px;
-  padding: 0 11px;
-  background: var(--color-fd-background);
-  color: var(--color-fd-foreground);
-}
-
-.otm-shell input:focus {
-  border-color: var(--color-fd-primary);
-  outline: 3px solid color-mix(in oklab, var(--color-fd-primary) 20%, transparent);
-}
-
-.otm-token-reveal {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin: 8px 0 16px;
-  padding: 12px;
-  border: 1px solid #d8c16a;
-  border-radius: 8px;
-  background: color-mix(in oklab, #ffe89a 28%, var(--color-fd-card));
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ac-line-soft);
 }
 
-.otm-shell code {
-  color: color-mix(in oklab, var(--color-fd-primary) 72%, var(--color-fd-foreground));
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-size: 0.86rem;
+.otm-panel-heading h2 {
+  margin: 0;
+  color: var(--ac-ink);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.otm-eyebrow {
+  margin: 0 0 2px;
+  color: var(--ac-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* stat cards */
+.otm-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.otm-metric-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 15px 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-panel);
+}
+
+.otm-metric-panel > span {
+  color: var(--ac-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.otm-metric-panel > strong {
+  color: var(--ac-ink);
+  font-size: 1.35rem;
+  font-weight: 680;
+  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
-.otm-token-reveal code {
-  display: block;
-  margin-top: 5px;
+.otm-metric-panel > small {
+  color: var(--ac-muted);
+  font-size: 0.78rem;
 }
+
+.otm-metric-panel.accent {
+  border-color: color-mix(in oklab, var(--ac-accent) 32%, var(--ac-line));
+  background: color-mix(in oklab, var(--ac-accent) 5%, var(--ac-panel));
+}
+
+.otm-metric-panel.accent > strong {
+  color: var(--ac-accent);
+}
+
+/* quick links (overview) */
+.acct-quicklinks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.acct-quicklink {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 15px 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+  text-decoration: none;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.acct-quicklink:hover {
+  border-color: color-mix(in oklab, var(--ac-accent) 45%, var(--ac-line));
+  background: color-mix(in oklab, var(--ac-accent) 4%, var(--ac-panel));
+}
+
+.acct-quicklink strong {
+  font-size: 0.9rem;
+  font-weight: 640;
+}
+
+.acct-quicklink span {
+  color: var(--ac-muted);
+  font-size: 0.82rem;
+}
+
+/* ------------------------------------------------------------------ tables */
 
 .otm-table-wrap {
   overflow-x: auto;
 }
 
-.otm-shell table {
+.acct-shell table {
   width: 100%;
-  min-width: 680px;
+  min-width: 620px;
   border-collapse: collapse;
 }
 
-.otm-shell th,
-.otm-shell td {
-  padding: 11px 8px;
-  border-bottom: 1px solid var(--color-fd-border);
+.acct-shell th,
+.acct-shell td {
+  padding: 12px 16px;
   text-align: left;
   vertical-align: middle;
 }
 
-.otm-shell th {
-  color: var(--color-fd-muted-foreground);
-  font-size: 0.78rem;
+.acct-shell th {
+  border-bottom: 1px solid var(--ac-line);
+  background: var(--ac-band);
+  color: var(--ac-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.otm-table-empty {
-  color: var(--color-fd-muted-foreground);
+.acct-shell tbody tr {
+  border-bottom: 1px solid var(--ac-line-soft);
+}
+
+.acct-shell tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.acct-shell tbody tr:hover {
+  background: color-mix(in oklab, var(--ac-ink) 2.5%, transparent);
+}
+
+.acct-shell td {
+  color: var(--ac-ink);
+  font-size: 0.875rem;
+}
+
+.acct-shell td.otm-table-empty {
+  padding: 34px 16px;
+  color: var(--ac-muted);
+  font-size: 0.875rem;
   text-align: center;
 }
 
+/* status pills */
 .otm-status-pill {
-  display: inline-grid;
-  min-width: 74px;
-  min-height: 28px;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 800;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .otm-status-pill.active {
-  background: color-mix(in oklab, #22a35b 16%, var(--color-fd-card));
-  color: #17613a;
+  border-color: color-mix(in oklab, #16a34a 38%, transparent);
+  background: color-mix(in oklab, #16a34a 11%, transparent);
+  color: #15803d;
+}
+
+.dark .otm-status-pill.active {
+  color: #4ade80;
 }
 
 .otm-status-pill.revoked {
-  background: color-mix(in oklab, #b23a3a 12%, var(--color-fd-card));
-  color: #8e3b3b;
+  border-color: color-mix(in oklab, #dc2626 34%, transparent);
+  background: color-mix(in oklab, #dc2626 9%, transparent);
+  color: #b91c1c;
 }
 
-.otm-transfer-form {
-  align-items: stretch;
-  flex-direction: column;
+.dark .otm-status-pill.revoked {
+  color: #f87171;
 }
 
-.otm-send-button {
+/* ------------------------------------------------------------------ inputs */
+
+.acct-shell button,
+.acct-shell input,
+.acct-centered button,
+.acct-centered input {
+  font: inherit;
+}
+
+.acct-shell button {
+  cursor: pointer;
+}
+
+.acct-shell button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.acct-shell label {
+  display: grid;
+  gap: 5px;
+  color: var(--ac-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.acct-shell input {
+  min-height: 36px;
+  width: 100%;
+  border: 1px solid var(--ac-line);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+  font-size: 0.875rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.acct-shell input::placeholder {
+  color: color-mix(in oklab, var(--ac-muted) 75%, transparent);
+}
+
+.acct-shell input:focus {
+  border-color: var(--ac-accent);
+  outline: 3px solid color-mix(in oklab, var(--ac-accent) 18%, transparent);
+  outline-offset: 0;
+}
+
+.otm-create-key-form,
+.otm-transfer-form,
+.otm-rpc-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 16px;
+}
+
+.otm-create-key-form label,
+.otm-transfer-form label {
+  flex: 1 1 190px;
+}
+
+.otm-rpc-form {
+  padding: 0;
+  margin-top: 8px;
   width: 100%;
 }
 
-.otm-detail-list {
-  display: grid;
-  gap: 12px;
-  margin: 18px 0 0;
+.otm-rpc-form label {
+  flex: 1 1 100%;
 }
 
-.otm-compact-detail-list {
-  display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
+.otm-rpc-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.otm-compact-detail-list div,
-.otm-detail-list div {
-  display: grid;
-  gap: 3px;
-}
+/* ----------------------------------------------------------------- buttons */
 
-.otm-compact-detail-list dd,
-.otm-detail-list dd {
-  margin: 0;
-  color: var(--color-fd-foreground);
-  font-weight: 800;
-}
-
-.otm-compact-detail-list dd {
-  font-size: 0.86rem;
-}
-
-.otm-tx-link {
+.otm-primary-button,
+.otm-secondary-button,
+.otm-text-button,
+.otm-icon-button,
+.otm-wallet-chip {
   display: inline-flex;
-  margin-top: 18px;
-  color: var(--color-fd-primary);
-  font-weight: 800;
-  text-decoration: none;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.otm-tx-link:hover {
-  text-decoration: underline;
+.otm-primary-button {
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--ac-accent);
+  color: var(--color-fd-primary-foreground);
 }
 
-.otm-success-icon {
-  color: #19834d;
+.otm-primary-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ac-accent) 88%, #000);
+}
+
+.otm-secondary-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: var(--ac-line);
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+}
+
+.otm-secondary-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ac-ink) 4%, var(--ac-panel));
+}
+
+.otm-text-button {
+  padding: 4px 6px;
+  background: none;
+  color: var(--ac-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.otm-text-button:hover:not(:disabled) {
+  color: var(--ac-ink);
+}
+
+.otm-icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-color: var(--ac-line);
+  background: var(--ac-panel);
+  color: var(--ac-muted);
+}
+
+.otm-icon-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ac-ink) 4%, var(--ac-panel));
+  color: var(--ac-ink);
+}
+
+.otm-icon-button.danger:hover:not(:disabled) {
+  border-color: color-mix(in oklab, #dc2626 45%, var(--ac-line));
+  color: #dc2626;
+}
+
+.otm-wallet-chip {
+  padding: 0 11px;
+  min-height: 34px;
+  border-color: var(--ac-line);
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.otm-wallet-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.otm-send-button {
+  align-self: flex-end;
 }
 
 .otm-spin {
@@ -491,30 +733,288 @@ body {
   }
 }
 
-@media (max-width: 860px) {
-  .otm-shell {
-    width: min(100% - 24px, 680px);
-    padding-top: 18px;
+@media (prefers-reduced-motion: reduce) {
+  .otm-spin {
+    animation-duration: 3s;
   }
 
-  .otm-topbar {
-    align-items: flex-start;
+  .acct-nav-link,
+  .acct-quicklink {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------- notices & misc. */
+
+.otm-notice {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--ac-line);
+  border-radius: 10px;
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+  font-size: 0.85rem;
+}
+
+.otm-notice.success {
+  border-color: color-mix(in oklab, #16a34a 42%, transparent);
+  background: color-mix(in oklab, #16a34a 8%, var(--ac-panel));
+}
+
+.otm-notice.error {
+  border-color: color-mix(in oklab, #dc2626 42%, transparent);
+  background: color-mix(in oklab, #dc2626 7%, var(--ac-panel));
+}
+
+.otm-notice.info {
+  border-color: color-mix(in oklab, var(--ac-accent) 38%, transparent);
+  background: color-mix(in oklab, var(--ac-accent) 6%, var(--ac-panel));
+}
+
+.otm-empty-state {
+  padding: 34px 16px;
+  color: var(--ac-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.otm-inline-auth {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+}
+
+.otm-inline-auth strong {
+  color: var(--ac-ink);
+  font-size: 0.9rem;
+}
+
+.otm-inline-auth p {
+  margin: 3px 0 0;
+  color: var(--ac-muted);
+  font-size: 0.85rem;
+}
+
+/* one-time key reveal — the only amber surface in the console, because it is
+   the only thing that cannot be recovered after dismissal */
+.otm-token-reveal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 16px 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklab, #d97706 45%, var(--ac-line));
+  border-radius: 10px;
+  background: color-mix(in oklab, #f59e0b 9%, var(--ac-panel));
+}
+
+.otm-token-reveal > div {
+  min-width: 0;
+}
+
+.otm-token-reveal span {
+  display: block;
+  margin-bottom: 5px;
+  color: color-mix(in oklab, #92400e 88%, var(--ac-ink));
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.dark .otm-token-reveal span {
+  color: #fbbf24;
+}
+
+.otm-detail-list,
+.otm-compact-detail-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 16px 16px;
+}
+
+.otm-detail-list > div,
+.otm-compact-detail-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.otm-detail-list dt,
+.otm-compact-detail-list dt {
+  color: var(--ac-muted);
+  font-size: 0.78rem;
+}
+
+.otm-detail-list dd,
+.otm-compact-detail-list dd {
+  margin: 0;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.otm-compact-detail-list {
+  padding: 0;
+  gap: 4px;
+}
+
+.otm-tx-link {
+  display: inline-block;
+  margin: 0 16px 16px;
+  color: var(--ac-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.otm-tx-link:hover {
+  text-decoration: underline;
+}
+
+.otm-success-icon {
+  color: #16a34a;
+}
+
+/* --------------------------------------------------------- auth / gate view */
+
+.acct-centered {
+  display: flex;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 84px 20px 40px;
+  background: var(--ac-canvas);
+}
+
+.acct-card {
+  width: 100%;
+  max-width: 420px;
+  align-self: flex-start;
+  padding: 26px;
+  border: 1px solid var(--ac-line);
+  border-radius: 14px;
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+}
+
+.acct-card h1 {
+  margin: 0 0 6px;
+  color: var(--ac-ink);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.acct-login {
+  width: 100%;
+  max-width: 400px;
+  align-self: flex-start;
+}
+
+.acct-login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.acct-login-sub {
+  margin: 0;
+  color: var(--ac-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.acct-back-link {
+  display: inline-block;
+  margin-top: 18px;
+  color: var(--ac-muted);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.acct-back-link:hover {
+  color: var(--ac-ink);
+}
+
+/* ------------------------------------------------------------- responsive */
+
+@media (max-width: 900px) {
+  .acct-shell {
+    grid-template-columns: minmax(0, 1fr);
+    /* sidebar takes its own height; content fills the rest (no dead gap) */
+    grid-template-rows: auto 1fr;
+  }
+
+  .acct-sidebar-footer {
+    margin-top: 0;
+  }
+
+  /* the table still scrolls horizontally here, so a centred empty row would
+     sit off-screen — anchor it to the left edge instead */
+  .acct-shell td.otm-table-empty {
+    text-align: left;
+  }
+
+  .acct-sidebar {
+    position: static;
+    height: auto;
+    gap: 10px;
+    padding: 12px 12px 8px;
+    border-bottom: 1px solid var(--ac-line);
+  }
+
+  .acct-brand {
+    padding-bottom: 4px;
+  }
+
+  .acct-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .acct-nav-label {
+    display: none;
+  }
+
+  .acct-sidebar-footer {
+    margin-top: 4px;
+  }
+
+  .acct-footer-links {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .acct-main {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .acct-page {
+    padding: 22px 18px 32px;
+  }
+
+  .acct-page-head {
     flex-direction: column;
-  }
-
-  .otm-wallet-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .otm-status-grid,
-  .otm-workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .otm-create-key-form,
-  .otm-inline-auth {
     align-items: stretch;
-    flex-direction: column;
+  }
+}
+
+/* notice sits above the page content but inside the panel's padding */
+.acct-notice-wrap {
+  padding: 22px 32px 0;
+}
+
+@media (max-width: 900px) {
+  .acct-notice-wrap {
+    padding: 16px 18px 0;
   }
 }

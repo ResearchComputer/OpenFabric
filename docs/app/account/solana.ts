@@ -31,9 +31,8 @@ export function describeSolanaError(error: unknown, rpcUrl: string): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/(\b403\b|Access forbidden)/i.test(message)) {
     return (
-      `Solana RPC refused the request with 403 Access forbidden. ` +
-      `The configured endpoint (${rpcUrl}) may block browser traffic, this IP, ` +
-      `or unauthenticated mainnet requests. Use a private RPC URL or a devnet/testnet endpoint.`
+      `${rpcUrl} refused the request (403). Public Solana endpoints commonly ` +
+      `block browser traffic. Set a different RPC URL below.`
     );
   }
   return message;

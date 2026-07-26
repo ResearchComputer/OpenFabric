@@ -37,9 +37,14 @@ export const tokenManagerConfig = {
     'https://api.opentela.ai',
   neonAuthUrl:
     process.env.NEXT_PUBLIC_NEON_AUTH_URL?.replace(/\/+$/, '') ?? '',
+  // Not api.mainnet-beta.solana.com: that endpoint answers CORS preflight but
+  // rejects the request itself with 403 as soon as it carries a browser Origin,
+  // so every balance lookup from this page fails. This one allows browser
+  // traffic. It is a shared public endpoint — point NEXT_PUBLIC_SOLANA_RPC_URL
+  // at a dedicated provider for anything beyond light use.
   solanaRpcUrl:
     process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
-    'https://api.mainnet-beta.solana.com',
+    'https://solana-rpc.publicnode.com',
   solanaCluster: process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? 'mainnet-beta',
   otelaMint: readPublicKey(
     process.env.NEXT_PUBLIC_OTELA_MINT,

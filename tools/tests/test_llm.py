@@ -1,12 +1,12 @@
-import openai
+from openai import OpenAI
 
-client = openai.OpenAI(
-    base_url="http://140.238.223.116:8092/v1/service/llm/v1",
-    api_key="test-token"
+client = OpenAI(
+    api_key="sk-rc-1nl7Tu6Jdnpi8CBtNsGDI90Ce020RqwO",
+    base_url="https://serving-api-ohsqpl3jvq-ew.a.run.app/v1",
 )
 
-response = client.chat.completions.create(
-    model="Qwen/Qwen3-1.7B",
-    messages=[{"role": "user", "content": "Hello, world!"}]
+resp = client.chat.completions.create(
+    model="apertus-ai/Apertus-v1.5-70B",
+    messages=[{"role": "user", "content": "Hello"}],
 )
-print(response)
+print(f"Response: {resp.choices[0].message}")
