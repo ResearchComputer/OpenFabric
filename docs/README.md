@@ -72,6 +72,25 @@ npm install
 npm run dev
 ```
 
+### Toolchain versions
+
+`package-lock.json` must be written by **npm 12.x**. npm 10 and npm 12 disagree on how
+optional peer dependencies are recorded — notably the nested
+`jayson > ws@7 > utf-8-validate@5` node — so a lockfile written by one version can make
+`npm ci` fail under the other with `Missing: <pkg> from lock file`.
+
+Two settings keep local and CI in agreement:
+
+| Where | Setting | Value |
+|-------|---------|-------|
+| Repo | `docs/.node-version` | `22.23.1` |
+| Cloudflare Pages → Settings → Build → Environment variables | `NPM_VERSION` | `12.0.1` |
+
+`NPM_VERSION` has no in-repo equivalent and **must** be set in the Cloudflare dashboard;
+without it the build image defaults to npm 10.9.2. Both are required together — npm 12
+declares `engines.node: ^22.22.2 || ^24.15.0 || >=26.0.0`, so pinning npm without the
+Node bump fails at install time with `EBADENGINE`.
+
 **Pages:**
 - `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and a live `/v1/models` services catalog. Account sign-in requires `NEXT_PUBLIC_NEON_AUTH_URL` plus backend `CORS_ALLOWED_ORIGINS` allow-listing and a Neon trusted-domain registration.
 
