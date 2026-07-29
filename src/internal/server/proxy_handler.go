@@ -168,7 +168,11 @@ func P2PForwardHandler(c *gin.Context) {
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
-		req.URL.Host = req.Host
+		// req.URL.Host is what the libp2p RoundTripper dials, so it must be the
+		// target peer. Assigning req.Host here instead uses the *incoming* Host
+		// header, because req.Host is only set to target.Host on the next line.
+		// (ServiceForwardHandler gets this right by assigning req.Host first.)
+		req.URL.Host = target.Host
 		req.Host = target.Host
 		if clientWallet != "" {
 			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
@@ -249,7 +253,11 @@ func p2pServiceForwardWithScope(c *gin.Context, scope routingScope) {
 	director := func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
-		req.URL.Host = req.Host
+		// req.URL.Host is what the libp2p RoundTripper dials, so it must be the
+		// target peer. Assigning req.Host here instead uses the *incoming* Host
+		// header, because req.Host is only set to target.Host on the next line.
+		// (ServiceForwardHandler gets this right by assigning req.Host first.)
+		req.URL.Host = target.Host
 		req.Host = target.Host
 		if clientWallet != "" {
 			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
