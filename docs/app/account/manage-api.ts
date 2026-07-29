@@ -193,7 +193,7 @@ export interface ManageRegionUpdateInput {
   status?: ManageRegionStatus;
 }
 
-export interface ManageRegionInvitationInput {
+export interface ManageRegionMemberCreateInput {
   instance_id: string;
   node_role: ManageNodeRole;
   expires_at?: string | null;
@@ -1379,12 +1379,12 @@ export async function updateManageRegion(
   return normalizeRegion(body);
 }
 
-export async function createManageRegionInvitation(
+export async function addManageRegionMember(
   baseUrl: string,
   jwt: string,
   regionId: string,
-  input: ManageRegionInvitationInput,
-): Promise<ManageRegionInvitation> {
+  input: ManageRegionMemberCreateInput,
+): Promise<void> {
   const instanceId = Number(input.instance_id);
   if (!Number.isSafeInteger(instanceId) || instanceId <= 0) {
     throw new ManageApiError("The selected instance id is invalid", 0);
@@ -1398,12 +1398,14 @@ export async function createManageRegionInvitation(
         instance_id: instanceId,
         node_role: input.node_role,
         expires_at: input.expires_at ?? null,
-        auto_accept: false,
+        auto_accept: true,
       }),
     },
     regionWriteError,
   );
-  return normalizeRegionInvitation(body);
+  if (!isRecord(body) || readId(body.instance_id) === null) {
+    throw new Error("Region membership response is missing instance_id");
+  }
 }
 
 export async function cancelManageRegionInvitation(

@@ -15,7 +15,7 @@ import { getAuthJwt } from "../neon-auth";
 import {
   cancelManageRegionInvitation,
   createManageRegion,
-  createManageRegionInvitation,
+  addManageRegionMember,
   deleteManageRegionMember,
   listManageRegions,
   updateManageRegion,
@@ -82,7 +82,6 @@ function RegionCard({
   } = useAccount();
   const [inviteInstanceId, setInviteInstanceId] = useState("");
   const [inviteRole, setInviteRole] = useState<ManageNodeRole>("worker");
-  const [inviteExpiry, setInviteExpiry] = useState("");
 
   const availableInstances = useMemo(
     () =>
@@ -133,18 +132,18 @@ function RegionCard({
     setPending(`region-invite-${region.id}`);
     try {
       const jwt = await getAuthJwt();
-      await createManageRegionInvitation(
+      await addManageRegionMember(
         tokenManagerConfig.apiBaseUrl,
         jwt,
         region.id,
         {
           instance_id: inviteInstanceId,
           node_role: inviteRole,
-          expires_at: inviteExpiry || null,
+          expires_at: null,
         },
       );
       await reload(true);
-      showNotice("success", `Invitation queued for ${region.slug}`);
+      showNotice("success", `Instance added to ${region.slug}`);
     } catch (error) {
       handleApiError(error);
     } finally {
@@ -299,7 +298,7 @@ function RegionCard({
 
         <section style={{ display: "grid", gap: 12 }}>
           <div className="otm-panel-heading">
-            <h3>Invite claimed instances</h3>
+            <h3>Add claimed instances</h3>
           </div>
           <form className="otm-create-key-form" onSubmit={handleInvite}>
             <label>
@@ -337,14 +336,6 @@ function RegionCard({
                 <option value="combined">Combined</option>
               </select>
             </label>
-            <label>
-              Invitation expiry
-              <input
-                type="datetime-local"
-                value={inviteExpiry}
-                onChange={(event) => setInviteExpiry(event.target.value)}
-              />
-            </label>
             <button
               type="submit"
               className="otm-primary-button"
@@ -357,7 +348,7 @@ function RegionCard({
               ) : (
                 <Plus size={16} />
               )}
-              Invite instance
+              Add instance
             </button>
           </form>
         </section>

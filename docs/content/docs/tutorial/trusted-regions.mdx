@@ -1,91 +1,397 @@
 ---
 title: Trusted Regions
-description: Manage mixed public and private services on one OpenTela peer without weakening worker authorization.
+description: How OpenTela enforces trusted regions, mixed public/private services, and email or wallet ACLs over a permissionless mesh.
 ---
 
-Trusted regions add a provider-authentic route on top of the existing permissionless mesh.
-They do not replace the public partition. Instead, one claimed peer can expose some exact
-service names publicly, bind other exact service names to a trusted region, and disable the
-rest.
+Trusted regions add an API-authoritative authorization boundary on top of OpenTela's
+permissionless libp2p mesh. They let one peer serve public, region-restricted, and disabled
+services at the same time without treating public discovery metadata as proof of trust.
 
-## Partitions
+The short version is:
 
-OpenTela now has two routing partitions:
+> A random node may join the physical mesh and copy a service name, but it cannot enter a
+> trusted region unless the control plane has a current membership for its claimed peer ID.
+> The head and worker both enforce that decision, and the worker derives the immediate
+> upstream identity from the authenticated libp2p connection.
 
-| Partition | What it means |
+## The mental model
+
+There is one physical mesh and two logical routing partitions:
+
+| Partition | Membership | Provider identity | Transport |
+| :--- | :--- | :--- | :--- |
+| `permissionless` | No region membership required | Service advertisements are not provider-authentic | Direct or application relay |
+| `trusted_region` | Active API-managed membership required | Peer ID, role, region, ownership, and exact service binding are checked | Direct libp2p only |
+
+The permissionless partition keeps OpenTela open: any node can join and advertise a service.
+The trusted partition does not try to prevent that. Instead, it uses a separate route and
+requires control-plane proof at every authorization boundary.
+
+These fields do **not** grant trusted membership:
+
+- a copied service name;
+- `RegionHint`;
+- an identity group such as `region=eu`;
+- `X-Otela-Trust`;
+- a wallet placed in local `trusted_wallets`;
+- the trusted URL shape by itself.
+
+They remain useful as public routing metadata, but trusted-region authority comes only from
+`api.opentela.ai`.
+
+## What is authoritative
+
+| Question | Authority |
 | :--- | :--- |
-| `permissionless` | The existing public mesh. Any node may join and advertise services. |
-| `trusted_region` | A named, API-managed region of claimed instances with explicit service bindings. |
+| Who owns a peer? | A claimed instance plus a fresh matching wallet observation |
+| Which region contains it? | The current API membership row |
+| May it act as ingress? | Active `head` or `combined` membership |
+| May it serve trusted work? | Active `worker` or `combined` membership |
+| Which partition contains a service? | The exact service binding on a service-managed instance |
+| May the caller use it? | The instance or service ACL evaluated against the API key owner |
+| Who made the final hop to a worker? | The authenticated libp2p `RemoteAddr`, not a forwarded header |
 
-The important asymmetry is that public names are not reserved. A hostile unmanaged node may
-advertise the same service name in the permissionless mesh. If the caller needs to know which
-operator answered, it must use the trusted-region route.
+The distributed node table is still used to discover live peers and services. It is not the
+source of region membership or ACL truth.
 
-## Service-managed policy
+## Why an unmanaged node cannot bypass a trusted route
 
-Every claimed instance starts in `peer` scope, which preserves the old peer-wide policy.
-Switching to `service` scope makes the control plane authorize by:
+Consider an attacker that starts an arbitrary OpenTela node and advertises the same
+`llm-private` service name as a trusted worker.
+
+1. The node may appear in permissionless discovery. Public names are deliberately not
+   reserved.
+2. A request to `/v1/regions/research-eu/service/llm-private/...` asks the control plane for
+   trusted candidates. The unmanaged peer receives an `unmanaged` denial and is removed.
+3. Copying `research-eu` into node metadata does not help because the evaluator reads region
+   membership from its database.
+4. Calling the worker's trusted internal URL directly does not help. The worker accepts that
+   namespace only over libp2p and sends the authenticated upstream peer ID back to the control
+   plane. An unmanaged upstream receives `untrusted_upstream`.
+5. Calling the permissionless worker URL does not help. A service bound to
+   `trusted_region` receives `trusted_route_required` on the public partition.
+6. Relaying does not help. Trusted transports reject limited/circuit connections and never
+   fall back to the application relay.
+
+This is authorization, not secrecy. The attacker can still see public mesh metadata and may
+serve its own permissionless service under the same name.
+
+## End-to-end trusted request flow
 
 ```text
-(instance_id, exact service_name, partition, region)
+Client
+  │  Authorization: Bearer sk-...
+  ▼
+Trusted head route
+  /v1/regions/:region/service/:service/*path
+  │
+  ├─ hashes the caller key locally
+  ├─ authenticates itself with a peer-key-bound node credential
+  └─ asks api.opentela.ai for exact trusted candidates
+          │
+          ├─ validates caller key and ACL
+          ├─ validates head membership and role
+          ├─ validates worker membership and role
+          ├─ validates current peer ownership
+          └─ validates exact service exposure and region binding
+  │
+  ▼ direct libp2p only
+Trusted worker route
+  /v1/_regions/:region/service/:service/*path
+  │
+  ├─ resolves one unique local service with the exact name
+  ├─ derives the immediate head peer ID from libp2p RemoteAddr
+  ├─ independently asks the control plane again
+  └─ applies the worker's local access-control policy cumulatively
+  │
+  ▼
+Loopback/private backend
 ```
 
-In service scope, each exact service name has one exposure:
+The head's allow decision is not sufficient by itself. The worker performs the final check
+using its own peer ID, the exact service and region parsed from the URL, the caller's API key,
+and the immediate libp2p upstream peer.
 
-- `permissionless`
-- `trusted_region`
-- `disabled`
+Trusted v2 decisions are never read from OpenTela's decision cache. Suspending a member,
+disabling a region, changing a service exposure, or revoking the caller key therefore affects
+the next trusted request.
 
-If one backend must answer in both partitions, register it under two different service names.
+## Peer-key-bound node credentials
 
-## Canonical routes
+The shared `security.control_plane.token` identifies an OpenTela deployment to the control
+plane, but it is not enough to act as a trusted head or worker. Trusted evaluator calls use a
+short-lived node credential:
 
-Permissionless routes:
+1. OpenTela requests a challenge for its own peer ID.
+2. The API requires an active, unexpired membership and a fresh ownership observation.
+3. OpenTela signs the exact challenge message with its libp2p private key.
+4. The API derives the peer ID from the submitted public key and verifies the signature.
+5. The API issues a maximum 15-minute Ed25519 JWT containing the peer ID, region, role, and
+   membership revision.
+6. OpenTela renews the credential automatically before expiry.
 
-- `/v1/service/:service/*path`
-- `/v1/p2p/:peerId/*path`
-- `/v1/p2p-service/:peerId/:service/*path`
+Challenges are single-use, expire quickly, and are bounded per peer. Membership, role,
+region status, revision, expiry, and ownership are checked again on every trusted evaluator
+request, so possession of an older credential does not preserve revoked access.
 
-Trusted routes:
+## Policy scopes
 
-- `/v1/regions/:region/service/:service/*path`
-- `/v1/regions/:region/p2p-service/:peerId/:service/*path`
-- worker destination: `/v1/_regions/:region/service/:service/*path`
+Every claimed instance has a `policy_scope`.
 
-Legacy opaque P2P is restricted for service-managed peers because it does not carry exact
-service context to the evaluator.
+| Scope | Behavior |
+| :--- | :--- |
+| `peer` | Backward-compatible peer-wide behavior. The peer's membership determines whether its services are permissionless or trusted. |
+| `service` | The control plane authorizes `(instance, exact service_name)` and each service chooses its own exposure and ACL mode. |
 
-## Worker guarantees
+Use `peer` for existing single-policy nodes. Use `service` when one physical node needs a mix
+of public, private, or disabled services.
 
-Trusted traffic keeps four invariants:
+An upgraded worker advertises the `service-policy-v2` capability automatically. The management
+plane rejects service scope when the capability is missing, the observation is unavailable,
+or an exact local service name appears more than once.
 
-1. The worker revalidates the request against the immediate upstream peer.
-2. Trusted routes stay direct-only. They do not use OpenTela's application relay.
-3. Trusted decisions are not served from the OpenTela client cache.
-4. Permissionless routes can never reach a trusted-only service.
+## Service exposure and ACL modes
 
-The worker does not treat identity groups or model names as authorization identities. Those
-are routing selectors only.
+In service scope, every exact service name has one exposure:
 
-## Safe transitions
+| Exposure | Permissionless route | Trusted route |
+| :--- | :--- | :--- |
+| `permissionless` | Eligible after ACL evaluation | Denied with a partition mismatch |
+| `trusted_region` | Denied; a trusted route is required | Eligible only in its bound active region |
+| `disabled` | Denied | Denied |
 
-When a peer moves from `peer` to `service` scope:
+One exact name cannot be public and trusted simultaneously. If the same backend must be
+available in both partitions, register two service names, such as `llm-public` and
+`llm-private`.
 
-- the control plane requires a fresh observation snapshot;
-- every observed unique service starts as `disabled`;
-- duplicate exact service names fail closed;
-- non-v2 workers are blocked from service-managed mode.
+Each service also has an `access_mode`:
 
-When a peer moves from `service` back to `peer` scope:
+| Access mode | Caller policy |
+| :--- | :--- |
+| `inherit` | Use the instance-wide `public|restricted` ACL |
+| `public` | Allow any valid, active OpenTela API key after partition checks |
+| `restricted` | Allow the instance owner or a matching service ACL rule |
 
-- all trusted bindings must be removed first;
-- service-specific ACLs are dropped;
-- the console requires an explicit acknowledgement of that reset.
+An empty restricted ACL is owner-only. Rules use OR semantics: matching any one rule is
+enough.
 
-## Backend exposure
+### ACL rule reference
 
-Trusted routing only protects traffic that passes through OpenTela. If a local backend still
-listens on a routable interface, callers can bypass partition and ACL checks by hitting it
-directly.
+| Rule | Match semantics |
+| :--- | :--- |
+| `email_domain` | Exact normalized domain from the final `@` in a verified email. Use `example.org`, not a full address. Subdomains do not match automatically. |
+| `wallet` | Exact canonical base58 Solana wallet linked to the API-key owner. |
 
-Run trusted backends on loopback or keep them behind a host firewall.
+Email domains are lowercase ASCII DNS names, at most 253 characters, with labels of at most
+63 characters. Wallets must parse and round-trip in canonical base58 form. Duplicate rules
+are collapsed, and restricted ACLs accept at most 100 rules.
+
+Email-domain rules fail closed when the server-side verified identity snapshot is stale.
+Wallet rules and owner access can still match independently.
+
+Partition and caller ACL checks are cumulative. For example, a public caller cannot reach a
+trusted-only service even if its email matches, and a trusted route does not bypass a
+restricted service ACL.
+
+## Configure OpenTela nodes
+
+Every trusted head and worker needs the same control-plane URL and internal deployment token:
+
+```yaml
+security:
+  control_plane:
+    url: "https://api.opentela.ai"
+    token: "replace-with-the-internal-control-token"
+    timeout: 5s
+    cache_ttl: 60s
+    stale_if_error: 2m
+```
+
+The token must match `INTERNAL_CONTROL_TOKEN` on the API deployment. The API also needs its
+trusted-node Ed25519 signing key configured. Node credentials are acquired automatically;
+operators do not place node JWTs in OpenTela configuration.
+
+Trusted traffic requires a direct libp2p connection between the head and worker. A worker
+that is reachable only through an application relay remains available to the permissionless
+partition but is unavailable for trusted-region traffic.
+
+## Set up a mixed public/private peer in the console
+
+The console is the recommended management surface.
+
+1. Open `/account/wallet`, link the wallet used by the peer's signed identity attestation,
+   and keep the identity fresh.
+2. Open `/account/instances` and claim each live head and worker by peer ID.
+3. Open `/account/regions`, create a region such as `research-eu`, and add the claimed
+   instances with explicit roles:
+   - `head` for ingress only;
+   - `worker` for service execution only;
+   - `combined` for both.
+4. Return to `/account/instances`, select the worker, and switch policy scope from `peer` to
+   `service`.
+5. Review the observed exact service names. The console starts observed services disabled so
+   they are not accidentally published during the transition.
+6. Configure each service independently. For example:
+
+   | Exact name | Exposure | Region | ACL mode |
+   | :--- | :--- | :--- | :--- |
+   | `embeddings-public` | `permissionless` | — | `public` |
+   | `llm-private` | `trusted_region` | `research-eu` | `restricted` with `email_domain=example.org` |
+   | `admin-debug` | `disabled` | — | `inherit` |
+
+7. Save the full inventory, then test both route families.
+
+The console atomically admits a claimed instance owned by the same account. The management
+API also supports expiring invitations for cross-account admission; a pending invitation has
+no routing authority until the instance owner accepts it.
+
+## Management API example
+
+Management calls use a Neon Auth session JWT, not an `sk-` OpenTela API key.
+
+Create a region:
+
+```http
+POST /manage/regions
+Authorization: Bearer <neon-auth-jwt>
+Content-Type: application/json
+
+{
+  "slug": "research-eu",
+  "name": "Research EU"
+}
+```
+
+Atomically add a claimed instance owned by the same account:
+
+```http
+POST /manage/regions/8/members
+Authorization: Bearer <neon-auth-jwt>
+Content-Type: application/json
+
+{
+  "instance_id": 77,
+  "node_role": "worker",
+  "expires_at": null,
+  "auto_accept": true
+}
+```
+
+Replace the worker's complete mixed-service policy:
+
+```http
+PUT /manage/instances/77/services
+Authorization: Bearer <neon-auth-jwt>
+Content-Type: application/json
+
+{
+  "policy_scope": "service",
+  "acknowledge_scope_reset": false,
+  "services": [
+    {
+      "service_name": "embeddings-public",
+      "exposure": "permissionless",
+      "region_id": null,
+      "access_mode": "public",
+      "rules": []
+    },
+    {
+      "service_name": "llm-private",
+      "exposure": "trusted_region",
+      "region_id": 8,
+      "access_mode": "restricted",
+      "rules": [
+        {"kind": "email_domain", "value": "example.org"},
+        {"kind": "wallet", "value": "<canonical-base58-wallet>"}
+      ]
+    },
+    {
+      "service_name": "admin-debug",
+      "exposure": "disabled",
+      "region_id": null,
+      "access_mode": "inherit",
+      "rules": []
+    }
+  ]
+}
+```
+
+Service-policy replacement is atomic. Exact names must be 1–80 ASCII characters and may use
+letters, digits, `.`, `_`, and `-`; the first character must be alphanumeric.
+
+## Call each partition
+
+Permissionless request:
+
+```bash
+curl https://HEAD_NODE/v1/service/embeddings-public/v1/embeddings \
+  -H "Authorization: Bearer sk-..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"example","input":"hello"}'
+```
+
+Trusted-region request:
+
+```bash
+curl https://HEAD_NODE/v1/regions/research-eu/service/llm-private/v1/chat/completions \
+  -H "Authorization: Bearer sk-..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"example","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Use the service-aware direct route when selecting a specific trusted peer:
+
+```text
+/v1/regions/research-eu/p2p-service/<peer-id>/llm-private/v1/chat/completions
+```
+
+Legacy `/v1/p2p/:peerId/*path` does not carry exact service context and therefore cannot reach
+a service-managed peer.
+
+## Lifecycle and fail-closed behavior
+
+- Disabling a region immediately removes ingress and provider eligibility. It never republishes
+  trusted services into the public partition.
+- Suspending, expiring, or revoking membership denies trusted traffic on the next request.
+- Reactivation requires a fresh matching ownership observation.
+- A worker membership cannot be released while a service remains bound to that region.
+- Moving from `service` back to `peer` requires removing trusted bindings and explicitly
+  acknowledging that service-specific ACLs will be deleted.
+- Duplicate live exact names, an undeclared service, an unmanaged peer, a stale ownership
+  observation, a role mismatch, or an unavailable evaluator all fail closed.
+- Trusted routing never retries into the permissionless partition.
+
+Invalid or revoked caller keys normally produce `401`. Conclusive ACL, membership, partition,
+or hop denials produce `403`. Evaluator unavailability, credential misconfiguration, or the
+absence of a direct trusted path produces `503`.
+
+## Security boundary and non-goals
+
+Trusted regions protect requests that pass through OpenTela. They do not:
+
+- hide public node-table metadata or reserve public service names;
+- make the permissionless mesh private;
+- encrypt a local backend that is exposed separately;
+- replace host firewalling or private network controls;
+- add a region-wide caller ACL—the caller ACL remains instance- or service-scoped.
+
+If a backend listens on a routable interface, callers can bypass OpenTela and reach it
+directly. Bind trusted backends to loopback, a Unix socket, or an interface protected by a
+host firewall.
+
+## Operator checklist
+
+- API migrations are applied before enabling service scope.
+- `INTERNAL_CONTROL_TOKEN` matches `security.control_plane.token` on all trusted nodes.
+- The API has a node-credential signing key and verification keys configured.
+- Head and worker instances are claimed with fresh matching wallet ownership.
+- Region roles are explicit and membership is active.
+- Workers advertise `service-policy-v2` and have unique exact local service names.
+- Every observed service is explicitly permissionless, trusted, or disabled.
+- Trusted heads have a direct libp2p path to trusted workers.
+- Local backends are not reachable around OpenTela.
+- Permissionless and trusted routes are both tested after every policy transition.
+
+See [Routing](/docs/tutorial/routing) for public discovery, identity groups, relays, and route
+selection. See [Security](/docs/advanced/security) for local worker policies, wallet identity,
+and the broader threat model.

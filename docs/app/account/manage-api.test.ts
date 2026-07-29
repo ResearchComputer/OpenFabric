@@ -4,7 +4,7 @@ import {
   createManageInstance,
   createManageKey,
   createManageRegion,
-  createManageRegionInvitation,
+  addManageRegionMember,
   createWalletChallenge,
   deleteManageInstance,
   deleteManageWallet,
@@ -594,14 +594,13 @@ describe("manage-api trusted regions", () => {
     );
   });
 
-  it("creates invitations through the canonical members route", async () => {
+  it("atomically adds owned instances through the canonical members route", async () => {
     const fetchSpy = mockFetch(201, {
-      id: 101,
       instance_id: 99,
       node_role: "worker",
-      status: "pending",
+      status: "active",
     });
-    await createManageRegionInvitation(BASE, "jwt", "8", {
+    await addManageRegionMember(BASE, "jwt", "8", {
       instance_id: "99",
       node_role: "worker",
     });
@@ -613,7 +612,7 @@ describe("manage-api trusted regions", () => {
           instance_id: 99,
           node_role: "worker",
           expires_at: null,
-          auto_accept: false,
+          auto_accept: true,
         }),
       }),
     );

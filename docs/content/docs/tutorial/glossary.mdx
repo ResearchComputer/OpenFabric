@@ -10,3 +10,15 @@ description: Key terms and concepts used in the OpenTela platform.
 * *Peer Addressing* - We use multiaddr format to represent peer addresses, which can include various protocols and transport layers. For example, a peer address might look like `/ip4/127.0.0.1/tcp/4001/p2p/QmPneGvHmWMngc8BboFasEJQ7D2aN9C65iMDwgCRGaTazs`. Read more about multiaddr format [here](https://libp2p.io/guides/addressing/).
 
 * *Identity Group* - An identity group is a collection of peers that can interchangeably represent the same identity. Identity Group is represented as a set of key-value pairs, such as `model=Qwen/Qwen3-8B`. In the context of LLM serving with OpenTela, an identity group could be a set of peers that are all capable of serving the same LLM model. Peers that belong to the same identity group can be treated as interchangeable when it comes to serving requests for that particular model. This allows for load balancing and redundancy, as requests can be routed to any peer within the identity group without needing to specify a particular peer ID.
+
+* *Permissionless Partition* - The public OpenTela routing partition. Any node may join the physical mesh and advertise a service. Service names and identity groups in this partition are routing metadata, not proof of provider identity.
+
+* *Trusted Region* - A named, control-plane-managed group of claimed peer IDs. Active membership, an allowed `head|worker|combined` role, fresh ownership, and exact service binding are required for trusted routing. Copying a region name into public node metadata does not create membership.
+
+* *Policy Scope* - The authorization granularity of a claimed instance. `peer` applies one policy to the whole peer; `service` authorizes each exact service name independently.
+
+* *Service Exposure* - The partition assignment of one exact service on a service-managed peer: `permissionless`, `trusted_region`, or `disabled`.
+
+* *Exact Service Name* - The case-sensitive service identifier carried in service-aware URLs and control-plane decisions. Authorization does not use a model name or identity group as a substitute. Duplicate live exact names fail closed.
+
+* *Service ACL* - Caller rules attached to one exact service. A service may inherit the instance ACL, allow any valid API key after partition checks, or use restricted email-domain and wallet rules.
