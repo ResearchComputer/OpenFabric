@@ -16,8 +16,13 @@ import { tokenManagerConfig } from './config';
 import { authClient, getAuthJwt, AuthTokenError } from './neon-auth';
 import {
   listManageKeys,
+  listManageInstances,
+  listManageWallets,
   type CreatedManageKey,
+  type ManageIdentitySnapshot,
+  type ManageInstance,
   type ManageKey,
+  type ManageWallet,
 } from './manage-api';
 import {
   createConnection,
@@ -69,6 +74,15 @@ interface AccountValue {
 
   skKeys: ManageKey[];
   refreshSkKeys: () => Promise<void>;
+  linkedWallets: ManageWallet[];
+  walletBindingsLoaded: boolean;
+  walletBindingsError: string | null;
+  walletIdentity: ManageIdentitySnapshot | null;
+  refreshLinkedWallets: () => Promise<void>;
+  managedInstances: ManageInstance[];
+  instancesLoaded: boolean;
+  instancesError: string | null;
+  refreshManagedInstances: () => Promise<void>;
   handleApiError: (error: unknown) => void;
   lastCreatedSk: CreatedManageKey | null;
   setLastCreatedSk: (key: CreatedManageKey | null) => void;
@@ -144,6 +158,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [balances, setBalances] = useState<WalletBalances | null>(null);
   const [rpcUrl, setRpcUrl] = useState(tokenManagerConfig.solanaRpcUrl);
   const [skKeys, setSkKeys] = useState<ManageKey[]>([]);
+  const [linkedWallets, setLinkedWallets] = useState<ManageWallet[]>([]);
+  const [walletBindingsLoaded, setWalletBindingsLoaded] = useState(false);
+  const [walletBindingsError, setWalletBindingsError] = useState<string | null>(null);
+  const [walletIdentity, setWalletIdentity] = useState<ManageIdentitySnapshot | null>(
+    null,
+  );
+  const [managedInstances, setManagedInstances] = useState<ManageInstance[]>([]);
+  const [instancesLoaded, setInstancesLoaded] = useState(false);
+  const [instancesError, setInstancesError] = useState<string | null>(null);
   const [lastCreatedSk, setLastCreatedSk] = useState<CreatedManageKey | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -206,6 +229,38 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     setSkKeys(await listManageKeys(tokenManagerConfig.apiBaseUrl, jwt));
   }, [neonUser]);
 
+  const refreshLinkedWallets = useCallback(async () => {
+    if (!neonUser) return;
+    setWalletBindingsError(null);
+    try {
+      const jwt = await getAuthJwt();
+      const snapshot = await listManageWallets(tokenManagerConfig.apiBaseUrl, jwt);
+      setLinkedWallets(snapshot.wallets);
+      if (snapshot.identity) setWalletIdentity(snapshot.identity);
+      setWalletBindingsLoaded(true);
+    } catch (error) {
+      setWalletBindingsLoaded(true);
+      setWalletBindingsError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }, [neonUser]);
+
+  const refreshManagedInstances = useCallback(async () => {
+    if (!neonUser) return;
+    setInstancesError(null);
+    try {
+      const jwt = await getAuthJwt();
+      const snapshot = await listManageInstances(tokenManagerConfig.apiBaseUrl, jwt);
+      setManagedInstances(snapshot.instances);
+      if (snapshot.identity) setWalletIdentity(snapshot.identity);
+      setInstancesLoaded(true);
+    } catch (error) {
+      setInstancesLoaded(true);
+      setInstancesError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }, [neonUser]);
+
   /**
    * Surface an API failure. A session that cannot be exchanged for a JWT is not
    * usable, even though the cached session still renders as signed in — drop it
@@ -218,6 +273,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       authClient?.signOut().finally(() => {
         setNeonUser(null);
         setSkKeys([]);
+        setLinkedWallets([]);
+        setWalletIdentity(null);
+        setManagedInstances([]);
         setLastCreatedSk(null);
       });
       return;
@@ -235,11 +293,26 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!neonUser) {
       setSkKeys([]);
+      setLinkedWallets([]);
+      setWalletBindingsLoaded(false);
+      setWalletBindingsError(null);
+      setWalletIdentity(null);
+      setManagedInstances([]);
+      setInstancesLoaded(false);
+      setInstancesError(null);
       setLastCreatedSk(null);
       return;
     }
     refreshSkKeys().catch((error: unknown) => handleApiError(error));
-  }, [handleApiError, neonUser, refreshSkKeys]);
+    refreshLinkedWallets().catch((error: unknown) => handleApiError(error));
+    refreshManagedInstances().catch((error: unknown) => handleApiError(error));
+  }, [
+    handleApiError,
+    neonUser,
+    refreshLinkedWallets,
+    refreshManagedInstances,
+    refreshSkKeys,
+  ]);
 
   const connectWallet = useCallback(async () => {
     if (!provider) {
@@ -326,6 +399,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     authClient?.signOut().finally(() => {
       setNeonUser(null);
       setSkKeys([]);
+      setLinkedWallets([]);
+      setWalletBindingsLoaded(false);
+      setWalletBindingsError(null);
+      setWalletIdentity(null);
+      setManagedInstances([]);
+      setInstancesLoaded(false);
+      setInstancesError(null);
       setLastCreatedSk(null);
     });
   }, []);
@@ -349,6 +429,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     resetRpcUrl,
     skKeys,
     refreshSkKeys,
+    linkedWallets,
+    walletBindingsLoaded,
+    walletBindingsError,
+    walletIdentity,
+    refreshLinkedWallets,
+    managedInstances,
+    instancesLoaded,
+    instancesError,
+    refreshManagedInstances,
     handleApiError,
     lastCreatedSk,
     setLastCreatedSk,

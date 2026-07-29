@@ -168,10 +168,23 @@ security:
 
 ### How it works
 
-1. When a forwarded request arrives at `/_service`, the middleware extracts the remote libp2p peer ID from `Request.RemoteAddr`.
-2. It looks up the peer in the node table to find their wallet address (`Peer.Owner`).
-3. It checks the wallet against the configured policy.
-4. If denied, returns `403 Forbidden` with a descriptive error. If allowed, the request proceeds to `ServiceForwardHandler`.
+When `security.control_plane.url` is empty, the existing local policy resolves the caller wallet from the trusted libp2p hop or the legacy auth service. When the control plane is configured, OpenTela hashes the caller bearer token locally and asks `api.opentela.ai` to evaluate the target peer. The central decision is enforced before global load balancing, on direct P2P routing, and again at the worker boundary. The worker then applies this local policy cumulatively: both layers must allow.
+
+Central mode returns `401` for an invalid or revoked API key, `403` for a valid key denied by instance policy, and `503` when no fresh or bounded-stale evaluator decision is available. A forwarded wallet header cannot override the wallet returned by the central evaluator.
+
+```yaml
+security:
+  control_plane:
+    url: "https://api.opentela.ai"
+    token: "replace-with-the-internal-control-token"
+    timeout: 5s
+    cache_ttl: 60s
+    stale_if_error: 2m
+  access_control:
+    policy: "whitelist"
+    whitelist:
+      - "5WalletPubkey1..."
+```
 
 ### Examples
 
@@ -214,7 +227,7 @@ security:
 
 ---
 
-## 4. API Key Authentication (Bearer Tokens)
+## 4. Legacy API Key Authentication (Bearer Tokens)
 
 ### Problem
 
@@ -222,7 +235,7 @@ In the standard flow (`Client → Head node → Worker`), the client's identity 
 
 ### Solution
 
-A separate FastAPI auth service issues API keys bound to wallet addresses. The flow is:
+For deployments that have not enabled `security.control_plane.url`, the legacy FastAPI auth service can still issue API keys bound to wallet addresses. The flow is:
 
 ```
 1. Client proves wallet ownership → Auth server issues a bearer token

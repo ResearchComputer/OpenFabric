@@ -74,25 +74,71 @@ npm run dev
 
 ### Toolchain versions
 
-`package-lock.json` must be written by **npm 12.x**. npm 10 and npm 12 disagree on how
-optional peer dependencies are recorded — notably the nested
-`jayson > ws@7 > utf-8-validate@5` node — so a lockfile written by one version can make
-`npm ci` fail under the other with `Missing: <pkg> from lock file`.
+**`package-lock.json` must stay installable by npm 10.x.** Cloudflare Workers Builds pins
+npm to 10.9.2 and — unlike `NODE_VERSION` — offers no `NPM_VERSION` override, so the
+build image's npm is not negotiable.
 
-Two settings keep local and CI in agreement:
+This matters because npm 10 and npm 12 disagree on how optional peer dependencies are
+recorded — notably the nested `jayson > ws@7 > utf-8-validate@5` node. A lockfile written
+by npm 12 omits it, and `npm ci` under npm 10 then fails with
+`Missing: utf-8-validate@5.0.10 from lock file`.
 
-| Where | Setting | Value |
-|-------|---------|-------|
-| Repo | `docs/.node-version` | `22.23.1` |
-| Cloudflare Pages → Settings → Build → Environment variables | `NPM_VERSION` | `12.0.1` |
+If your local npm is 12.x, regenerate the lockfile with npm 10 before committing:
 
-`NPM_VERSION` has no in-repo equivalent and **must** be set in the Cloudflare dashboard;
-without it the build image defaults to npm 10.9.2. Both are required together — npm 12
-declares `engines.node: ^22.22.2 || ^24.15.0 || >=26.0.0`, so pinning npm without the
-Node bump fails at install time with `EBADENGINE`.
+```bash
+npx npm@10.9.2 install --package-lock-only
+```
+
+The result installs cleanly under both npm 10 and npm 12, so this costs local users
+nothing. `docs/.node-version` pins Node to 22.23.1 (Workers Builds reads `.node-version`),
+which keeps the bundled npm on 10.x.
+
+### Deployment configuration
+
+The site deploys as an OpenNext **Worker** (`wrangler.jsonc`, `x-opennext: 1`), built by
+Cloudflare Workers Builds from a git clone.
+
+`NEXT_PUBLIC_*` values are **inlined into the client bundle at build time**. They must be
+set under *Settings → Build → Build variables and secrets* — setting them under
+*Settings → Variables & Secrets* (runtime) has no effect, because the browser bundle was
+already compiled without them. `.env.local` is gitignored and never reaches the build.
+
+| Build variable | Needed for | If unset |
+|----------------|-----------|----------|
+| `NEXT_PUBLIC_NEON_AUTH_URL` | Account sign-in | `/account` renders "Account sign-in is not configured on this deployment" |
+| `NEXT_PUBLIC_AUTH_API_BASE_URL` | Wallet-derived API keys | Falls back to `http://localhost:8090` — unreachable, and blocked as mixed content over HTTPS |
+| `NEXT_PUBLIC_API_BASE_URL` | `sk-` keys + `/v1/models` | Defaults to `https://api.opentela.ai` (correct in production) |
+
+See `.env.example` for the full set and current values. Build variables only take effect
+on a **new build** — redeploy after changing them.
+
+Two settings outside this repo must also allow the deployment's origin, or sign-in fails
+after the bundle is fixed:
+
+- **Neon Auth trusted domains** — register the origin the console is served from.
+- **`CORS_ALLOWED_ORIGINS`** — a [Fly.io](https://fly.io) secret on the **`opentela-api`**
+  app (the service behind `api.opentela.ai`; it lives outside this repo, and is not the
+  Go server in `src/`, which sends `Access-Control-Allow-Origin: *`). Update with:
+
+  ```bash
+  fly secrets set CORS_ALLOWED_ORIGINS="https://opentela.ai,http://localhost:3000" -a opentela-api
+  ```
+
+  `set` replaces the whole value, so always pass the complete list. Secrets are
+  write-only — to check what is currently allowed, send a preflight and see whether the
+  origin is echoed back:
+
+  ```bash
+  curl -si -X OPTIONS https://api.opentela.ai/manage/keys \
+    -H "Origin: https://opentela.ai" -H "Access-Control-Request-Method: GET" \
+    | grep -i access-control-allow-origin
+  ```
+
+  As of 2026-07-28 the allowlist is `https://opentela.ai` and `http://localhost:3000`.
+  `docs.opentela.ai` is **not** allowed — `/account` there cannot manage `sk-` keys.
 
 **Pages:**
-- `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and a live `/v1/models` services catalog. Account sign-in requires `NEXT_PUBLIC_NEON_AUTH_URL` plus backend `CORS_ALLOWED_ORIGINS` allow-listing and a Neon trusted-domain registration.
+- `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and a live `/v1/models` services catalog.
 
 The OpenTela binary source code is available at [eth-easl/OpenTela](https://github.com/eth-easl/OpenTela).
 

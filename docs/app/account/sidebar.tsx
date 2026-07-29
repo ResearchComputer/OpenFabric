@@ -2,19 +2,27 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { KeyRound, LayoutDashboard, LogOut, Server, Wallet } from 'lucide-react';
+import {
+  KeyRound,
+  LayoutDashboard,
+  LogOut,
+  Server,
+  ShieldCheck,
+  Wallet,
+} from 'lucide-react';
 import { useAccount } from './account-context';
 
 const NAV = [
   { href: '/account', label: 'Overview', Icon: LayoutDashboard },
   { href: '/account/keys', label: 'API keys', Icon: KeyRound },
+  { href: '/account/instances', label: 'Instances', Icon: ShieldCheck },
   { href: '/account/services', label: 'Services', Icon: Server },
   { href: '/account/wallet', label: 'Wallet', Icon: Wallet },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { neonUser, signOut } = useAccount();
+  const { neonUser, signOut, managedInstances } = useAccount();
   const who = neonUser?.email ?? neonUser?.id ?? '';
 
   return (
@@ -39,7 +47,9 @@ export default function Sidebar() {
               aria-current={active ? 'page' : undefined}
             >
               <Icon size={16} />
-              {label}
+              {label === 'Instances' && managedInstances.length > 0
+                ? `${label} (${managedInstances.length})`
+                : label}
             </Link>
           );
         })}

@@ -5,8 +5,10 @@ import { useAccount } from './account-context';
 import { middleEllipsis } from './format';
 
 export default function OverviewView() {
-  const { neonUser, wallet, balances, skKeys } = useAccount();
+  const { neonUser, wallet, balances, skKeys, linkedWallets, managedInstances } =
+    useAccount();
   const activeKeys = skKeys.filter((key) => !key.revoked_at).length;
+  const onlineInstances = managedInstances.filter((instance) => instance.online).length;
 
   return (
     <div className="acct-page">
@@ -37,15 +39,30 @@ export default function OverviewView() {
           <strong>{activeKeys}</strong>
           <small>{activeKeys === 1 ? 'key in use' : 'keys in use'}</small>
         </div>
+        <div className="otm-metric-panel">
+          <span>Managed instances</span>
+          <strong>{managedInstances.length}</strong>
+          <small>
+            {managedInstances.length === 0
+              ? 'No claimed peers yet'
+              : `${onlineInstances} online now`}
+          </small>
+        </div>
         <div className="otm-metric-panel accent">
           <span>OTELA</span>
           <strong>{wallet ? (balances ? balances.otela : '…') : '—'}</strong>
           <small>{wallet ? middleEllipsis(wallet) : 'No wallet connected'}</small>
         </div>
         <div className="otm-metric-panel">
-          <span>Wallet</span>
-          <strong>{wallet ? 'Connected' : 'Not connected'}</strong>
-          <small>{wallet ? 'Solana' : 'Connect one on Wallet'}</small>
+          <span>Linked wallets</span>
+          <strong>{linkedWallets.length}</strong>
+          <small>
+            {linkedWallets.length === 0
+              ? 'Link a wallet to claim peers'
+              : linkedWallets.some((walletBinding) => walletBinding.is_primary)
+                ? 'Primary wallet is set'
+                : 'Wallet proofs ready'}
+          </small>
         </div>
       </section>
 
@@ -54,6 +71,14 @@ export default function OverviewView() {
         <Link href="/account/keys" className="acct-quicklink">
           <strong>API keys</strong>
           <span>Create and revoke keys for the API</span>
+        </Link>
+        <Link href="/account/instances" className="acct-quicklink">
+          <strong>Instances</strong>
+          <span>
+            {managedInstances.length === 0
+              ? 'Link wallets and claim peers'
+              : `${managedInstances.length} managed peer${managedInstances.length === 1 ? '' : 's'}`}
+          </span>
         </Link>
         <Link href="/account/services" className="acct-quicklink">
           <strong>Services</strong>

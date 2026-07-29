@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -158,6 +159,11 @@ func TestInitConfigDefaults(t *testing.T) {
 	assert.Equal(t, "24h", viper.GetString("crdt.tombstone_retention"))
 	assert.Equal(t, "1h", viper.GetString("crdt.tombstone_compaction_interval"))
 	assert.Equal(t, 512, viper.GetInt("crdt.tombstone_compaction_batch"))
+	assert.Equal(t, "", viper.GetString("security.control_plane.url"))
+	assert.Equal(t, "", viper.GetString("security.control_plane.token"))
+	assert.Equal(t, 5*time.Second, viper.GetDuration("security.control_plane.timeout"))
+	assert.Equal(t, 60*time.Second, viper.GetDuration("security.control_plane.cache_ttl"))
+	assert.Equal(t, 2*time.Minute, viper.GetDuration("security.control_plane.stale_if_error"))
 }
 
 func TestInitConfigFlagBinding(t *testing.T) {

@@ -1,12 +1,18 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"opentela/internal/common"
+	"opentela/internal/protocol"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func init() {
@@ -14,8 +20,8 @@ func init() {
 }
 
 func TestAccessControlPolicyAny(t *testing.T) {
+	resetAuthClientTestState()
 	viper.Set("security.access_control.policy", "any")
-	defer viper.Set("security.access_control.policy", "")
 
 	r := gin.New()
 	r.Use(accessControlMiddleware())
@@ -31,8 +37,8 @@ func TestAccessControlPolicyAny(t *testing.T) {
 }
 
 func TestAccessControlPolicyEmptyDefaultsToAny(t *testing.T) {
+	resetAuthClientTestState()
 	viper.Set("security.access_control.policy", "")
-	defer viper.Set("security.access_control.policy", "")
 
 	r := gin.New()
 	r.Use(accessControlMiddleware())
@@ -48,12 +54,9 @@ func TestAccessControlPolicyEmptyDefaultsToAny(t *testing.T) {
 }
 
 func TestAccessControlSelfDeniesUnknownCaller(t *testing.T) {
+	resetAuthClientTestState()
 	viper.Set("security.access_control.policy", "self")
 	viper.Set("wallet.account", "MyWalletPubkey123")
-	defer func() {
-		viper.Set("security.access_control.policy", "")
-		viper.Set("wallet.account", "")
-	}()
 
 	r := gin.New()
 	r.Use(accessControlMiddleware())
@@ -71,12 +74,9 @@ func TestAccessControlSelfDeniesUnknownCaller(t *testing.T) {
 }
 
 func TestAccessControlBlacklistAllowsUnlisted(t *testing.T) {
+	resetAuthClientTestState()
 	viper.Set("security.access_control.policy", "blacklist")
 	viper.Set("security.access_control.blacklist", []string{"BadWallet"})
-	defer func() {
-		viper.Set("security.access_control.policy", "")
-		viper.Set("security.access_control.blacklist", []string{})
-	}()
 
 	r := gin.New()
 	r.Use(accessControlMiddleware())
@@ -94,12 +94,9 @@ func TestAccessControlBlacklistAllowsUnlisted(t *testing.T) {
 }
 
 func TestAccessControlWhitelistDeniesUnlisted(t *testing.T) {
+	resetAuthClientTestState()
 	viper.Set("security.access_control.policy", "whitelist")
 	viper.Set("security.access_control.whitelist", []string{"AllowedWallet"})
-	defer func() {
-		viper.Set("security.access_control.policy", "")
-		viper.Set("security.access_control.whitelist", []string{})
-	}()
 
 	r := gin.New()
 	r.Use(accessControlMiddleware())
@@ -126,5 +123,298 @@ func TestContainsWallet(t *testing.T) {
 	}
 	if containsWallet(nil, "A") {
 		t.Fatal("expected nil list to not contain anything")
+	}
+}
+
+func TestAccessControlDenialLogsDoNotExposeCallerWallet(t *testing.T) {
+	resetAuthClientTestState()
+	viper.Set("security.access_control.policy", "whitelist")
+	viper.Set("security.access_control.whitelist", []string{"AllowedWallet"})
+
+	core, observed := observer.New(zap.WarnLevel)
+	originalLogger := common.Logger
+	common.Logger = zap.New(core).Sugar()
+	defer func() { common.Logger = originalLogger }()
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	const callerWallet = "SensitiveCallerWallet"
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.RemoteAddr = "12D3KooWTrustedPeer"
+	req.Header.Set("X-Otela-Client-Wallet", callerWallet)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("code=%d, want 403", w.Code)
+	}
+	for _, entry := range observed.All() {
+		if strings.Contains(entry.Message, callerWallet) {
+			t.Fatalf("denial log exposed caller wallet: %q", entry.Message)
+		}
+	}
+}
+
+func TestAccessControlCentralAndLocalPolicyComposition(t *testing.T) {
+	resetAuthClientTestState()
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	type testCase struct {
+		name          string
+		policy        string
+		whitelist     []string
+		controlStatus int
+		controlBody   aclEvaluateResponse
+		wantStatus    int
+	}
+
+	tests := []testCase{
+		{
+			name:          "central allow and local allow over libp2p",
+			policy:        "whitelist",
+			whitelist:     []string{"AllowedWallet"},
+			controlStatus: http.StatusOK,
+			controlBody: aclEvaluateResponse{
+				KeyID:           "okey_test",
+				AllowedPeerIDs:  []string{"worker-self"},
+				Denied:          []aclDeniedPeer{},
+				PrimaryWallet:   "AllowedWallet",
+				CacheTTLSeconds: 30,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:          "central deny wins over local allow",
+			policy:        "whitelist",
+			whitelist:     []string{"AllowedWallet"},
+			controlStatus: http.StatusOK,
+			controlBody: aclEvaluateResponse{
+				KeyID:           "okey_test",
+				AllowedPeerIDs:  []string{},
+				Denied:          []aclDeniedPeer{{PeerID: "worker-self", Reason: "no_match"}},
+				PrimaryWallet:   "AllowedWallet",
+				CacheTTLSeconds: 30,
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:          "local deny wins over central allow",
+			policy:        "whitelist",
+			whitelist:     []string{"DifferentWallet"},
+			controlStatus: http.StatusOK,
+			controlBody: aclEvaluateResponse{
+				KeyID:           "okey_test",
+				AllowedPeerIDs:  []string{"worker-self"},
+				Denied:          []aclDeniedPeer{},
+				PrimaryWallet:   "AllowedWallet",
+				CacheTTLSeconds: 30,
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:          "invalid key returns unauthorized",
+			policy:        "any",
+			controlStatus: http.StatusUnauthorized,
+			wantStatus:    http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetAuthClientTestState()
+			viper.Set("security.access_control.policy", tt.policy)
+			viper.Set("security.access_control.whitelist", tt.whitelist)
+
+			mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.controlStatus != http.StatusOK {
+					w.WriteHeader(tt.controlStatus)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tt.controlBody)
+			}))
+			defer mock.Close()
+
+			viper.Set("security.control_plane.url", mock.URL)
+			viper.Set("security.control_plane.token", "internal-token")
+
+			r := gin.New()
+			r.Use(accessControlMiddleware())
+			r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/test", nil)
+			req.RemoteAddr = "12D3KooWTestPeer"
+			req.Header.Set("Authorization", "Bearer user-token")
+			req.Header.Set("X-Otela-Client-Wallet", "AllowedWallet")
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Fatalf("expected %d, got %d", tt.wantStatus, w.Code)
+			}
+		})
+	}
+}
+
+func TestAccessControlCentralPrimaryWalletAppliedToDirectHTTPWhitelist(t *testing.T) {
+	resetAuthClientTestState()
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aclEvaluateResponse{
+			KeyID:           "okey_test",
+			AllowedPeerIDs:  []string{"worker-self"},
+			Denied:          []aclDeniedPeer{},
+			PrimaryWallet:   "AllowedWallet",
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.access_control.policy", "whitelist")
+	viper.Set("security.access_control.whitelist", []string{"AllowedWallet"})
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.1:1234"
+	req.Header.Set("Authorization", "Bearer user-token")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAccessControlCentralPrimaryWalletAppliedToDirectHTTPSelfPolicy(t *testing.T) {
+	resetAuthClientTestState()
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aclEvaluateResponse{
+			KeyID:           "okey_test",
+			AllowedPeerIDs:  []string{"worker-self"},
+			Denied:          []aclDeniedPeer{},
+			PrimaryWallet:   "MyWalletPubkey123",
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.access_control.policy", "self")
+	viper.Set("wallet.account", "MyWalletPubkey123")
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "192.168.1.1:1234"
+	req.Header.Set("Authorization", "Bearer user-token")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAccessControlCentralPrimaryWalletOverridesForgedLibp2PHeader(t *testing.T) {
+	resetAuthClientTestState()
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aclEvaluateResponse{
+			KeyID:           "okey_test",
+			AllowedPeerIDs:  []string{"worker-self"},
+			Denied:          []aclDeniedPeer{},
+			PrimaryWallet:   "EmailAllowedWallet",
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.access_control.policy", "whitelist")
+	viper.Set("security.access_control.whitelist", []string{"ForgedWalletOnly"})
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "12D3KooWForgingPeer"
+	req.Header.Set("Authorization", "Bearer user-token")
+	req.Header.Set("X-Otela-Client-Wallet", "ForgedWalletOnly")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestAccessControlCentralMissingWalletCannotBeFilledByForgedLibp2PHeader(t *testing.T) {
+	resetAuthClientTestState()
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aclEvaluateResponse{
+			KeyID:           "okey_test",
+			AllowedPeerIDs:  []string{"worker-self"},
+			Denied:          []aclDeniedPeer{},
+			PrimaryWallet:   "",
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.access_control.policy", "whitelist")
+	viper.Set("security.access_control.whitelist", []string{"ForgedWalletOnly"})
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "12D3KooWForgingPeer"
+	req.Header.Set("Authorization", "Bearer user-token")
+	req.Header.Set("X-Otela-Client-Wallet", "ForgedWalletOnly")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }

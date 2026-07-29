@@ -120,6 +120,22 @@ func P2PForwardHandler(c *gin.Context) {
 
 	requestPeer := c.Param("peerId")
 	requestPath := c.Param("path")
+	clientWallet := ""
+	if isControlPlaneEnabled() {
+		decision, cpErr := authorizeRequestForPeers(ctx, c.GetHeader("Authorization"), []string{requestPeer})
+		if cpErr != nil {
+			c.JSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
+			return
+		}
+		if decision == nil || !decision.allows(requestPeer) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied by instance ACL"})
+			return
+		}
+		clientWallet = decision.PrimaryWallet
+	}
+	if clientWallet == "" {
+		clientWallet = resolveClientWallet(c)
+	}
 
 	// Log event as before
 	event := []axiom.Event{{ingest.TimestampField: time.Now(), "event": "P2P Forward", "from": &protocol.MyID, "to": requestPeer, "path": requestPath}}
@@ -137,6 +153,9 @@ func P2PForwardHandler(c *gin.Context) {
 		req.URL.Path = target.Path
 		req.URL.Host = req.Host
 		req.Host = target.Host
+		if clientWallet != "" {
+			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
+		}
 		// DO NOT read body here; httputil.ReverseProxy will stream it from c.Request.Body
 	}
 
@@ -367,6 +386,19 @@ func filterByTrust(candidates []string, minTrust int) []string {
 	return filtered
 }
 
+func filterAllowedCandidates(candidates []string, decision *controlPlaneDecision) []string {
+	if decision == nil {
+		return candidates
+	}
+	filtered := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if decision.allows(candidate) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
 // in case of global service, we need to forward the request to the service, identified by the service name and identity group
 func GlobalServiceForwardHandler(c *gin.Context) {
 	// Generate request ID for usage tracking
@@ -428,6 +460,21 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		return
 	}
 
+	clientWallet := ""
+	if isControlPlaneEnabled() {
+		decision, cpErr := authorizeRequestForPeers(ctx, c.GetHeader("Authorization"), candidates)
+		if cpErr != nil {
+			c.JSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
+			return
+		}
+		candidates = filterAllowedCandidates(candidates, decision)
+		if len(candidates) == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied by instance ACL"})
+			return
+		}
+		clientWallet = decision.PrimaryWallet
+	}
+
 	// Trust-aware filtering: if the client specifies a minimum trust level
 	// via X-Otela-Trust, remove candidates that don't meet the threshold.
 	if trustHeader := c.GetHeader("X-Otela-Trust"); trustHeader != "" {
@@ -469,7 +516,9 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		strings.Contains(c.GetHeader("Accept"), "text/event-stream")
 
 	requestPath = "/v1/_service/" + serviceName + requestPath
-	clientWallet := resolveClientWallet(c)
+	if clientWallet == "" {
+		clientWallet = resolveClientWallet(c)
+	}
 
 	// Resolve the model dimension once for analytics (OpenAI body field, with
 	// identity-group header fallback). Empty when analytics is disabled.

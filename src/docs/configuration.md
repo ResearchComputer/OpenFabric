@@ -88,7 +88,12 @@ in the bootstrap list served by connected peers at `/v1/dnt/bootstraps`.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `security.require_signed_binary` | bool | `true` | Reject peers without valid build attestation |
-| `security.auth_url` | string | `""` | Auth server URL for token verification |
+| `security.auth_url` | string | `""` | Deprecated legacy wallet-auth URL, used only when the control plane is disabled |
+| `security.control_plane.url` | string | `""` | `api.opentela.ai` base URL for instance ACL evaluation; empty disables central ACLs |
+| `security.control_plane.token` | string | `""` | Internal bearer token shared with `api.opentela.ai`; required when the URL is set |
+| `security.control_plane.timeout` | duration | `"5s"` | Timeout for ACL evaluation requests |
+| `security.control_plane.cache_ttl` | duration | `"60s"` | Local upper bound for fresh ACL decisions |
+| `security.control_plane.stale_if_error` | duration | `"2m"` | Bounded stale-decision window during evaluator failures |
 | `security.access_control.policy` | string | `"any"` | Access policy: `any`, `self`, `whitelist`, `blacklist` |
 | `security.access_control.whitelist` | []string | `[]` | Allowed wallet pubkeys (when policy=`whitelist`) |
 | `security.access_control.blacklist` | []string | `[]` | Blocked wallet pubkeys (when policy=`blacklist`) |
@@ -227,6 +232,12 @@ solana:
 
 security:
   require_signed_binary: true
+  control_plane:
+    url: "https://api.opentela.ai"
+    token: "replace-with-the-internal-control-token"
+    timeout: 5s
+    cache_ttl: 60s
+    stale_if_error: 2m
   access_control:
     policy: whitelist
     whitelist:

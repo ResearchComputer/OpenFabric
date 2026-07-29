@@ -43,14 +43,20 @@ import (
 //     attestation).
 //
 // Returns the wallet public key, or "" if the caller cannot be identified.
-func resolveCallerWallet(r *http.Request) string {
+func resolveCallerWallet(r *http.Request, controlPlaneWallet string, controlPlaneAuthoritative bool) string {
+	// In central mode the evaluator's PrimaryWallet is authoritative for the
+	// end-user principal, including the authoritative absence of a wallet. Do
+	// not let forwarded headers fill in or override that value.
+	if controlPlaneAuthoritative {
+		return controlPlaneWallet
+	}
+
 	if !isLibp2pRemoteAddr(r.RemoteAddr) {
 		return ""
 	}
 
-	// Only trust X-Otela-Client-Wallet when the request arrived over libp2p,
-	// meaning the direct caller is a verified peer (the head node). A plain
-	// HTTP caller could forge this header to bypass access control.
+	// In legacy mode only, trust X-Otela-Client-Wallet when the request arrived
+	// over libp2p, meaning the direct caller is a mesh peer.
 	if clientWallet := r.Header.Get("X-Otela-Client-Wallet"); clientWallet != "" {
 		return clientWallet
 	}
@@ -76,13 +82,29 @@ func accessControlMiddleware() gin.HandlerFunc {
 		policy = "any"
 	}
 
-	// Fast path: no restrictions.
-	if policy == "any" {
+	// Fast path: no restrictions and no central control-plane enforcement.
+	if policy == "any" && !isControlPlaneEnabled() {
 		return func(c *gin.Context) { c.Next() }
 	}
 
 	return func(c *gin.Context) {
-		callerWallet := resolveCallerWallet(c.Request)
+		controlPlaneWallet := ""
+		if isControlPlaneEnabled() {
+			decision, cpErr := authorizeRequestForPeers(c.Request.Context(), c.GetHeader("Authorization"), []string{protocol.MyID})
+			if cpErr != nil {
+				c.AbortWithStatusJSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
+				return
+			}
+			if decision == nil || !decision.allows(protocol.MyID) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "access denied by instance ACL",
+				})
+				return
+			}
+			controlPlaneWallet = decision.PrimaryWallet
+		}
+
+		callerWallet := resolveCallerWallet(c.Request, controlPlaneWallet, isControlPlaneEnabled())
 
 		// Re-read policy each time so config changes take effect without
 		// restart (viper supports hot-reload).
@@ -103,7 +125,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 				return
 			}
 			if callerWallet != myWallet {
-				common.Logger.Warnf("access_control: denied wallet=%s (policy=self)", callerWallet)
+				common.Logger.Warn("access_control: denied request (policy=self)")
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: only requests from the node operator's own wallet are accepted",
 				})
@@ -113,7 +135,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 		case "whitelist":
 			allowed := viper.GetStringSlice("security.access_control.whitelist")
 			if !containsWallet(allowed, callerWallet) {
-				common.Logger.Warnf("access_control: denied wallet=%s (not in whitelist)", callerWallet)
+				common.Logger.Warn("access_control: denied request (not in whitelist)")
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: wallet not in whitelist",
 				})
@@ -123,7 +145,7 @@ func accessControlMiddleware() gin.HandlerFunc {
 		case "blacklist":
 			blocked := viper.GetStringSlice("security.access_control.blacklist")
 			if containsWallet(blocked, callerWallet) {
-				common.Logger.Warnf("access_control: denied wallet=%s (blacklisted)", callerWallet)
+				common.Logger.Warn("access_control: denied request (blacklisted)")
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": "access denied: wallet is blacklisted",
 				})

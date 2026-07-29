@@ -133,6 +133,12 @@ func initConfig(cmd *cobra.Command) error {
 
 	viper.SetDefault("role", "worker")
 	viper.SetDefault("security.require_signed_binary", true)
+	viper.SetDefault("security.auth_url", "")
+	viper.SetDefault("security.control_plane.url", "")
+	viper.SetDefault("security.control_plane.token", "")
+	viper.SetDefault("security.control_plane.timeout", "5s")
+	viper.SetDefault("security.control_plane.cache_ttl", "60s")
+	viper.SetDefault("security.control_plane.stale_if_error", "2m")
 
 	// Metrics aggregation configuration (opt-in, disabled by default)
 	viper.SetDefault("metrics.aggregation_enabled", false)
