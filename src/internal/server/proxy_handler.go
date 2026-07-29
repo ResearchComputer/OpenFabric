@@ -502,19 +502,6 @@ func filterByTrust(candidates []string, minTrust int) []string {
 	return filtered
 }
 
-func filterAllowedCandidates(candidates []string, decision *controlPlaneDecision) []string {
-	if decision == nil {
-		return candidates
-	}
-	filtered := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if decision.allows(candidate) {
-			filtered = append(filtered, candidate)
-		}
-	}
-	return filtered
-}
-
 func filterAllowedCandidatesV2(candidates []string, decision *controlPlaneDecisionV2) []string {
 	if decision == nil {
 		return candidates

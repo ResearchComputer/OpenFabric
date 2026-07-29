@@ -200,10 +200,10 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		}
 	}
 
-	// hostRef is set after host creation so the autorelay peer source
-	// callback can access the host. We use a pointer-to-pointer because
-	// the callback closure captures hostRef, and we set *hostRef later.
-	var hostRef *host.Host
+	// relayHost is published after host creation so the AutoRelay peer-source
+	// callback cannot observe a partially constructed libp2p host.
+	var relayHostMu sync.RWMutex
+	var relayHost host.Host
 	// reachability mode: "auto" lets AutoNATv2 decide per-peer; "public" /
 	// "private" force the libp2p hint. Default mirrors prior behavior:
 	// public if public-addr is set, private otherwise.
@@ -237,10 +237,12 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 				ch := make(chan peer.AddrInfo, numPeers)
 				go func() {
 					defer close(ch)
-					if hostRef == nil {
+					relayHostMu.RLock()
+					h := relayHost
+					relayHostMu.RUnlock()
+					if h == nil {
 						return
 					}
-					h := *hostRef
 					for _, p := range h.Network().Peers() {
 						select {
 						case ch <- peer.AddrInfo{ID: p, Addrs: h.Peerstore().Addrs(p)}:
@@ -264,8 +266,9 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 		return nil, err
 	}
 	registerPingProtocol(host)
-	// Set hostRef so the autorelay peer source callback can access the host.
-	hostRef = &host
+	relayHostMu.Lock()
+	relayHost = host
+	relayHostMu.Unlock()
 
 	// Create holepunch service manually so callers can trigger DirectConnect
 	// (DCUtR) on demand. This requires access to BasicHost internals — namely
