@@ -144,6 +144,10 @@ wallet:
 
 Node operators can control which peers are allowed to forward requests to their worker node. This is enforced as Gin middleware on the `/_service` endpoints — the internal routes that receive forwarded requests from head nodes via libp2p.
 
+For mixed public/private deployments, there is now a second internal worker namespace:
+`/_regions/:region/service/:service/*path`. The worker makes the final authorization
+decision on both paths.
+
 ### Policies
 
 | Policy | Behavior |
@@ -171,6 +175,27 @@ security:
 When `security.control_plane.url` is empty, the existing local policy resolves the caller wallet from the trusted libp2p hop or the legacy auth service. When the control plane is configured, OpenTela hashes the caller bearer token locally and asks `api.opentela.ai` to evaluate the target peer. The central decision is enforced before global load balancing, on direct P2P routing, and again at the worker boundary. The worker then applies this local policy cumulatively: both layers must allow.
 
 Central mode returns `401` for an invalid or revoked API key, `403` for a valid key denied by instance policy, and `503` when no fresh or bounded-stale evaluator decision is available. A forwarded wallet header cannot override the wallet returned by the central evaluator.
+
+### Trusted regions and service-managed peers
+
+Trusted regions add one more dimension to authorization:
+
+```text
+peer_id + exact service_name + partition + region + caller key
+```
+
+Important consequences:
+
+- A claimed peer can expose one exact service name publicly and another privately.
+- Identity groups and model selectors are still routing hints, not authorization identities.
+- Permissionless service names are not authenticated. Another unmanaged peer may advertise the
+  same name publicly.
+- Trusted routes do not use the OpenTela decision cache and do not use the application relay.
+- The worker revalidates the immediate upstream peer before forwarding to the local backend.
+
+Because the local backend is outside OpenTela's ACL boundary, operators must still bind it to
+loopback or enforce a host firewall. Otherwise callers can reach the backend directly and bypass
+both partitions.
 
 ```yaml
 security:

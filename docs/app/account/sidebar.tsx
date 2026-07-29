@@ -6,6 +6,7 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Network,
   Server,
   ShieldCheck,
   Wallet,
@@ -16,6 +17,7 @@ const NAV = [
   { href: '/account', label: 'Overview', Icon: LayoutDashboard },
   { href: '/account/keys', label: 'API keys', Icon: KeyRound },
   { href: '/account/instances', label: 'Instances', Icon: ShieldCheck },
+  { href: '/account/regions', label: 'Trusted regions', Icon: Network },
   { href: '/account/services', label: 'Services', Icon: Server },
   { href: '/account/wallet', label: 'Wallet', Icon: Wallet },
 ];

@@ -229,6 +229,14 @@ func StartServer() {
 		}
 		v1.GET("/self", getSelf)
 		v1.POST("/sign", signData)
+		p2pServiceGroup := v1.Group("/p2p-service")
+		{
+			p2pServiceGroup.PATCH("/:peerId/:service/*path", P2PServiceForwardHandler)
+			p2pServiceGroup.POST("/:peerId/:service/*path", P2PServiceForwardHandler)
+			p2pServiceGroup.PUT("/:peerId/:service/*path", P2PServiceForwardHandler)
+			p2pServiceGroup.GET("/:peerId/:service/*path", P2PServiceForwardHandler)
+			p2pServiceGroup.DELETE("/:peerId/:service/*path", P2PServiceForwardHandler)
+		}
 		p2pGroup := v1.Group("/p2p")
 		{
 			p2pGroup.PATCH("/:peerId/*path", P2PForwardHandler)
@@ -245,6 +253,25 @@ func StartServer() {
 			globalServiceGroup.PATCH("/:service/*path", GlobalServiceForwardHandler)
 			globalServiceGroup.DELETE("/:service/*path", GlobalServiceForwardHandler)
 		}
+		regionsGroup := v1.Group("/regions")
+		{
+			regionServiceGroup := regionsGroup.Group("/:region/service")
+			{
+				regionServiceGroup.GET("/:service/*path", TrustedRegionServiceForwardHandler)
+				regionServiceGroup.POST("/:service/*path", TrustedRegionServiceForwardHandler)
+				regionServiceGroup.PUT("/:service/*path", TrustedRegionServiceForwardHandler)
+				regionServiceGroup.PATCH("/:service/*path", TrustedRegionServiceForwardHandler)
+				regionServiceGroup.DELETE("/:service/*path", TrustedRegionServiceForwardHandler)
+			}
+			regionP2PServiceGroup := regionsGroup.Group("/:region/p2p-service")
+			{
+				regionP2PServiceGroup.GET("/:peerId/:service/*path", TrustedRegionP2PServiceForwardHandler)
+				regionP2PServiceGroup.POST("/:peerId/:service/*path", TrustedRegionP2PServiceForwardHandler)
+				regionP2PServiceGroup.PUT("/:peerId/:service/*path", TrustedRegionP2PServiceForwardHandler)
+				regionP2PServiceGroup.PATCH("/:peerId/:service/*path", TrustedRegionP2PServiceForwardHandler)
+				regionP2PServiceGroup.DELETE("/:peerId/:service/*path", TrustedRegionP2PServiceForwardHandler)
+			}
+		}
 		serviceGroup := v1.Group("/_service")
 		serviceGroup.Use(accessControlMiddleware())
 		{
@@ -253,6 +280,15 @@ func StartServer() {
 			serviceGroup.PUT("/:service/*path", ServiceForwardHandler)
 			serviceGroup.PATCH("/:service/*path", ServiceForwardHandler)
 			serviceGroup.DELETE("/:service/*path", ServiceForwardHandler)
+		}
+		trustedServiceGroup := v1.Group("/_regions/:region/service")
+		trustedServiceGroup.Use(accessControlMiddleware())
+		{
+			trustedServiceGroup.GET("/:service/*path", ServiceForwardHandler)
+			trustedServiceGroup.POST("/:service/*path", ServiceForwardHandler)
+			trustedServiceGroup.PUT("/:service/*path", ServiceForwardHandler)
+			trustedServiceGroup.PATCH("/:service/*path", ServiceForwardHandler)
+			trustedServiceGroup.DELETE("/:service/*path", ServiceForwardHandler)
 		}
 	}
 	p2plistener := P2PListener()

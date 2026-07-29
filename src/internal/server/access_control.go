@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+const routingScopeContextKey = "routing_scope"
+
 // Access control policies for incoming requests on worker nodes.
 //
 // Configuration (cfg.yaml):
@@ -22,31 +24,7 @@ import (
 //	      - "7WalletPubkey2..."
 //	    blacklist:             # used when policy = "blacklist"
 //	      - "5BannedWallet..."
-//
-// Policies:
-//   - "any"       — accept requests from any peer (default, backward-compatible)
-//   - "self"      — only accept requests from peers whose wallet matches our own
-//   - "whitelist" — only accept requests from peers whose wallet is in the list
-//   - "blacklist" — accept from everyone except wallets in the list
-
-// resolveCallerWallet determines who is making this request.
-//
-// Priority:
-//  1. X-Otela-Client-Wallet header (set by the head node after verifying the
-//     end-user's bearer token against the auth server).  This represents the
-//     actual end-user, not the forwarding head node.
-//  2. The libp2p peer ID of the direct caller (the head node), looked up in
-//     the node table.  If the peer has a verified identity attestation
-//     (TrustLevel >= TrustSelfAttested), its WalletPubkey is returned because
-//     that is the cryptographically proven wallet key.  Otherwise Owner is
-//     used as a fallback (backward-compatible with peers that have no
-//     attestation).
-//
-// Returns the wallet public key, or "" if the caller cannot be identified.
 func resolveCallerWallet(r *http.Request, controlPlaneWallet string, controlPlaneAuthoritative bool) string {
-	// In central mode the evaluator's PrimaryWallet is authoritative for the
-	// end-user principal, including the authoritative absence of a wallet. Do
-	// not let forwarded headers fill in or override that value.
 	if controlPlaneAuthoritative {
 		return controlPlaneWallet
 	}
@@ -55,8 +33,6 @@ func resolveCallerWallet(r *http.Request, controlPlaneWallet string, controlPlan
 		return ""
 	}
 
-	// In legacy mode only, trust X-Otela-Client-Wallet when the request arrived
-	// over libp2p, meaning the direct caller is a mesh peer.
 	if clientWallet := r.Header.Get("X-Otela-Client-Wallet"); clientWallet != "" {
 		return clientWallet
 	}
@@ -66,30 +42,60 @@ func resolveCallerWallet(r *http.Request, controlPlaneWallet string, controlPlan
 	if err != nil {
 		return ""
 	}
-	// Prefer the cryptographically verified wallet pubkey from the identity
-	// attestation when available; fall back to Owner for backward compat.
 	if peer.TrustLevel >= protocol.TrustSelfAttested && peer.IdentityAttestation != nil {
 		return peer.IdentityAttestation.WalletPubkey
 	}
 	return peer.Owner
 }
 
-// accessControlMiddleware returns a Gin middleware that enforces the
-// operator's access control policy on incoming forwarded requests.
 func accessControlMiddleware() gin.HandlerFunc {
-	policy := strings.ToLower(viper.GetString("security.access_control.policy"))
-	if policy == "" {
-		policy = "any"
-	}
-
-	// Fast path: no restrictions and no central control-plane enforcement.
-	if policy == "any" && !isControlPlaneEnabled() {
-		return func(c *gin.Context) { c.Next() }
-	}
-
 	return func(c *gin.Context) {
+		scope, hasScope, err := maybeWorkerScopeFromContext(c)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
 		controlPlaneWallet := ""
-		if isControlPlaneEnabled() {
+		controlPlaneAuthoritative := false
+		if hasScope {
+			if service, resolveErr := resolveUniqueLocalService(scope.Service); writeServiceResolutionError(c, resolveErr) {
+				c.Abort()
+				return
+			} else {
+				c.Set("resolved_local_service", service)
+			}
+			c.Set(routingScopeContextKey, scope)
+
+			if scope.trusted() && !isControlPlaneEnabled() {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "trusted region routing requires control plane"})
+				return
+			}
+			if scope.trusted() && !isLibp2pRemoteAddr(c.Request.RemoteAddr) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "trusted worker routes require a libp2p upstream"})
+				return
+			}
+
+			if isControlPlaneEnabled() {
+				upstreamPeerID := ""
+				if isLibp2pRemoteAddr(c.Request.RemoteAddr) {
+					upstreamPeerID = c.Request.RemoteAddr
+				}
+				decision, cpErr := authorizeRequestForScope(c.Request.Context(), c.GetHeader("Authorization"), scope, []string{protocol.MyID}, upstreamPeerID)
+				if cpErr != nil {
+					c.AbortWithStatusJSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
+					return
+				}
+				if decision == nil || !decision.allows(protocol.MyID) {
+					c.AbortWithStatusJSON(statusForScopeDenial(scope, decision.reason(protocol.MyID)), gin.H{
+						"error": messageForScopeDenial(scope, decision.reason(protocol.MyID)),
+					})
+					return
+				}
+				controlPlaneWallet = decision.PrimaryWallet
+				controlPlaneAuthoritative = true
+			}
+		} else if isControlPlaneEnabled() {
 			decision, cpErr := authorizeRequestForPeers(c.Request.Context(), c.GetHeader("Authorization"), []string{protocol.MyID})
 			if cpErr != nil {
 				c.AbortWithStatusJSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
@@ -102,14 +108,16 @@ func accessControlMiddleware() gin.HandlerFunc {
 				return
 			}
 			controlPlaneWallet = decision.PrimaryWallet
+			controlPlaneAuthoritative = true
 		}
 
-		callerWallet := resolveCallerWallet(c.Request, controlPlaneWallet, isControlPlaneEnabled())
+		callerWallet := resolveCallerWallet(c.Request, controlPlaneWallet, controlPlaneAuthoritative)
 
-		// Re-read policy each time so config changes take effect without
-		// restart (viper supports hot-reload).
 		currentPolicy := strings.ToLower(viper.GetString("security.access_control.policy"))
-		if currentPolicy == "" || currentPolicy == "any" {
+		if currentPolicy == "" {
+			currentPolicy = "any"
+		}
+		if currentPolicy == "any" {
 			c.Next()
 			return
 		}
@@ -157,6 +165,65 @@ func accessControlMiddleware() gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+func maybeWorkerScopeFromContext(c *gin.Context) (routingScope, bool, error) {
+	serviceName := c.Param("service")
+	region := c.Param("region")
+	if strings.TrimSpace(serviceName) == "" {
+		return routingScope{}, false, nil
+	}
+	partition := partitionPermissionless
+	if strings.TrimSpace(region) != "" {
+		partition = partitionTrustedRegion
+	}
+	scope, err := newRoutingScope(partition, region, routeKindWorker, serviceName)
+	if err != nil {
+		return routingScope{}, false, err
+	}
+	return scope, true, nil
+}
+
+func statusForScopeDenial(scope routingScope, reason string) int {
+	switch reason {
+	case "":
+		return http.StatusForbidden
+	case "untrusted_upstream", "service_context_required", "service_undeclared",
+		"duplicate_service_name", "service_disabled", "partition_mismatch",
+		"trusted_route_required", "wrong_role", "not_region_member",
+		"membership_suspended", "membership_expired", "membership_revoked",
+		"ownership_mismatch", "ownership_unavailable", "unmanaged":
+		return http.StatusForbidden
+	default:
+		if scope.trusted() {
+			return http.StatusForbidden
+		}
+		return http.StatusForbidden
+	}
+}
+
+func messageForScopeDenial(scope routingScope, reason string) string {
+	switch reason {
+	case "service_context_required":
+		return "service-managed targets require service-aware routing"
+	case "service_undeclared":
+		return "service is not declared for this instance"
+	case "duplicate_service_name":
+		return "duplicate local service name"
+	case "service_disabled":
+		return "service is disabled"
+	case "partition_mismatch":
+		return "service is not exposed through this partition"
+	case "trusted_route_required":
+		if scope.trusted() {
+			return "trusted route required"
+		}
+		return "service must be reached through a trusted route"
+	case "untrusted_upstream":
+		return "upstream peer is not trusted for this region"
+	default:
+		return "access denied by instance ACL"
 	}
 }
 

@@ -3,6 +3,7 @@ import {
   computeIdentityFreshness,
   normalizeAclRules,
   normalizeEmailDomainRule,
+  normalizeServiceName,
   normalizeWalletRule,
 } from './instances';
 
@@ -29,6 +30,16 @@ describe('normalizeWalletRule', () => {
 
   it('rejects malformed addresses', () => {
     expect(() => normalizeWalletRule('not-a-wallet')).toThrow(/valid Solana wallet/i);
+  });
+});
+
+describe('normalizeServiceName', () => {
+  it('accepts exact ASCII service names', () => {
+    expect(normalizeServiceName('llm-private')).toBe('llm-private');
+  });
+
+  it('rejects service names with spaces', () => {
+    expect(() => normalizeServiceName('llm private')).toThrow(/ASCII letters/i);
   });
 });
 

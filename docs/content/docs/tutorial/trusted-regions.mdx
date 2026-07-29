@@ -1,0 +1,91 @@
+---
+title: Trusted Regions
+description: Manage mixed public and private services on one OpenTela peer without weakening worker authorization.
+---
+
+Trusted regions add a provider-authentic route on top of the existing permissionless mesh.
+They do not replace the public partition. Instead, one claimed peer can expose some exact
+service names publicly, bind other exact service names to a trusted region, and disable the
+rest.
+
+## Partitions
+
+OpenTela now has two routing partitions:
+
+| Partition | What it means |
+| :--- | :--- |
+| `permissionless` | The existing public mesh. Any node may join and advertise services. |
+| `trusted_region` | A named, API-managed region of claimed instances with explicit service bindings. |
+
+The important asymmetry is that public names are not reserved. A hostile unmanaged node may
+advertise the same service name in the permissionless mesh. If the caller needs to know which
+operator answered, it must use the trusted-region route.
+
+## Service-managed policy
+
+Every claimed instance starts in `peer` scope, which preserves the old peer-wide policy.
+Switching to `service` scope makes the control plane authorize by:
+
+```text
+(instance_id, exact service_name, partition, region)
+```
+
+In service scope, each exact service name has one exposure:
+
+- `permissionless`
+- `trusted_region`
+- `disabled`
+
+If one backend must answer in both partitions, register it under two different service names.
+
+## Canonical routes
+
+Permissionless routes:
+
+- `/v1/service/:service/*path`
+- `/v1/p2p/:peerId/*path`
+- `/v1/p2p-service/:peerId/:service/*path`
+
+Trusted routes:
+
+- `/v1/regions/:region/service/:service/*path`
+- `/v1/regions/:region/p2p-service/:peerId/:service/*path`
+- worker destination: `/v1/_regions/:region/service/:service/*path`
+
+Legacy opaque P2P is restricted for service-managed peers because it does not carry exact
+service context to the evaluator.
+
+## Worker guarantees
+
+Trusted traffic keeps four invariants:
+
+1. The worker revalidates the request against the immediate upstream peer.
+2. Trusted routes stay direct-only. They do not use OpenTela's application relay.
+3. Trusted decisions are not served from the OpenTela client cache.
+4. Permissionless routes can never reach a trusted-only service.
+
+The worker does not treat identity groups or model names as authorization identities. Those
+are routing selectors only.
+
+## Safe transitions
+
+When a peer moves from `peer` to `service` scope:
+
+- the control plane requires a fresh observation snapshot;
+- every observed unique service starts as `disabled`;
+- duplicate exact service names fail closed;
+- non-v2 workers are blocked from service-managed mode.
+
+When a peer moves from `service` back to `peer` scope:
+
+- all trusted bindings must be removed first;
+- service-specific ACLs are dropped;
+- the console requires an explicit acknowledgement of that reset.
+
+## Backend exposure
+
+Trusted routing only protects traffic that passes through OpenTela. If a local backend still
+listens on a routable interface, callers can bypass partition and ACL checks by hitting it
+directly.
+
+Run trusted backends on loopback or keep them behind a host firewall.

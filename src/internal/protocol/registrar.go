@@ -191,6 +191,7 @@ func provideService(service Service) {
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}
+	applyLocalRuntimeMetadata(&myself)
 	common.Logger.Debug("Registering LLM service: ", myself)
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
@@ -208,6 +209,13 @@ func ResetLocalServicesForTest() {
 	localServicesLock.Lock()
 	defer localServicesLock.Unlock()
 	localServices = nil
+}
+
+// SetLocalServicesForTest replaces the in-memory local service set. Test-only.
+func SetLocalServicesForTest(services []Service) {
+	localServicesLock.Lock()
+	defer localServicesLock.Unlock()
+	localServices = append([]Service(nil), services...)
 }
 
 // ReannounceLocalServices re-publishes this node's service entry, used after reconnects.
@@ -242,6 +250,7 @@ func ReannounceLocalServices() {
 	if viper.GetString("public-addr") != "" {
 		myself.PublicAddress = viper.GetString("public-addr")
 	}
+	applyLocalRuntimeMetadata(&myself)
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	if err != nil {

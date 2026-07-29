@@ -5,17 +5,44 @@ description: How OpenTela routes incoming requests to worker nodes using identit
 
 OpenTela routes incoming requests from users to the correct worker node in your cluster. This document explains how routing works, how identity groups control which requests reach which nodes, and how to use each endpoint.
 
+Mixed public/private deployments add a second routing partition. The public catalogue still
+reflects only the permissionless mesh, and public service names are not reserved. Use a
+region-qualified route when provider identity matters.
+
 ## Overview
 
-When a user sends a request to the head node, OpenTela needs to decide *which* worker should handle it. The routing layer answers that question using three URL path prefixes, each backed by a different handler:
+When a user sends a request to the head node, OpenTela needs to decide *which* worker should handle it. The routing layer answers that question using several URL path prefixes:
 
 | Prefix | Handler | Purpose |
 | :--- | :--- | :--- |
 | `/v1/service/:service/*path` | Global Service Forward | Route by **service name + identity group** — the typical path for end users |
 | `/v1/p2p/:peerId/*path` | P2P Forward | Route to a **specific peer** by its Peer ID |
+| `/v1/p2p-service/:peerId/:service/*path` | Service-aware P2P Forward | Route to a **specific peer + exact service name** |
 | `/v1/_service/:service/*path` | Local Service Forward | Forward to a **locally running service** on the current node (internal) |
+| `/v1/regions/:region/service/:service/*path` | Trusted Region Forward | Route through the **trusted partition** |
+| `/v1/regions/:region/p2p-service/:peerId/:service/*path` | Trusted direct P2P | Route to one **trusted peer + exact service name** |
+| `/v1/_regions/:region/service/:service/*path` | Trusted worker destination | Internal worker route for trusted traffic |
 
-Most users will only interact with `/v1/service/`. The other two exist for direct peer access and internal plumbing.
+Most users will only interact with `/v1/service/`. Trusted clients use the
+region-qualified equivalents, and service-managed peers should prefer the
+service-aware P2P form over legacy opaque P2P.
+
+## Permissionless vs trusted
+
+OpenTela now supports two logical partitions over the same libp2p mesh:
+
+- `permissionless`: the original public network.
+- `trusted_region`: a named, control-plane-managed region of claimed instances.
+
+A random peer may still join the physical mesh, advertise the same public service name, and
+be selected by public routes. What it cannot do is satisfy a trusted-region route, because
+trusted routing is keyed by region membership and exact service binding, then revalidated
+again at the worker.
+
+Trusted traffic also changes two transport rules:
+
+- It is direct-only. OpenTela's application relay is not used.
+- It never falls back to permissionless candidates.
 
 ## Request flow
 

@@ -27,8 +27,10 @@ import (
 )
 
 var (
-	globalTransport *http.Transport
-	transportOnce   sync.Once
+	globalTransport  *http.Transport
+	trustedTransport *http.Transport
+	transportOnce    sync.Once
+	trustedOnce      sync.Once
 
 	routingRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -80,6 +82,21 @@ func getGlobalTransport() *http.Transport {
 		globalTransport.RegisterProtocol("libp2p", newLibp2pHTTPRoundTripper(node))
 	})
 	return globalTransport
+}
+
+func getTrustedTransport() *http.Transport {
+	trustedOnce.Do(func() {
+		node, _ := protocol.GetP2PNode(nil)
+		trustedTransport = &http.Transport{
+			ResponseHeaderTimeout: 10 * time.Minute,
+			IdleConnTimeout:       60 * time.Second,
+			DisableKeepAlives:     false,
+			MaxIdleConns:          256,
+			MaxIdleConnsPerHost:   32,
+		}
+		trustedTransport.RegisterProtocol("libp2p", newTrustedLibp2pHTTPRoundTripper(node))
+	})
+	return trustedTransport
 }
 
 func ErrorHandler(res http.ResponseWriter, req *http.Request, err error) {
@@ -167,15 +184,106 @@ func P2PForwardHandler(c *gin.Context) {
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
+func P2PServiceForwardHandler(c *gin.Context) {
+	scope, err := newRoutingScope(partitionPermissionless, "", routeKindP2PIngress, c.Param("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p2pServiceForwardWithScope(c, scope)
+}
+
+func TrustedRegionP2PServiceForwardHandler(c *gin.Context) {
+	scope, err := newRoutingScope(partitionTrustedRegion, c.Param("region"), routeKindP2PIngress, c.Param("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p2pServiceForwardWithScope(c, scope)
+}
+
+func p2pServiceForwardWithScope(c *gin.Context, scope routingScope) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
+	defer cancel()
+	c.Request = c.Request.WithContext(ctx)
+
+	requestPeer := c.Param("peerId")
+	requestPath := buildInternalServicePath(scope, c.Param("path"))
+	clientWallet := ""
+	if isControlPlaneEnabled() {
+		decision, cpErr := authorizeRequestForScope(ctx, c.GetHeader("Authorization"), scope, []string{requestPeer}, "")
+		if cpErr != nil {
+			c.JSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
+			return
+		}
+		if decision == nil || !decision.allows(requestPeer) {
+			c.JSON(statusForScopeDenial(scope, decision.reason(requestPeer)), gin.H{
+				"error": messageForScopeDenial(scope, decision.reason(requestPeer)),
+			})
+			return
+		}
+		clientWallet = decision.PrimaryWallet
+	}
+	if clientWallet == "" {
+		clientWallet = resolveClientWallet(c)
+	}
+
+	target := url.URL{
+		Scheme: "libp2p",
+		Host:   requestPeer,
+		Path:   requestPath,
+	}
+	transport := getGlobalTransport()
+	if scope.trusted() {
+		if !protocol.HasTrustedDirectConnection(requestPeer) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no direct trusted path available"})
+			return
+		}
+		transport = getTrustedTransport()
+	}
+
+	event := []axiom.Event{{ingest.TimestampField: time.Now(), "event": "P2P Service Forward", "from": &protocol.MyID, "to": requestPeer, "path": requestPath, "service": scope.Service}}
+	IngestEvents(event)
+	common.Logger.Debugf("P2P service forward: %s", target.String())
+
+	director := func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Path = target.Path
+		req.URL.Host = req.Host
+		req.Host = target.Host
+		if clientWallet != "" {
+			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
+		}
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(&target)
+	proxy.Director = director
+	proxy.Transport = transport
+	proxy.ErrorHandler = ErrorHandler
+	proxy.ModifyResponse = rewriteHeader()
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
 // ServiceHandler
 func ServiceForwardHandler(c *gin.Context) {
 	st := newStageTimer()
 	serviceName := c.Param("service")
 	requestPath := c.Param("path")
-	service, err := protocol.GetService(serviceName)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	var (
+		service protocol.Service
+		err     error
+	)
+	if resolved, ok := c.Get("resolved_local_service"); ok {
+		service, ok = resolved.(protocol.Service)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid resolved local service"})
+			return
+		}
+	} else {
+		service, err = resolveUniqueLocalService(serviceName)
+		if writeServiceResolutionError(c, err) {
+			return
+		}
 	}
 
 	target := url.URL{
@@ -399,8 +507,46 @@ func filterAllowedCandidates(candidates []string, decision *controlPlaneDecision
 	return filtered
 }
 
+func filterAllowedCandidatesV2(candidates []string, decision *controlPlaneDecisionV2) []string {
+	if decision == nil {
+		return candidates
+	}
+	filtered := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if decision.allows(candidate) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
+func buildInternalServicePath(scope routingScope, suffix string) string {
+	if scope.Partition == partitionTrustedRegion {
+		return "/v1/_regions/" + scope.Region + "/service/" + scope.Service + suffix
+	}
+	return "/v1/_service/" + scope.Service + suffix
+}
+
 // in case of global service, we need to forward the request to the service, identified by the service name and identity group
 func GlobalServiceForwardHandler(c *gin.Context) {
+	scope, err := newRoutingScope(partitionPermissionless, "", routeKindServiceIngress, c.Param("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	globalServiceForwardWithScope(c, scope)
+}
+
+func TrustedRegionServiceForwardHandler(c *gin.Context) {
+	scope, err := newRoutingScope(partitionTrustedRegion, c.Param("region"), routeKindServiceIngress, c.Param("service"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	globalServiceForwardWithScope(c, scope)
+}
+
+func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 	// Generate request ID for usage tracking
 	requestID := usage.GenerateRequestID()
 	c.Set("requestId", requestID)
@@ -437,7 +583,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 		}
 	}
 
-	serviceName := c.Param("service")
+	serviceName := scope.Service
 	routingStart := time.Now()
 	requestPath := c.Param("path")
 	providers, err := protocol.GetAllProviders(serviceName)
@@ -462,29 +608,45 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 	clientWallet := ""
 	if isControlPlaneEnabled() {
-		decision, cpErr := authorizeRequestForPeers(ctx, c.GetHeader("Authorization"), candidates)
+		decision, cpErr := authorizeRequestForScope(ctx, c.GetHeader("Authorization"), scope, candidates, "")
 		if cpErr != nil {
 			c.JSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
 			return
 		}
-		candidates = filterAllowedCandidates(candidates, decision)
+		candidates = filterAllowedCandidatesV2(candidates, decision)
 		if len(candidates) == 0 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied by instance ACL"})
+			c.JSON(statusForScopeDenial(scope, ""), gin.H{"error": "access denied by instance ACL"})
 			return
 		}
 		clientWallet = decision.PrimaryWallet
 	}
 
+	if scope.trusted() {
+		directCandidates := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			if protocol.HasTrustedDirectConnection(candidate) {
+				directCandidates = append(directCandidates, candidate)
+			}
+		}
+		if len(directCandidates) == 0 {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no direct trusted providers available"})
+			return
+		}
+		candidates = directCandidates
+	}
+
 	// Trust-aware filtering: if the client specifies a minimum trust level
 	// via X-Otela-Trust, remove candidates that don't meet the threshold.
-	if trustHeader := c.GetHeader("X-Otela-Trust"); trustHeader != "" {
-		if minTrust, err := strconv.Atoi(trustHeader); err == nil && minTrust > 0 {
-			candidates = filterByTrust(candidates, minTrust)
-			if len(candidates) == 0 {
-				c.JSON(http.StatusServiceUnavailable, gin.H{
-					"error": fmt.Sprintf("No provider meets the requested trust level (%d).", minTrust),
-				})
-				return
+	if scope.Partition == partitionPermissionless {
+		if trustHeader := c.GetHeader("X-Otela-Trust"); trustHeader != "" {
+			if minTrust, err := strconv.Atoi(trustHeader); err == nil && minTrust > 0 {
+				candidates = filterByTrust(candidates, minTrust)
+				if len(candidates) == 0 {
+					c.JSON(http.StatusServiceUnavailable, gin.H{
+						"error": fmt.Sprintf("No provider meets the requested trust level (%d).", minTrust),
+					})
+					return
+				}
 			}
 		}
 	}
@@ -515,7 +677,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 	isStreaming := (streamType == jsonparser.Boolean && string(streamVal) == "true") ||
 		strings.Contains(c.GetHeader("Accept"), "text/event-stream")
 
-	requestPath = "/v1/_service/" + serviceName + requestPath
+	requestPath = buildInternalServicePath(scope, requestPath)
 	if clientWallet == "" {
 		clientWallet = resolveClientWallet(c)
 	}
@@ -571,7 +733,17 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 		// Resolve target URL (direct or via relay)
 		var target url.URL
-		if protocol.IsDirectlyConnected(targetPeer) {
+		transport := getGlobalTransport()
+		if scope.trusted() {
+			if !protocol.HasTrustedDirectConnection(targetPeer) {
+				if attempt <= maxRetries {
+					routingRetriesTotal.WithLabelValues(serviceName, strconv.Itoa(attempt+1)).Inc()
+				}
+				continue
+			}
+			target = url.URL{Scheme: "libp2p", Host: targetPeer, Path: requestPath}
+			transport = getTrustedTransport()
+		} else if protocol.IsDirectlyConnected(targetPeer) {
 			target = url.URL{Scheme: "libp2p", Host: targetPeer, Path: requestPath}
 		} else {
 			relayPeer := protocol.FindRelayFor(targetPeer)
@@ -606,7 +778,7 @@ func GlobalServiceForwardHandler(c *gin.Context) {
 
 		proxy := httputil.NewSingleHostReverseProxy(&target)
 		proxy.Director = director
-		proxy.Transport = getGlobalTransport()
+		proxy.Transport = transport
 		proxy.ErrorHandler = func(res http.ResponseWriter, req *http.Request, err error) {
 			if rrw, ok := res.(*retryableResponseWriter); ok {
 				common.Logger.Warnf("Transport error for peer %s: %v", targetPeer, err)

@@ -79,6 +79,20 @@ export function normalizeAclRules(
   return normalized;
 }
 
+export function normalizeServiceName(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error('Enter an exact service name');
+  if (normalized.length > 80) {
+    throw new Error('Service names must be 80 characters or less');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(normalized)) {
+    throw new Error(
+      'Service names can use ASCII letters, numbers, dots, underscores, and hyphens',
+    );
+  }
+  return normalized;
+}
+
 export function emptyRule(kind: ManageAclRuleKind = 'email_domain'): ManageAclRule {
   return { kind, value: '' };
 }

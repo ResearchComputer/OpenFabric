@@ -138,7 +138,10 @@ after the bundle is fixed:
   `docs.opentela.ai` is **not** allowed — `/account` there cannot manage `sk-` keys.
 
 **Pages:**
-- `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and a live `/v1/models` services catalog.
+- `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and account overview.
+- `/account/instances` — claim peers, set inherited ACLs, and switch between peer-wide and service-managed policy.
+- `/account/regions` — create trusted regions, invite claimed peers, and manage membership lifecycle.
+- `/account/services` — public permissionless service catalogue only; names there are not provider-authentic.
 
 The OpenTela binary source code is available at [eth-easl/OpenTela](https://github.com/eth-easl/OpenTela).
 

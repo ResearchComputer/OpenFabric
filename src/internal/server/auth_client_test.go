@@ -25,6 +25,10 @@ func resetAuthClientTestState() {
 	aclDecisionCache.mu.Lock()
 	aclDecisionCache.entries = make(map[string]decisionCacheEntry)
 	aclDecisionCache.mu.Unlock()
+	aclDecisionCacheV2.mu.Lock()
+	aclDecisionCacheV2.entries = make(map[string]decisionCacheEntryV2)
+	aclDecisionCacheV2.mu.Unlock()
+	resetNodeCredentialManagerForTest()
 }
 
 func TestResolveClientWalletNoAuthConfigured(t *testing.T) {
@@ -467,6 +471,129 @@ func TestEvaluateBearerForPeersRejectsInconsistentPrimaryWalletAcrossBatches(t *
 	}
 	if cpErr == nil || cpErr.Status != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 malformed-response error, got %#v", cpErr)
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d, want 2", requests)
+	}
+}
+
+func TestEvaluateBearerForScopePermissionlessCachesByExactService(t *testing.T) {
+	resetAuthClientTestState()
+
+	var requests int
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/internal/acl/evaluate-v2" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		var req aclEvaluateV2Request
+		if err := decodeStrictJSON(r.Body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(aclEvaluateV2Response{
+			KeyID:         "scope-key",
+			PrimaryWallet: "WalletPrimary",
+			DecisionScope: aclDecisionScope{
+				Partition: req.Partition,
+				Region:    req.Region,
+				RouteKind: req.RouteKind,
+				Service:   req.Service,
+			},
+			Decisions: []aclDecisionV2{
+				{
+					PeerID:          "peer-a",
+					Allowed:         true,
+					Reason:          "instance_acl_allow",
+					PolicyScope:     "service",
+					ServiceExposure: "permissionless",
+				},
+			},
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.control_plane.cache_ttl", "1m")
+	viper.Set("security.control_plane.stale_if_error", "1m")
+
+	scope, err := newRoutingScope(partitionPermissionless, "", routeKindServiceIngress, "svc-public")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+
+	decision, cpErr := evaluateBearerForScope(context.Background(), "user-bearer", scope, []string{"peer-a"}, "")
+	if cpErr != nil || decision == nil || !decision.allows("peer-a") {
+		t.Fatalf("first decision=%#v err=%v", decision, cpErr)
+	}
+	decision, cpErr = evaluateBearerForScope(context.Background(), "user-bearer", scope, []string{"peer-a"}, "")
+	if cpErr != nil || decision == nil || !decision.allows("peer-a") {
+		t.Fatalf("cached decision=%#v err=%v", decision, cpErr)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d, want 1", requests)
+	}
+
+	otherScope, err := newRoutingScope(partitionPermissionless, "", routeKindServiceIngress, "svc-private")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+	if _, cpErr := evaluateBearerForScope(context.Background(), "user-bearer", otherScope, []string{"peer-a"}, ""); cpErr != nil {
+		t.Fatalf("other scope err=%v", cpErr)
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d, want 2 after different service", requests)
+	}
+}
+
+func TestEvaluateBearerForScopeWorkerNeverCaches(t *testing.T) {
+	resetAuthClientTestState()
+
+	var requests int
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var req aclEvaluateV2Request
+		if err := decodeStrictJSON(r.Body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(aclEvaluateV2Response{
+			KeyID:         "scope-key",
+			PrimaryWallet: "WalletPrimary",
+			DecisionScope: aclDecisionScope{
+				Partition: req.Partition,
+				Region:    req.Region,
+				RouteKind: req.RouteKind,
+				Service:   req.Service,
+			},
+			Decisions: []aclDecisionV2{
+				{
+					PeerID:          "worker-self",
+					Allowed:         true,
+					Reason:          "instance_acl_allow",
+					PolicyScope:     "service",
+					ServiceExposure: "permissionless",
+				},
+			},
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.control_plane.cache_ttl", "1m")
+	viper.Set("security.control_plane.stale_if_error", "1m")
+
+	scope, err := newRoutingScope(partitionPermissionless, "", routeKindWorker, "svc-public")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		decision, cpErr := evaluateBearerForScope(context.Background(), "user-bearer", scope, []string{"worker-self"}, "12D3KooWHead")
+		if cpErr != nil || decision == nil || !decision.allows("worker-self") {
+			t.Fatalf("iteration %d decision=%#v err=%v", i, decision, cpErr)
+		}
 	}
 	if requests != 2 {
 		t.Fatalf("requests=%d, want 2", requests)

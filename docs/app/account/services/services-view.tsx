@@ -52,8 +52,9 @@ export default function ServicesView() {
         <div>
           <h1>Services</h1>
           <p className="acct-page-sub">
-            What the mesh is serving right now. Browsing is open to everyone —
-            you only need a key to call a service.
+            What the permissionless mesh is serving right now. Browsing is open to
+            everyone and service names here are not authenticated or reserved —
+            use a trusted-region route when provider identity matters.
           </p>
         </div>
         <div className="acct-page-actions">
@@ -78,6 +79,13 @@ export default function ServicesView() {
       <section className="otm-panel">
         <div className="otm-panel-heading">
           <h2>Available services</h2>
+        </div>
+
+        <div className="otm-notice" role="note" style={{ margin: '0 16px 16px' }}>
+          This catalogue only reflects the public partition. A private service may
+          share the same name on a hostile unmanaged peer, so the catalogue alone
+          does not prove who will answer. Trusted-region routes stay direct-only,
+          skip application relays, and are revalidated again at the worker.
         </div>
 
         {services.length === 0 ? (

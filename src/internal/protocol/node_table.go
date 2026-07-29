@@ -144,6 +144,8 @@ type Service struct {
 	IdentityGroup []string `json:"identity_group"`
 }
 
+const RuntimeCapabilityServicePolicyV2 = "service-policy-v2"
+
 // Trust levels for nodes in the network.
 const (
 	TrustUntrusted    = 0 // no attestation or invalid
@@ -195,6 +197,13 @@ type Peer struct {
 	// TrustLevel is computed locally after verifying attestations.
 	// 0=untrusted, 1=self-attested, 2=user-trusted, 3=KYC-verified.
 	TrustLevel int `json:"-"`
+	// RuntimeCapabilities advertises worker/runtime authorization features that
+	// are safe for the control plane to gate on.
+	RuntimeCapabilities []string `json:"capabilities,omitempty"`
+	// ServiceNameCounts reports the observed multiplicity of exact local service
+	// names so the control plane can fail mixed-service activation closed when a
+	// name is ambiguous on the worker.
+	ServiceNameCounts map[string]int `json:"service_name_counts,omitempty"`
 }
 
 type PeerWithStatus struct {
@@ -243,6 +252,7 @@ func UpdateNodeTable(peer Peer) {
 		peer.PublicAddress = viper.GetString("public-addr")
 	}
 	peer.PublicPort = viper.GetString("tcpport")
+	applyLocalRuntimeMetadata(&peer)
 	value, err := json.Marshal(peer)
 	common.ReportError(err, "Error while marshalling peer")
 	if err := store.Put(ctx, key, value); err != nil {
@@ -266,6 +276,7 @@ func MarkSelfAsBootstrap() {
 		myself.PublicAddress = viper.GetString("public-addr")
 		myself.PublicPort = viper.GetString("tcpport")
 		myself.Connected = true
+		applyLocalRuntimeMetadata(&myself)
 		value, err := json.Marshal(myself)
 		myselfMu.Unlock()
 		UpdateNodeTableHook(key, value)
@@ -289,6 +300,7 @@ func AnnounceLeave() {
 	myself.Status = LEFT
 	myself.Connected = false
 	myself.LastSeen = time.Now().Unix()
+	applyLocalRuntimeMetadata(&myself)
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	if err != nil {
@@ -435,6 +447,21 @@ func GetService(name string) (Service, error) {
 	return Service{}, errors.New("Service not found")
 }
 
+func LocalServiceNameCounts() map[string]int {
+	return serviceNameCounts(snapshotLocalServices())
+}
+
+func LocalServicesByName(name string) []Service {
+	services := snapshotLocalServices()
+	matches := make([]Service, 0, len(services))
+	for _, service := range services {
+		if service.Name == name {
+			matches = append(matches, service)
+		}
+	}
+	return matches
+}
+
 func GetAllProviders(serviceName string) ([]Peer, error) {
 	var providers []Peer
 	table := *getNodeTable()
@@ -542,6 +569,8 @@ func InitializeMyself(walletPubkeyOverride string, wm *wallet.WalletManager) {
 		common.Logger.Warn("Relay node has no public-addr set; it won't be discoverable as a bootstrap")
 	}
 
+	applyLocalRuntimeMetadata(&myself)
+
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	common.ReportError(err, "Error while marshalling peer")
@@ -563,6 +592,7 @@ func SetMyselfRelayPeer(relayPeer string) {
 	myselfMu.Lock()
 	defer myselfMu.Unlock()
 	myself.RelayPeer = relayPeer
+	applyLocalRuntimeMetadata(&myself)
 }
 
 // SetMyselfForTest sets the myself var for testing. Test-only.
@@ -586,4 +616,27 @@ func RegisterRemotePeer(p Peer) error {
 	}
 	UpdateNodeTableHook(key, value)
 	return store.Put(ctx, key, value)
+}
+
+func runtimeCapabilities() []string {
+	return []string{RuntimeCapabilityServicePolicyV2}
+}
+
+func serviceNameCounts(services []Service) map[string]int {
+	if len(services) == 0 {
+		return nil
+	}
+	counts := make(map[string]int, len(services))
+	for _, service := range services {
+		counts[service.Name]++
+	}
+	return counts
+}
+
+func applyLocalRuntimeMetadata(peer *Peer) {
+	if peer == nil {
+		return
+	}
+	peer.RuntimeCapabilities = runtimeCapabilities()
+	peer.ServiceNameCounts = serviceNameCounts(peer.Service)
 }

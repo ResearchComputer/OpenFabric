@@ -25,8 +25,8 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	dualdht "github.com/libp2p/go-libp2p-kad-dht/dual"
 	record "github.com/libp2p/go-libp2p-record"
-	basichost "github.com/libp2p/go-libp2p/p2p/host/basic"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	basichost "github.com/libp2p/go-libp2p/p2p/host/basic"
 	libp2pyamux "github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	relayClient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -828,6 +828,35 @@ func IsDirectlyConnected(targetPeerID string) bool {
 		return false
 	}
 	return h.Network().Connectedness(pid) == network.Connected
+}
+
+func IsTrustedDirectConn(limited bool, remoteAddr multiaddr.Multiaddr) bool {
+	if limited || remoteAddr == nil {
+		return false
+	}
+	if _, err := remoteAddr.ValueForProtocol(multiaddr.P_CIRCUIT); err == nil {
+		return false
+	}
+	return true
+}
+
+// HasTrustedDirectConnection returns true only when at least one live
+// connection to the target is a non-limited, non-circuit direct path.
+func HasTrustedDirectConnection(targetPeerID string) bool {
+	h, _ := GetP2PNode(nil)
+	if h == nil {
+		return false
+	}
+	pid, err := peer.Decode(targetPeerID)
+	if err != nil {
+		return false
+	}
+	for _, conn := range h.Network().ConnsToPeer(pid) {
+		if IsTrustedDirectConn(conn.Stat().Limited, conn.RemoteMultiaddr()) {
+			return true
+		}
+	}
+	return false
 }
 
 // FindRelayFor returns the peer ID of a connected peer that can relay

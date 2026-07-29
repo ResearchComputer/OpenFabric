@@ -418,3 +418,177 @@ func TestAccessControlCentralMissingWalletCannotBeFilledByForgedLibp2PHeader(t *
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }
+
+func TestTrustedWorkerRouteRejectsNonLibp2POrigin(t *testing.T) {
+	resetAuthClientTestState()
+	protocol.ResetLocalServicesForTest()
+	t.Cleanup(protocol.ResetLocalServicesForTest)
+	protocol.SetLocalServicesForTest([]protocol.Service{{Name: "svc-private", Host: "localhost", Port: "8080"}})
+	viper.Set("security.control_plane.url", "http://control-plane.test")
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/v1/_regions/:region/service/:service/*path", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/_regions/research-eu/service/svc-private/infer", nil)
+	req.RemoteAddr = "192.168.1.1:1234"
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestTrustedWorkerRouteRejectsDuplicateLocalServiceNames(t *testing.T) {
+	resetAuthClientTestState()
+	protocol.ResetLocalServicesForTest()
+	t.Cleanup(protocol.ResetLocalServicesForTest)
+	protocol.SetLocalServicesForTest([]protocol.Service{
+		{Name: "svc-private", Host: "localhost", Port: "8080"},
+		{Name: "svc-private", Host: "localhost", Port: "8081"},
+	})
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/v1/_regions/:region/service/:service/*path", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/_regions/research-eu/service/svc-private/infer", nil)
+	req.RemoteAddr = "12D3KooWTrustedHead"
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestWorkerServiceScopeDecisionsAreNotCached(t *testing.T) {
+	resetAuthClientTestState()
+	protocol.ResetLocalServicesForTest()
+	t.Cleanup(protocol.ResetLocalServicesForTest)
+	protocol.SetLocalServicesForTest([]protocol.Service{{Name: "svc-public", Host: "localhost", Port: "8080"}})
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	var requests int
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		resp := aclEvaluateV2Response{
+			KeyID:         "okey_test",
+			PrimaryWallet: "AllowedWallet",
+			DecisionScope: aclDecisionScope{
+				Partition: partitionPermissionless,
+				RouteKind: routeKindWorker,
+				Service:   "svc-public",
+			},
+			Decisions: []aclDecisionV2{
+				{
+					PeerID:          "worker-self",
+					Allowed:         true,
+					Reason:          "instance_acl_allow",
+					PolicyScope:     "service",
+					ServiceExposure: "permissionless",
+				},
+			},
+		}
+		if requests > 1 {
+			resp.Decisions[0].Allowed = false
+			resp.Decisions[0].Reason = "service_disabled"
+			resp.Decisions[0].ServiceExposure = "disabled"
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.access_control.policy", "any")
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/v1/_service/:service/*path", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req1 := httptest.NewRequest(http.MethodGet, "/v1/_service/svc-public/infer", nil)
+	req1.RemoteAddr = "12D3KooWTrustedHead"
+	req1.Header.Set("Authorization", "Bearer user-token")
+	w1 := httptest.NewRecorder()
+	r.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request expected 200, got %d", w1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/_service/svc-public/infer", nil)
+	req2.RemoteAddr = "12D3KooWTrustedHead"
+	req2.Header.Set("Authorization", "Bearer user-token")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusForbidden {
+		t.Fatalf("second request expected 403, got %d", w2.Code)
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d, want 2", requests)
+	}
+}
+
+func TestTrustedWorkerRouteRejectsUntrustedUpstream(t *testing.T) {
+	resetAuthClientTestState()
+	protocol.ResetLocalServicesForTest()
+	t.Cleanup(protocol.ResetLocalServicesForTest)
+	protocol.SetLocalServicesForTest([]protocol.Service{{Name: "svc-private", Host: "localhost", Port: "8080"}})
+
+	oldMyID := protocol.MyID
+	protocol.MyID = "worker-self"
+	defer func() { protocol.MyID = oldMyID }()
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/acl/evaluate-v2":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(aclEvaluateV2Response{
+				KeyID:         "okey_test",
+				PrimaryWallet: "AllowedWallet",
+				DecisionScope: aclDecisionScope{
+					Partition: partitionTrustedRegion,
+					Region:    "research-eu",
+					RouteKind: routeKindWorker,
+					Service:   "svc-private",
+				},
+				Decisions: []aclDecisionV2{
+					{
+						PeerID:          "worker-self",
+						Allowed:         false,
+						Reason:          "untrusted_upstream",
+						PolicyScope:     "service",
+						ServiceExposure: "trusted_region",
+					},
+				},
+			})
+		case "/internal/node-credentials/challenges", "/internal/node-credentials":
+			writeMockNodeCredential(t, w, r)
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+
+	r := gin.New()
+	r.Use(accessControlMiddleware())
+	r.GET("/v1/_regions/:region/service/:service/*path", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/_regions/research-eu/service/svc-private/infer", nil)
+	req.RemoteAddr = "12D3KooWTrustedHead"
+	req.Header.Set("Authorization", "Bearer user-token")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"opentela/internal/protocol"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -32,7 +33,24 @@ type libp2pHTTPRoundTripper struct {
 	inner *http.Transport
 }
 
+type libp2pDialMode struct {
+	allowLimitedFallback bool
+	forceDirect          bool
+	requireTrustedDirect bool
+}
+
 func newLibp2pHTTPRoundTripper(h host.Host) *libp2pHTTPRoundTripper {
+	return newLibp2pHTTPRoundTripperWithMode(h, libp2pDialMode{allowLimitedFallback: true})
+}
+
+func newTrustedLibp2pHTTPRoundTripper(h host.Host) *libp2pHTTPRoundTripper {
+	return newLibp2pHTTPRoundTripperWithMode(h, libp2pDialMode{
+		forceDirect:          true,
+		requireTrustedDirect: true,
+	})
+}
+
+func newLibp2pHTTPRoundTripperWithMode(h host.Host, mode libp2pDialMode) *libp2pHTTPRoundTripper {
 	rt := &libp2pHTTPRoundTripper{}
 	rt.inner = &http.Transport{
 		DialContext: func(ctx context.Context, _ string, addr string) (net.Conn, error) {
@@ -52,14 +70,25 @@ func newLibp2pHTTPRoundTripper(h host.Host) *libp2pHTTPRoundTripper {
 			// a direct one is available, capping throughput at the relay's
 			// per-flow rate.
 			dialCtx := ctx
-			if h.Network().Connectedness(pid) != network.Connected {
+			switch {
+			case mode.forceDirect:
+				dialCtx = network.WithForceDirectDial(ctx, "trusted-libp2p-http")
+			case mode.allowLimitedFallback && h.Network().Connectedness(pid) != network.Connected:
 				dialCtx = network.WithAllowLimitedConn(ctx, "libp2p-http")
 			}
-			return gostream.Dial(dialCtx, h, pid, p2phttp.DefaultP2PProtocol)
+			conn, err := gostream.Dial(dialCtx, h, pid, p2phttp.DefaultP2PProtocol)
+			if err != nil {
+				return nil, err
+			}
+			if mode.requireTrustedDirect && !protocol.HasTrustedDirectConnection(pid.String()) {
+				_ = conn.Close()
+				return nil, fmt.Errorf("trusted direct connection unavailable for %s", pid.String())
+			}
+			return conn, nil
 		},
-		DisableKeepAlives:     false,
-		MaxIdleConns:          1024,
-		MaxIdleConnsPerHost:   64, // Bursty concurrent forwards to one worker reuse pooled
+		DisableKeepAlives:   false,
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 64, // Bursty concurrent forwards to one worker reuse pooled
 		//                            libp2p streams instead of triggering gostream.Dial each time.
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Minute,

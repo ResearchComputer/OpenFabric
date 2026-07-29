@@ -50,6 +50,16 @@ type aclEvaluateRequest struct {
 	PeerIDs []string `json:"peer_ids"`
 }
 
+type aclEvaluateV2Request struct {
+	KeyHash        string           `json:"key_hash"`
+	Partition      routingPartition `json:"partition"`
+	Region         string           `json:"region"`
+	RouteKind      routeKind        `json:"route_kind"`
+	Service        string           `json:"service"`
+	PeerIDs        []string         `json:"peer_ids"`
+	UpstreamPeerID string           `json:"upstream_peer_id,omitempty"`
+}
+
 type aclDeniedPeer struct {
 	PeerID string `json:"peer_id"`
 	Reason string `json:"reason"`
@@ -63,6 +73,34 @@ type aclEvaluateResponse struct {
 	CacheTTLSeconds int             `json:"cache_ttl_seconds"`
 }
 
+type aclDecisionScope struct {
+	Partition      routingPartition `json:"partition"`
+	Region         string           `json:"region"`
+	RouteKind      routeKind        `json:"route_kind"`
+	Service        string           `json:"service"`
+	RegionRevision int64            `json:"region_revision"`
+}
+
+type aclDecisionV2 struct {
+	PeerID                string    `json:"peer_id"`
+	Allowed               bool      `json:"allowed"`
+	Reason                string    `json:"reason"`
+	PolicyScope           string    `json:"policy_scope"`
+	ServiceExposure       string    `json:"service_exposure"`
+	PolicyRevision        int64     `json:"policy_revision"`
+	ServicePolicyRevision int64     `json:"service_policy_revision"`
+	MembershipRevision    int64     `json:"membership_revision"`
+	EvaluatedAt           time.Time `json:"evaluated_at"`
+}
+
+type aclEvaluateV2Response struct {
+	KeyID           string           `json:"key_id"`
+	PrimaryWallet   string           `json:"primary_wallet"`
+	DecisionScope   aclDecisionScope `json:"decision_scope"`
+	Decisions       []aclDecisionV2  `json:"decisions"`
+	CacheTTLSeconds int              `json:"cache_ttl_seconds"`
+}
+
 type controlPlaneDecision struct {
 	KeyID          string
 	PrimaryWallet  string
@@ -70,8 +108,34 @@ type controlPlaneDecision struct {
 	DeniedReasons  map[string]string
 }
 
+type controlPlaneDecisionV2 struct {
+	KeyID         string
+	PrimaryWallet string
+	Scope         aclDecisionScope
+	Decisions     map[string]aclDecisionV2
+}
+
 func (d *controlPlaneDecision) allows(peerID string) bool {
 	return slices.Contains(d.AllowedPeerIDs, peerID)
+}
+
+func (d *controlPlaneDecisionV2) allows(peerID string) bool {
+	if d == nil {
+		return false
+	}
+	decision, ok := d.Decisions[peerID]
+	return ok && decision.Allowed
+}
+
+func (d *controlPlaneDecisionV2) reason(peerID string) string {
+	if d == nil {
+		return ""
+	}
+	decision, ok := d.Decisions[peerID]
+	if !ok {
+		return ""
+	}
+	return decision.Reason
 }
 
 type controlPlaneError struct {
@@ -112,9 +176,21 @@ type decisionCacheEntry struct {
 	staleUntil time.Time
 }
 
+type decisionCacheV2 struct {
+	mu      sync.RWMutex
+	entries map[string]decisionCacheEntryV2
+}
+
+type decisionCacheEntryV2 struct {
+	decision   controlPlaneDecisionV2
+	freshUntil time.Time
+	staleUntil time.Time
+}
+
 var (
-	tokenCache       = &authCache{entries: make(map[string]authCacheEntry)}
-	aclDecisionCache = &decisionCache{entries: make(map[string]decisionCacheEntry)}
+	tokenCache         = &authCache{entries: make(map[string]authCacheEntry)}
+	aclDecisionCache   = &decisionCache{entries: make(map[string]decisionCacheEntry)}
+	aclDecisionCacheV2 = &decisionCacheV2{entries: make(map[string]decisionCacheEntryV2)}
 )
 
 // authCache caches token → wallet mappings to avoid hitting the legacy auth
@@ -185,6 +261,43 @@ func (c *decisionCache) set(key string, decision controlPlaneDecision, freshFor,
 	}
 }
 
+func (c *decisionCacheV2) getFresh(key string, now time.Time) (*controlPlaneDecisionV2, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.entries[key]
+	if !ok || now.After(entry.freshUntil) {
+		return nil, false
+	}
+	decision := entry.decision
+	return &decision, true
+}
+
+func (c *decisionCacheV2) getStale(key string, now time.Time) (*controlPlaneDecisionV2, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.entries[key]
+	if !ok || now.After(entry.staleUntil) {
+		return nil, false
+	}
+	decision := entry.decision
+	return &decision, true
+}
+
+func (c *decisionCacheV2) set(key string, decision controlPlaneDecisionV2, freshFor, staleFor time.Duration, now time.Time) {
+	freshUntil := now.Add(freshFor)
+	staleUntil := freshUntil
+	if staleFor > 0 {
+		staleUntil = staleUntil.Add(staleFor)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = decisionCacheEntryV2{
+		decision:   decision,
+		freshUntil: freshUntil,
+		staleUntil: staleUntil,
+	}
+}
+
 func isControlPlaneEnabled() bool {
 	return strings.TrimSpace(viper.GetString("security.control_plane.url")) != ""
 }
@@ -246,6 +359,20 @@ func cacheKeyForDecision(keyHash string, peerIDs []string) string {
 	sortedPeerIDs := append([]string(nil), peerIDs...)
 	sort.Strings(sortedPeerIDs)
 	return keyHash + "\x00" + strings.Join(sortedPeerIDs, "\x00")
+}
+
+func cacheKeyForDecisionV2(keyHash string, scope routingScope, peerIDs []string) string {
+	sortedPeerIDs := append([]string(nil), peerIDs...)
+	sort.Strings(sortedPeerIDs)
+	return strings.Join([]string{
+		keyHash,
+		"v2",
+		string(scope.Partition),
+		scope.Region,
+		string(scope.RouteKind),
+		scope.Service,
+		strings.Join(sortedPeerIDs, "\x00"),
+	}, "\x00")
 }
 
 func sha256Hex(token string) string {
@@ -338,11 +465,75 @@ func validateACLResponse(resp aclEvaluateResponse, requestedPeerIDs []string) (c
 func isKnownACLReason(reason string) bool {
 	switch reason {
 	case "unmanaged", "public", "owner", "email_domain", "wallet",
-		"no_match", "stale_identity", "ownership_mismatch", "ownership_unavailable":
+		"no_match", "stale_identity", "ownership_mismatch", "ownership_unavailable", "service_context_required":
 		return true
 	default:
 		return false
 	}
+}
+
+func isKnownACLReasonV2(reason string) bool {
+	switch reason {
+	case "instance_acl_allow",
+		"public", "owner", "email_domain", "wallet",
+		"unmanaged", "not_region_member", "membership_suspended", "membership_expired",
+		"membership_revoked", "ownership_mismatch", "ownership_unavailable",
+		"partition_mismatch", "trusted_route_required", "untrusted_upstream",
+		"wrong_role", "service_context_required", "service_undeclared",
+		"duplicate_service_name", "service_disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateACLResponseV2(resp aclEvaluateV2Response, request aclEvaluateV2Request) (controlPlaneDecisionV2, error) {
+	if resp.KeyID == "" {
+		return controlPlaneDecisionV2{}, fmt.Errorf("%w: missing key_id", errMalformedResponse)
+	}
+	if resp.DecisionScope.Partition != request.Partition ||
+		resp.DecisionScope.Region != request.Region ||
+		resp.DecisionScope.RouteKind != request.RouteKind ||
+		resp.DecisionScope.Service != request.Service {
+		return controlPlaneDecisionV2{}, fmt.Errorf("%w: decision_scope mismatch", errMalformedResponse)
+	}
+	requested := allowedPeerSet(request.PeerIDs)
+	decisions := make(map[string]aclDecisionV2, len(request.PeerIDs))
+	for _, decision := range resp.Decisions {
+		if _, ok := requested[decision.PeerID]; !ok {
+			return controlPlaneDecisionV2{}, fmt.Errorf("%w: unknown peer %q", errMalformedResponse, decision.PeerID)
+		}
+		if _, ok := decisions[decision.PeerID]; ok {
+			return controlPlaneDecisionV2{}, fmt.Errorf("%w: duplicate peer %q", errMalformedResponse, decision.PeerID)
+		}
+		if !isKnownACLReasonV2(decision.Reason) {
+			return controlPlaneDecisionV2{}, fmt.Errorf("%w: unknown reason %q", errMalformedResponse, decision.Reason)
+		}
+		switch decision.PolicyScope {
+		case "", "peer", "service":
+		default:
+			return controlPlaneDecisionV2{}, fmt.Errorf("%w: unknown policy_scope %q", errMalformedResponse, decision.PolicyScope)
+		}
+		switch decision.ServiceExposure {
+		case "", "permissionless", "trusted_region", "disabled":
+		default:
+			return controlPlaneDecisionV2{}, fmt.Errorf("%w: unknown service_exposure %q", errMalformedResponse, decision.ServiceExposure)
+		}
+		decisions[decision.PeerID] = decision
+	}
+	if len(decisions) != len(requested) {
+		return controlPlaneDecisionV2{}, fmt.Errorf("%w: incomplete peer classification", errMalformedResponse)
+	}
+	return controlPlaneDecisionV2{
+		KeyID:         resp.KeyID,
+		PrimaryWallet: resp.PrimaryWallet,
+		Scope:         resp.DecisionScope,
+		Decisions:     decisions,
+	}, nil
+}
+
+func shouldCacheDecisionV2(scope routingScope) bool {
+	return scope.Partition == partitionPermissionless && scope.RouteKind != routeKindWorker
 }
 
 func evaluateBearerForPeers(ctx context.Context, bearer string, peerIDs []string) (*controlPlaneDecision, *controlPlaneError) {
@@ -454,6 +645,119 @@ func evaluateBearerForPeers(ctx context.Context, bearer string, peerIDs []string
 	return &decision, nil
 }
 
+func evaluateBearerForScope(ctx context.Context, bearer string, scope routingScope, peerIDs []string, upstreamPeerID string) (*controlPlaneDecisionV2, *controlPlaneError) {
+	uniquePeers := uniquePeerIDs(peerIDs)
+	if len(uniquePeers) == 0 {
+		return &controlPlaneDecisionV2{
+			Scope:     aclDecisionScope{Partition: scope.Partition, Region: scope.Region, RouteKind: scope.RouteKind, Service: scope.Service},
+			Decisions: map[string]aclDecisionV2{},
+		}, nil
+	}
+
+	keyHash := sha256Hex(bearer)
+	now := time.Now()
+	cacheKey := cacheKeyForDecisionV2(keyHash, scope, uniquePeers)
+	useCache := shouldCacheDecisionV2(scope)
+	if useCache {
+		if decision, ok := aclDecisionCacheV2.getFresh(cacheKey, now); ok {
+			return decision, nil
+		}
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, controlPlaneTimeout())
+	defer cancel()
+
+	payload := aclEvaluateV2Request{
+		KeyHash:        keyHash,
+		Partition:      scope.Partition,
+		Region:         scope.Region,
+		RouteKind:      scope.RouteKind,
+		Service:        scope.Service,
+		PeerIDs:        uniquePeers,
+		UpstreamPeerID: upstreamPeerID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+	}
+
+	controlURL := strings.TrimRight(viper.GetString("security.control_plane.url"), "/") + "/internal/acl/evaluate-v2"
+	req, err := http.NewRequestWithContext(timeoutCtx, http.MethodPost, controlURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if scope.Partition == partitionTrustedRegion {
+		token, err := getTrustedNodeCredential(timeoutCtx)
+		if err != nil {
+			return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		controlToken := strings.TrimSpace(viper.GetString("security.control_plane.token"))
+		if controlToken == "" {
+			return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errMissingControlToken}
+		}
+		req.Header.Set("Authorization", "Bearer "+controlToken)
+	}
+
+	resp, err := controlPlaneHTTPClient.Do(req)
+	if err != nil {
+		if useCache {
+			if decision, ok := aclDecisionCacheV2.getStale(cacheKey, now); ok {
+				return decision, nil
+			}
+		}
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		if strings.EqualFold(strings.TrimSpace(resp.Header.Get(controlAuthFailureHeader)), "true") {
+			if useCache {
+				if decision, ok := aclDecisionCacheV2.getStale(cacheKey, now); ok {
+					return decision, nil
+				}
+			}
+			return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+		}
+		return nil, &controlPlaneError{Status: http.StatusUnauthorized, Err: errInvalidToken}
+	}
+	if resp.StatusCode != http.StatusOK {
+		if useCache {
+			if decision, ok := aclDecisionCacheV2.getStale(cacheKey, now); ok {
+				return decision, nil
+			}
+		}
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: errEvaluatorDown}
+	}
+
+	var payloadResp aclEvaluateV2Response
+	if err := decodeStrictJSON(io.LimitReader(resp.Body, controlPlaneResponseMaxLen), &payloadResp); err != nil {
+		if useCache {
+			if decision, ok := aclDecisionCacheV2.getStale(cacheKey, now); ok {
+				return decision, nil
+			}
+		}
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: fmt.Errorf("%w: %v", errMalformedResponse, err)}
+	}
+
+	decision, err := validateACLResponseV2(payloadResp, payload)
+	if err != nil {
+		if useCache {
+			if stale, ok := aclDecisionCacheV2.getStale(cacheKey, now); ok {
+				return stale, nil
+			}
+		}
+		return nil, &controlPlaneError{Status: http.StatusServiceUnavailable, Err: err}
+	}
+	if useCache {
+		aclDecisionCacheV2.set(cacheKey, decision, controlPlaneFreshTTL(payloadResp.CacheTTLSeconds), controlPlaneStaleIfError(), now)
+	}
+	return &decision, nil
+}
+
 func authorizeRequestForPeers(ctx context.Context, authHeader string, peerIDs []string) (*controlPlaneDecision, *controlPlaneError) {
 	if !isControlPlaneEnabled() {
 		return nil, nil
@@ -463,6 +767,17 @@ func authorizeRequestForPeers(ctx context.Context, authHeader string, peerIDs []
 		return nil, &controlPlaneError{Status: http.StatusUnauthorized, Err: err}
 	}
 	return evaluateBearerForPeers(ctx, bearer, peerIDs)
+}
+
+func authorizeRequestForScope(ctx context.Context, authHeader string, scope routingScope, peerIDs []string, upstreamPeerID string) (*controlPlaneDecisionV2, *controlPlaneError) {
+	if !isControlPlaneEnabled() {
+		return nil, nil
+	}
+	bearer, err := parseBearerToken(authHeader)
+	if err != nil {
+		return nil, &controlPlaneError{Status: http.StatusUnauthorized, Err: err}
+	}
+	return evaluateBearerForScope(ctx, bearer, scope, peerIDs, upstreamPeerID)
 }
 
 // verifyBearerToken calls the legacy auth server to resolve a bearer token into
