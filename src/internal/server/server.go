@@ -322,8 +322,12 @@ func StartServer() {
 	// shutting down...
 	protocol.AnnounceLeave()
 	stopAnalytics()
-	protocol.ClearCRDTStore()
+	// AnnounceLeave only does a store.Put; go-ds-crdt broadcasts the delta
+	// asynchronously. Drain before wiping the datastore, otherwise the LEFT
+	// record is destroyed before it reaches any peer and the grace sleep below
+	// is spent on an already-empty store.
 	time.Sleep(5 * time.Second)
+	protocol.ClearCRDTStore()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	common.Logger.Info("Shutting down")
 	defer cancel()
