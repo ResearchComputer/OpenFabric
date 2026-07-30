@@ -53,3 +53,22 @@ Contributions are welcome! Please follow the code of conduct and submit pull req
 ## License
 
 This project is licensed under the Apache v2 License - see the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+If you found this repository helpful, please consider citing our work:
+
+```
+@inproceedings {318577,
+  author = {Xiaozhe Yao and Youhe Jiang and Ilia Badanin and Qinghao Hu and Robert Matthew Smith and Binhang Yuan and Imanol Schlag and Eiko Yoneki and Ana Klimovic},
+  title = {{OpenTela}: Unifying Decentralized Computing Resources for Heterogeneous {LLM} Serving (Operational Systems)},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {1821--1838},
+  url = {https://www.usenix.org/conference/osdi26/presentation/yao},
+  publisher = {USENIX Association},
+  month = jul
+}
+```
