@@ -182,6 +182,17 @@ type Peer struct {
 	// reservation on. Set by workers behind firewalls so head nodes
 	// know which relay to route through.
 	RelayPeer string `json:"relay_peer,omitempty"`
+	// EvictedBy names the head that retired this peer after its relay reported
+	// no reservation for it. Empty for a self-announced departure.
+	//
+	// This is provenance, not authentication: it is self-reported and therefore
+	// spoofable. It exists so a buggy or misconfigured non-head cannot retire
+	// healthy workers, and so operators can tell an eviction from a graceful
+	// leave. Note that go-ds-crdt already lets any participant write any key, so
+	// this does not create a new capability — signing eviction records with the
+	// evictor's wallet identity is the real fix, and belongs with the broader
+	// CRDT write-authorization model.
+	EvictedBy string `json:"evicted_by,omitempty"`
 	Connected bool   `json:"connected"`
 	Load      []int  `json:"load"`
 	// BuildAttestation carries the version + commit + signature so peers
@@ -362,6 +373,16 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	// Check for Left status — keep the peer in the table marked as LEFT
 	// so TombstoneManager.collectCandidates can find it for deferred cleanup.
 	if peer.Status == LEFT {
+		// An eviction record is one node asserting that a *different* node is
+		// gone, so it needs more scrutiny than a self-announced leave. Act on it
+		// only when we can confirm the evictor is a head we already know about.
+		// Checked before taking tableUpdateSem: isKnownHeadPeer reads the table
+		// itself and would otherwise deadlock.
+		if peer.EvictedBy != "" && !isKnownHeadPeer(peer.EvictedBy) {
+			common.Logger.Warnf("Ignoring eviction of [%s] by [%s]: evictor is not a known head peer",
+				peer.ID, peer.EvictedBy)
+			return
+		}
 		common.Logger.Debugf("Peer [%s] has left, marking as LEFT in table", peer.ID)
 		tableUpdateSem <- struct{}{}
 		defer func() { <-tableUpdateSem }() // Release on exit
@@ -385,8 +406,21 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 			peer.LastSeen = existing.LastSeen
 		}
 	}
-	// Always update LastSeen on any CRDT update we receive for that peer
-	peer.LastSeen = time.Now().Unix()
+	// LastSeen means "last proven alive", and it is owned by the caller: only a
+	// successful liveness check or a peer's own announcement may advance it.
+	//
+	// This used to restamp unconditionally, which made every update look like
+	// fresh evidence of life — including updates that recorded a FAILED ping
+	// (clock.go) and disconnect notifications that explicitly asked to keep the
+	// last known good value (host.go DisconnectedF). The staleness sweep reasons
+	// on this field, so it could never fire while a peer was still being
+	// processed, and froze the moment the peer left the peerstore. Dead workers
+	// therefore stayed connected:true indefinitely.
+	//
+	// Only stamp a first sighting, where there is no prior value to preserve.
+	if peer.LastSeen == 0 {
+		peer.LastSeen = time.Now().Unix()
+	}
 	table[key.String()] = peer
 }
 
@@ -639,4 +673,20 @@ func applyLocalRuntimeMetadata(peer *Peer) {
 	}
 	peer.RuntimeCapabilities = runtimeCapabilities()
 	peer.ServiceNameCounts = serviceNameCounts(peer.Service)
+}
+
+// isKnownHeadPeer reports whether id names a peer we already know carries the
+// head role. Used to filter eviction records: see the EvictedBy field for why
+// this is a sanity check rather than an authentication boundary.
+func isKnownHeadPeer(id string) bool {
+	p, err := GetPeerFromTable(id)
+	if err != nil {
+		return false
+	}
+	for _, r := range p.Role {
+		if r == "head" {
+			return true
+		}
+	}
+	return false
 }

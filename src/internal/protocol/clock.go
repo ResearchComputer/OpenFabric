@@ -57,8 +57,11 @@ func StartTicker() {
 			} else {
 				p.Connected = true
 				alive++
+				// Only a successful ping advances LastSeen. Bumping it on a
+				// failed ping too made every entry look permanently fresh, so
+				// the staleness sweep could never fire — see UpdateNodeTableHook.
+				p.LastSeen = time.Now().Unix()
 			}
-			p.LastSeen = time.Now().Unix()
 			// Liveness updates go to the in-memory node table only.
 			// Writing Connected/LastSeen to CRDT on every tick was the
 			// main source of DAG bloat (~12k writes/day), causing fresh
@@ -72,6 +75,14 @@ func StartTicker() {
 				common.Logger.Error("Error while marshalling peer: ", peer_id.String(), err)
 			}
 		}
+		// The loop above can only see peers still in the peerstore. A worker
+		// behind a relay disappears from it entirely when its job dies, so it
+		// would never be pinged again and its row would freeze as
+		// connected:true forever. Probe those through their relay here, on the
+		// same 30s cadence, so a dead worker is retired within one tick rather
+		// than lingering until someone notices.
+		probeUnreachableServicePeers()
+
 		if !process.HealthCheck() {
 			common.Logger.Error("Health check failed")
 			os.Exit(1)
@@ -94,37 +105,26 @@ func StartTicker() {
 			Reconnect()
 		}
 
-		// Cleanup: remove peers that have been disconnected for a long time.
-		// Skip peers with registered services — they're actively providing
-		// workloads and may be reachable through a relay even if we can't
-		// ping them directly.
-		staleAfter := 10 * time.Minute
-		table := *GetAllPeers()
-		now := time.Now().Unix()
-		for id, p := range table {
-			hasServices := len(p.Service) > 0
-			if !p.Connected && p.LastSeen > 0 && !hasServices {
-				if time.Unix(p.LastSeen, 0).Add(staleAfter).Before(time.Now()) {
-					common.Logger.Debugf("Removing stale peer %s (last seen %v)", id, time.Unix(p.LastSeen, 0))
-					DeleteNodeTableHook(ds.NewKey(id))
-				}
-			}
-			// Mark peers with very old LastSeen as disconnected (in-memory only).
-			// Skip peers with services — they may be behind a relay.
-			if p.Connected && p.LastSeen > 0 && !hasServices && time.Unix(p.LastSeen, 0).Add(2*time.Minute).Before(time.Now()) {
+		// Timer-based maintenance for peers the probe does not cover (no
+		// service, so no relay reservation to ask about). Service-carrying
+		// peers are handled by probeUnreachableServicePeers on the 30s tick;
+		// passing probeUnknown here keeps this pass from acting on them, which
+		// is the fail-safe direction.
+		//
+		// This used to skip every service-carrying peer outright, which is what
+		// made dead LLM workers permanently un-evictable. See decideSweepAction.
+		now := time.Now()
+		for id, p := range *GetAllPeers() {
+			switch decideSweepAction(p, probeUnknown, now) {
+			case sweepDelete:
+				common.Logger.Debugf("Removing stale peer %s (last seen %v)", id, time.Unix(p.LastSeen, 0))
+				DeleteNodeTableHook(ds.NewKey(id))
+			case sweepMarkDisconnected:
 				p.Connected = false
-				value, err := json.Marshal(p)
-				if err == nil {
+				if value, err := json.Marshal(p); err == nil {
 					UpdateNodeTableHook(ds.NewKey(id), value)
 				}
-			}
-			// Initialize LastSeen if zero (in-memory only).
-			if p.LastSeen == 0 {
-				p.LastSeen = now
-				value, err := json.Marshal(p)
-				if err == nil {
-					UpdateNodeTableHook(ds.NewKey(id), value)
-				}
+			case sweepKeep:
 			}
 		}
 	})
