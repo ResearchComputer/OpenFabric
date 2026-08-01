@@ -203,7 +203,20 @@ func probeUnreachableServicePeers() {
 				return
 			}
 
-			if decideSweepAction(p, ProbePeerLiveness(ctx, peerID), now) != sweepMarkDisconnected {
+			verdict := ProbePeerLiveness(ctx, peerID)
+			action := decideSweepAction(p, verdict, now)
+
+			// Observe-only mode: report what we would have done and stop there.
+			// Retiring a peer takes a live model offline if the verdict is
+			// wrong, so this exists to let a new deployment be checked against
+			// real workers before it is allowed to act on them.
+			if !livenessEnforced() {
+				common.Logger.Infof("Liveness probe (observe-only) %s: verdict=%v action=%v last_seen=%v",
+					peerID, verdict, action, time.Unix(p.LastSeen, 0))
+				return
+			}
+
+			if action != sweepMarkDisconnected {
 				return
 			}
 
@@ -253,4 +266,18 @@ func publishEviction(key ds.Key, p Peer) {
 		return
 	}
 	common.Logger.Infof("Published eviction record for %s", p.ID)
+}
+
+// livenessEnforced reports whether probe verdicts may actually retire a peer.
+//
+// Defaults to true: enforcement is the intended behaviour, and a node that
+// never had the key set must still fix ghosts. Set liveness.enforce=false to
+// run the probe in observe-only mode, which logs the verdict it would have
+// acted on. Use that to validate a new build against real workers before
+// letting it take anything offline.
+func livenessEnforced() bool {
+	if !viper.IsSet("liveness.enforce") {
+		return true
+	}
+	return viper.GetBool("liveness.enforce")
 }

@@ -375,3 +375,29 @@ func seedPeer(t *testing.T, key string, p Peer) {
 	}
 	UpdateNodeTableHook(ds.NewKey(key), b)
 }
+
+// LastSeen must be monotonic. Now that the hook carries the caller's value
+// instead of restamping, a CRDT rebroadcast holding an old LastSeen would
+// otherwise drag a peer's timestamp backwards past locally-proven evidence of
+// life. Observed in production: a peer pinged 7s ago briefly read as 27h stale
+// when its own rebroadcast record arrived, which for a service-less peer is
+// enough to trip the 2-minute disconnect window and flap it.
+func TestUpdateNodeTableHook_LastSeenNeverGoesBackwards(t *testing.T) {
+	_ = GetAllPeers()
+	recent := time.Now().Unix()
+
+	b, _ := json.Marshal(Peer{ID: "peer-monotonic", LastSeen: recent, Connected: true})
+	UpdateNodeTableHook(ds.NewKey("peer-monotonic"), b)
+
+	// A rebroadcast carrying a much older timestamp for the same peer.
+	stale, _ := json.Marshal(Peer{ID: "peer-monotonic", LastSeen: recent - 90000, Connected: true})
+	UpdateNodeTableHook(ds.NewKey("peer-monotonic"), stale)
+
+	got, err := GetPeerFromTable("peer-monotonic")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.LastSeen != recent {
+		t.Fatalf("LastSeen = %d, want %d — a stale record must not overwrite newer proof of life", got.LastSeen, recent)
+	}
+}

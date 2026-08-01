@@ -401,8 +401,13 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 		if existing.Status == LEFT {
 			common.Logger.Debugf("Peer [%s] rejoined (was LEFT)", peer.ID)
 		}
-		// If LastSeen is missing in the update, keep the existing one
-		if peer.LastSeen == 0 {
+		// LastSeen is monotonic: keep whichever timestamp is newer. This covers
+		// both an update that omits it and — more importantly — a CRDT
+		// rebroadcast carrying a peer's own stale value, which would otherwise
+		// drag the timestamp backwards past liveness we have since proven
+		// locally. A service-less peer dragged back far enough trips the
+		// 2-minute disconnect window and flaps.
+		if existing.LastSeen > peer.LastSeen {
 			peer.LastSeen = existing.LastSeen
 		}
 	}
