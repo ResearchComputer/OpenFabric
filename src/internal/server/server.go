@@ -107,7 +107,12 @@ func StartServer() {
 	protocol.InitializeMyself(walletPubkey, walletManager)
 	_, cancelCtx := protocol.GetCRDTStore()
 	defer cancelCtx()
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	// SIGKILL is deliberately absent: it cannot be caught, and os/signal
+	// silently ignores it. Listing it here read as shutdown coverage while
+	// providing none — a SIGKILLed node never runs AnnounceLeave, which is why
+	// peers must also be able to detect a departure that was never announced
+	// (see protocol.ProbePeerLiveness).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// Configure load balancing policy for global service routing
@@ -312,6 +317,11 @@ func StartServer() {
 	}
 	go func() {
 		protocol.RegisterLocalServices()
+		// RegisterLocalServices health-checks once. Keep re-checking, so that a
+		// node whose backing engine dies stops advertising a model it can no
+		// longer serve — the node itself stays alive and pingable, so no
+		// peer-side liveness probe can detect this.
+		protocol.StartServiceHealthRevalidation()
 	}()
 
 	// Startup banner

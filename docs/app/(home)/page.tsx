@@ -97,6 +97,17 @@ const community: { label: string; description: string; href: string; external?: 
     ),
   },
   {
+    label: 'Observatory',
+    description: 'Measured GPU throughput on the mesh',
+    href: '/observatory',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v13.5A2.5 2.5 0 0 0 5.5 19H19" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7 14l3-4 3.5 3 4.5-6" />
+      </svg>
+    ),
+  },
+  {
     label: 'Account',
     description: 'API keys & wallet dashboard',
     href: '/account',
@@ -145,7 +156,7 @@ export default function HomePage() {
             <p className="mb-4 text-sm font-medium tracking-widest uppercase text-fd-primary">
               Peer-to-peer GPU mesh
             </p>
-            <h1 className="text-5xl font-extrabold leading-tight tracking-tight sm:text-6xl">
+            <h1 className="font-display text-5xl leading-tight sm:text-6xl">
               Decentralized compute{' '}
               <span className="bg-gradient-to-r from-fd-primary to-fd-primary/60 bg-clip-text text-transparent">
                 for AI
@@ -285,6 +296,12 @@ export default function HomePage() {
               className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Documentation
+            </Link>
+            <Link
+              href="/observatory"
+              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+            >
+              Observatory
             </Link>
             <Link
               href="/account"

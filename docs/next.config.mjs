@@ -16,6 +16,7 @@ const config = {
     return [
       { source: '/wallet', destination: '/account', permanent: true },
       { source: '/token-manager', destination: '/account', permanent: true },
+      { source: '/leaderboard', destination: '/observatory', permanent: true },
     ];
   },
 };

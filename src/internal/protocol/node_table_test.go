@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"time"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -229,4 +230,174 @@ func TestRegisterRemotePeer_Signature(t *testing.T) {
 	// Full integration test requires CRDT store which is tested in Task 8.
 	fn := RegisterRemotePeer
 	_ = fn
+}
+
+// LastSeen must mean "last proven alive", not "last time we processed any
+// update about this peer". The staleness sweep in clock.go reasons on this
+// field, so a hook that restamps it on every update — including updates that
+// record a FAILED liveness check — guarantees the sweep can never fire. That is
+// half of why dead workers stayed connected:true for 13h.
+func TestUpdateNodeTableHook_DoesNotRestampLastSeen(t *testing.T) {
+	_ = GetAllPeers()
+	const proven = int64(1000)
+
+	p := Peer{ID: "peer-lastseen-preserved", LastSeen: proven, Connected: false}
+	b, _ := json.Marshal(p)
+	UpdateNodeTableHook(ds.NewKey("peer-lastseen-preserved"), b)
+
+	got, err := GetPeerFromTable("peer-lastseen-preserved")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.LastSeen != proven {
+		t.Fatalf("LastSeen = %d, want %d — the hook must carry the caller's value, not restamp to now", got.LastSeen, proven)
+	}
+}
+
+// A peer we have never seen before still needs a sane LastSeen, otherwise the
+// sweep's `LastSeen > 0` guard skips it forever.
+func TestUpdateNodeTableHook_InitializesLastSeenForNewPeer(t *testing.T) {
+	_ = GetAllPeers()
+	before := time.Now().Unix()
+
+	p := Peer{ID: "peer-lastseen-new"}
+	b, _ := json.Marshal(p)
+	UpdateNodeTableHook(ds.NewKey("peer-lastseen-new"), b)
+
+	got, err := GetPeerFromTable("peer-lastseen-new")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.LastSeen < before {
+		t.Fatalf("LastSeen = %d, want >= %d — a first sighting should be stamped", got.LastSeen, before)
+	}
+}
+
+// A head that proves a worker is gone must be able to tell the other heads,
+// otherwise a head that cannot reach that worker's relay keeps serving the
+// ghost forever (observed: ocf-2 holds QmXbXAnu9XVv NotConnected, so its own
+// probe can never reach a verdict).
+func TestUpdateNodeTableHook_EvictionFromHeadIsAccepted(t *testing.T) {
+	_ = GetAllPeers()
+	seedPeer(t, "evict-head-1", Peer{ID: "evict-head-1", Role: []string{"head"}})
+	seedPeer(t, "evict-worker-1", Peer{
+		ID: "evict-worker-1", Connected: true, LastSeen: 5000,
+		Service: []Service{{Name: "llm"}},
+	})
+
+	evict := Peer{ID: "evict-worker-1", Status: LEFT, EvictedBy: "evict-head-1", LastSeen: 5000}
+	b, _ := json.Marshal(evict)
+	UpdateNodeTableHook(ds.NewKey("evict-worker-1"), b)
+
+	got, err := GetPeerFromTable("evict-worker-1")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.Connected {
+		t.Fatal("expected the worker to be marked disconnected by the head's eviction record")
+	}
+}
+
+// Anyone can write any key in the CRDT, so an eviction record naming a peer we
+// do not know to be a head is not something to act on. This does not make
+// eviction authenticated — EvictedBy is self-reported — but it does stop a
+// misconfigured or buggy non-head node from retiring healthy workers.
+func TestUpdateNodeTableHook_EvictionFromNonHeadIsIgnored(t *testing.T) {
+	_ = GetAllPeers()
+	seedPeer(t, "evict-worker-2", Peer{
+		ID: "evict-worker-2", Connected: true, LastSeen: 5000,
+		Service: []Service{{Name: "llm"}},
+	})
+	seedPeer(t, "evict-notahead", Peer{ID: "evict-notahead", Role: []string{"worker"}})
+
+	evict := Peer{ID: "evict-worker-2", Status: LEFT, EvictedBy: "evict-notahead", LastSeen: 5000}
+	b, _ := json.Marshal(evict)
+	UpdateNodeTableHook(ds.NewKey("evict-worker-2"), b)
+
+	got, err := GetPeerFromTable("evict-worker-2")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !got.Connected {
+		t.Fatal("a non-head must not be able to evict a peer")
+	}
+}
+
+// An evictor we have never heard of cannot be confirmed to be a head, so the
+// record is ignored rather than trusted.
+func TestUpdateNodeTableHook_EvictionFromUnknownPeerIsIgnored(t *testing.T) {
+	_ = GetAllPeers()
+	seedPeer(t, "evict-worker-3", Peer{
+		ID: "evict-worker-3", Connected: true, LastSeen: 5000,
+		Service: []Service{{Name: "llm"}},
+	})
+
+	evict := Peer{ID: "evict-worker-3", Status: LEFT, EvictedBy: "evict-ghost-head", LastSeen: 5000}
+	b, _ := json.Marshal(evict)
+	UpdateNodeTableHook(ds.NewKey("evict-worker-3"), b)
+
+	got, err := GetPeerFromTable("evict-worker-3")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !got.Connected {
+		t.Fatal("an unverifiable evictor must not be able to evict a peer")
+	}
+}
+
+// A peer announcing its own departure carries no EvictedBy and must keep working
+// exactly as before — this is the normal, graceful AnnounceLeave path.
+func TestUpdateNodeTableHook_SelfAnnouncedLeaveStillWorks(t *testing.T) {
+	_ = GetAllPeers()
+	seedPeer(t, "evict-worker-4", Peer{
+		ID: "evict-worker-4", Connected: true, LastSeen: 5000,
+		Service: []Service{{Name: "llm"}},
+	})
+
+	leave := Peer{ID: "evict-worker-4", Status: LEFT, LastSeen: 5000}
+	b, _ := json.Marshal(leave)
+	UpdateNodeTableHook(ds.NewKey("evict-worker-4"), b)
+
+	got, err := GetPeerFromTable("evict-worker-4")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.Connected {
+		t.Fatal("a self-announced LEFT must still mark the peer disconnected")
+	}
+}
+
+func seedPeer(t *testing.T, key string, p Peer) {
+	t.Helper()
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal seed peer: %v", err)
+	}
+	UpdateNodeTableHook(ds.NewKey(key), b)
+}
+
+// LastSeen must be monotonic. Now that the hook carries the caller's value
+// instead of restamping, a CRDT rebroadcast holding an old LastSeen would
+// otherwise drag a peer's timestamp backwards past locally-proven evidence of
+// life. Observed in production: a peer pinged 7s ago briefly read as 27h stale
+// when its own rebroadcast record arrived, which for a service-less peer is
+// enough to trip the 2-minute disconnect window and flap it.
+func TestUpdateNodeTableHook_LastSeenNeverGoesBackwards(t *testing.T) {
+	_ = GetAllPeers()
+	recent := time.Now().Unix()
+
+	b, _ := json.Marshal(Peer{ID: "peer-monotonic", LastSeen: recent, Connected: true})
+	UpdateNodeTableHook(ds.NewKey("peer-monotonic"), b)
+
+	// A rebroadcast carrying a much older timestamp for the same peer.
+	stale, _ := json.Marshal(Peer{ID: "peer-monotonic", LastSeen: recent - 90000, Connected: true})
+	UpdateNodeTableHook(ds.NewKey("peer-monotonic"), stale)
+
+	got, err := GetPeerFromTable("peer-monotonic")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got.LastSeen != recent {
+		t.Fatalf("LastSeen = %d, want %d — a stale record must not overwrite newer proof of life", got.LastSeen, recent)
+	}
 }

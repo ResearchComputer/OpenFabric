@@ -231,19 +231,14 @@ func ReannounceLocalServices() {
 	// Start from localServices (the authoritative in-memory set) and merge
 	// any extra services present in the current node table entry so that
 	// services registered through other paths (e.g. HTTP API) are not lost.
-	merged := snapshotLocalServices()
+	var existingServices []Service
 	if existing, err := GetPeerFromTable(host.ID().String()); err == nil {
-		seen := make(map[string]struct{})
-		for _, s := range merged {
-			seen[s.Name+"|"+s.Host+"|"+s.Port] = struct{}{}
-		}
-		for _, s := range existing.Service {
-			k := s.Name + "|" + s.Host + "|" + s.Port
-			if _, ok := seen[k]; !ok {
-				merged = append(merged, s)
-			}
-		}
+		existingServices = existing.Service
 	}
+	// The withdrawn set must be honoured here: without it this merge re-adds a
+	// service that the health revalidation loop just retired, and the withdrawal
+	// silently no-ops on the very next reannounce.
+	merged := mergeAdvertisedServices(snapshotLocalServices(), existingServices, snapshotWithdrawnServices())
 	myselfMu.Lock()
 	myself.Hardware.GPUs = gpus
 	myself.Service = merged

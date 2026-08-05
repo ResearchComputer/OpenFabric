@@ -13,6 +13,10 @@ export function baseOptions(): BaseLayoutProps {
         url: '/docs',
       },
       {
+        text: 'Observatory',
+        url: '/observatory',
+      },
+      {
         text: 'Account',
         url: '/account',
       },
