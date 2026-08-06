@@ -1,0 +1,280 @@
+---
+title: Public Cloud
+description: Deploy and operate a public opentela.ai cloud — an authenticating gateway in front of an OpenTela head node, backed by Neon serverless Postgres and Neon Auth.
+---
+
+An OpenTela mesh is permissionless by itself: any node can join, advertise services, and route
+requests. To run a **public cloud** on top of it — the service `api.opentela.ai` provides — you
+add a thin, centralized edge that gives the mesh user accounts, API keys, access control, and
+analytics. This page explains how to deploy that stack yourself.
+
+The stack has five parts:
+
+```text
+ Browsers / CLI / SDK clients
+        │  Authorization: Bearer sk-…   (or Neon Auth JWT on /manage/*)
+        ▼
+ ┌────────────────────────────────────────────────────────────┐
+ │ Gateway  (api.opentela.ai — authenticating reverse proxy)  │
+ │  /v1/*        authenticated proxy to the mesh              │
+ │  /manage/*    self-service keys, wallets, instances, ACLs  │
+ │  /internal/*  ACL evaluation + node credentials for otela  │
+ │  /v1/services, /v1/leaderboard, /healthz   (public)        │
+ └───┬───────────────────┬───────────────────────┬────────────┘
+     │ pgxpool           │ JWKS (EdDSA)          │ HTTPS
+     ▼                   ▼                       ▼
+ Neon Postgres      Neon Auth              OpenTela head node (upstream)
+ (keys, users,      (managed Better        port 8092 by default —
+  wallets,           Auth: login and        see Spin Up LLM Serving)
+  instances, ACLs,   short-lived JWTs)            │
+  trusted regions)                          libp2p mesh ──► workers
+ Optional analytics: Tinybird Forward (managed) or self-managed ClickHouse
+```
+
+| Layer | Component | Where it runs |
+| :--- | :--- | :--- |
+| Gateway / control plane | the `api.opentela.ai` service (`cmd/server` + `cmd/keyctl`) | Fly.io container (or any Docker host) |
+| Control-plane database | **Neon serverless Postgres** | Neon cloud |
+| User authentication | **Neon Auth** (managed Better Auth) | Neon cloud |
+| Mesh upstream | `otela` head node | Your VM (see [Spin Up LLM Serving](/docs/tutorial/spinup)) |
+| Analytics (optional) | Tinybird Forward, or self-managed ClickHouse | Tinybird cloud / your host |
+
+## Why Neon for the database
+
+The gateway uses **Neon as its database provider** for everything the control plane must
+persist: API-key hashes, user accounts and verified identities, linked wallets, claimed
+instances (`peer_id` ownership), ACL rules, and trusted-region membership. Neon is a good fit
+for this edge workload for four reasons:
+
+- **Serverless Postgres with a connection pooler.** The gateway connects with `pgxpool`
+  through Neon's pooled endpoint (`*-pooler.*`), which tolerates bursty edge concurrency and
+  pairs well with Fly machines that scale to zero.
+- **Instant branching.** Schema and data branches give you staging/preview environments of the
+  control plane for free — point a review deployment's `DATABASE_URL` at a Neon branch instead
+  of maintaining a second database cluster.
+- **Neon Auth is attached to the project.** Enabling Neon Auth provisions a managed
+  [Better Auth](https://www.better-auth.com) deployment next to the database. It issues the
+  short-lived EdDSA JWTs that gate all `/manage/*` user flows, so end users can mint their own
+  `sk-…` API keys without an operator in the loop. There is nothing extra to self-host.
+- **Idempotent, file-based schema management.** The gateway's schema lives in ordered
+  `migrations/*.sql` files applied by `keyctl migrate` on every release, so a fresh Neon branch
+  (or database) is provisioned in seconds.
+
+## Step 1 — Run the mesh upstream
+
+The gateway forwards authenticated requests to one OpenTela **head node**. Set it up first:
+install `otela` (see [Installation](/docs/tutorial/installation)) and start a standalone head
+node (see [Spin Up LLM Serving](/docs/tutorial/spinup)). The gateway must reach its HTTP
+listener — `8092` by default — over the network, ideally behind HTTPS:
+
+```bash
+./otela start --mode standalone --public-addr <HEAD_PUBLIC_IP> --seed 0
+```
+
+Worker nodes join the mesh as usual and are unaffected by the control plane unless you use
+trusted regions (Step 4).
+
+## Step 2 — Provision Neon
+
+1. **Create a Neon project.** Pick a region close to where the gateway will run — the
+   reference deployment pairs a Fly app in `fra` with Neon in `aws/eu-central-1`, because every
+   authenticated request and every ACL evaluation may touch the database.
+2. **Copy the connection strings.** Neon gives you two DSNs:
+   - the **pooled** host (`…-pooler.…`) — use this as the runtime `DATABASE_URL`;
+   - the **direct** host — keep it for local migrations, debugging, and `psql`
+     (`DATABASE_URL_UNPOOLED` in local development).
+
+   Databases and roles are managed with `psql` or the
+   [Neon CLI](https://neon.com/docs/reference/cli-install); the gateway repository carries a
+   `.neon` file with the project and branch IDs so `neon` CLI commands run against the right
+   project automatically.
+3. **Apply the schema.** Schema lives in `migrations/*.sql` (`0001` API keys, `0002` per-user
+   key ownership, `0003` wallets/instances/ACL identity state, `0004` trusted regions and
+   service-scoped policy). All files are idempotent, applied in lexicographic order:
+
+   ```bash
+   export DATABASE_URL='postgres://<user>:<pass>@<ep>-pooler.<region>.aws.neon.tech/<db>?sslmode=require'
+   go run ./cmd/keyctl migrate
+   ```
+
+   The same command runs automatically on every Fly deploy as the `release_command` (see
+   below), so you only need to run it by hand for local development. Note that only
+   **SHA-256 key hashes** are stored — plaintext `sk-…` keys are shown exactly once, at
+   creation, and are never recoverable from the database.
+4. **Enable Neon Auth.** In the Neon console (or with `neon neon-auth …`), enable Auth on the
+   project. This provisions a managed Better Auth instance and gives you three values:
+   - the base URL, e.g. `https://<ep>.neonauth.<region>.aws.neon.tech/neondb/auth`
+     (used by your web console as `NEON_AUTH_BASE_URL` / `VITE_NEON_AUTH_URL`);
+   - the JWKS endpoint — set as `NEON_AUTH_JWKS_URL`;
+   - the issuer — set as `NEON_AUTH_ISSUER`.
+
+   > **Gotcha:** Better Auth sets the token `iss` to the **scheme + host only**
+   > (`https://<ep>.neonauth.<region>.aws.neon.tech`) — *without* the `/neondb/auth` path.
+   > The gateway verifies `iss` exactly, so omitting or including the path incorrectly makes
+   > every `/manage/*` call return `401`.
+5. **Register trusted domains** for every origin that will hold a login session, otherwise
+   sign-in redirects and token issuance fail with `invalid domain`:
+
+   ```bash
+   neon neon-auth domain add https://app.example.com
+   neon neon-auth domain allow-localhost   # local development
+   ```
+
+## Step 3 — Deploy the gateway (Fly.io)
+
+The gateway is a small, static Go binary (plus `keyctl`, its admin/migration CLI) with a
+ready-made `Dockerfile` and `fly.toml`.
+
+1. **Launch the app:**
+
+   ```bash
+   fly launch --no-deploy   # adopt the checked-in fly.toml; pick primary_region fra
+   ```
+
+2. **Set the secrets** (never in `fly.toml` itself):
+
+   ```bash
+   flyctl secrets set \
+     OPENTELA_UPSTREAM_URL="https://<your-head-node>" \
+     DATABASE_URL="postgres://<user>:<pass>@<ep>-pooler.<region>.aws.neon.tech/<db>?sslmode=require" \
+     NEON_AUTH_JWKS_URL="https://<ep>.neonauth.<region>.aws.neon.tech/neondb/auth/jwks" \
+     NEON_AUTH_ISSUER="https://<ep>.neonauth.<region>.aws.neon.tech" \
+     INTERNAL_CONTROL_TOKEN="$(openssl rand -base64 48)" \
+     NODE_CREDENTIAL_SIGNING_KID="v1" \
+     NODE_CREDENTIAL_SIGNING_KEY="$(openssl rand -base64 32)" \
+     CORS_ALLOWED_ORIGINS="https://app.example.com"
+   ```
+
+   | Variable | Purpose |
+   | :--- | :--- |
+   | `OPENTELA_UPSTREAM_URL` | Base URL of the head node from Step 1 |
+   | `DATABASE_URL` | Neon pooled DSN from Step 2 |
+   | `NEON_AUTH_JWKS_URL` + `NEON_AUTH_ISSUER` | Enable the `/manage/*` self-service plane (the gateway is a pure proxy without them — both or neither) |
+   | `NEON_AUTH_AUDIENCE` | Optional `aud` enforcement |
+   | `INTERNAL_CONTROL_TOKEN` | Shared secret (≥ 32 bytes) for `/internal/*`; must match `security.control_plane.token` on every `otela` node |
+   | `NODE_CREDENTIAL_SIGNING_KID` / `NODE_CREDENTIAL_SIGNING_KEY` | Base64 Ed25519 signing key for the 15-minute trusted-node JWTs; `NODE_CREDENTIAL_VERIFY_KEYS` lists previous public keys for zero-downtime rotation |
+   | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call both `/manage/*` and `/v1/*` |
+   | `CACHE_TTL` | Validated-key cache TTL; default `336h` (14 days) |
+
+3. **Deploy.** Each release first runs `release_command = "/app/keyctl migrate"` against Neon
+   (idempotent), then starts `server`:
+
+   ```bash
+   fly deploy
+   flyctl logs        # confirm the migrate step printed "applied migrations/…"
+   ```
+
+   The app exposes `/healthz` (used by the Fly health check) and honors
+   `auto_stop_machines = "stop"` — with Neon's scale-to-zero compute, an idle cloud costs
+   almost nothing. Set `min_machines_running = 1` if cold starts matter to you.
+
+4. **Bootstrap the first admin key.** `keyctl` keys are operator-managed and independent of
+   the user self-service plane:
+
+   ```bash
+   fly ssh console -C "/app/keyctl add --name bootstrap"   # prints the sk-… token once
+   # or: DATABASE_URL=… go run ./cmd/keyctl add --name bootstrap
+   ```
+
+Running somewhere other than Fly is fine — the container has no Fly-specific dependency.
+Any Docker host with egress to Neon and to the head node works; just run `keyctl migrate`
+before starting new server replicas.
+
+## Step 4 — Point OpenTela nodes at the control plane
+
+Every head and worker that should enforce cloud policy gets the same control-plane block in
+`cfg.yaml` (see [Trusted Regions](/docs/tutorial/trusted-regions) for the full semantics):
+
+```yaml
+security:
+  control_plane:
+    url: "https://api.example.com"           # your gateway from Step 3
+    token: "<same value as INTERNAL_CONTROL_TOKEN>"
+    timeout: 5s
+    cache_ttl: 60s
+    stale_if_error: 2m
+```
+
+Each node then acquires its node credential automatically (challenge signed with its libp2p
+private key in exchange for a 15-minute Ed25519 JWT issued by the gateway) — no operator action
+needed. From then on, the gateway's `/internal/acl/evaluate*` endpoints become the authority
+for who owns a peer, which services are exposed, and which API keys may use them; see
+[Routing](/docs/tutorial/routing) and [Trusted Regions](/docs/tutorial/trusted-regions) for the
+two request partitions.
+
+## Step 5 — Wire up users and the web console
+
+End-user key management rides on **two different credentials** — keep them straight:
+
+| Credential | Issued by | Used to call |
+| :--- | :--- | :--- |
+| Neon Auth JWT (short-lived, minutes) | Neon Auth login | `/manage/*` only (keys, wallets, instances, regions, ACLs) |
+| `sk-…` opentela API key (long-lived) | `POST /manage/keys` or `keyctl` | the `/v1/*` proxy plane |
+
+A browser console therefore signs the user in with the Neon Auth SDK (`authClient.token()` to
+fetch a fresh JWT per call), calls `POST /manage/keys` to mint an `sk-…` key, and then uses
+that key against `/v1/service/<service>/…`. Both hops must be allow-listed: the console origin
+in `CORS_ALLOWED_ORIGINS` on the gateway **and** in Neon Auth's trusted domains (Steps 2.5 and
+3.2). Wallet linking, instance claiming, and region management follow the same pattern — see
+`docs/frontend-integration.md` in the gateway repository for copy-pasteable client code.
+
+## Step 6 (optional) — Analytics and the public leaderboard
+
+With an analytics backend configured, the streaming proxy samples every routed inference
+response (TTFT, throughput, token counts, GPU attribution) and publishes a public
+`GET /v1/leaderboard`. Two mutually exclusive backends:
+
+- **Tinybird Forward (managed, recommended):** the data project lives in the gateway
+  repository's `tinybird/` directory. `tb deploy`, then export `TINYBIRD_HOST`,
+  `TINYBIRD_APPEND_TOKEN`, and `TINYBIRD_LEADERBOARD_TOKEN`. No tables or cron to manage — the
+  endpoint pipe aggregates raw samples and TTL lives in the datasource.
+- **Self-managed ClickHouse:** apply `clickhouse/schema.sql`, then set `CLICKHOUSE_URL`
+  (plus `CLICKHOUSE_USERNAME`/`CLICKHOUSE_PASSWORD`).
+
+With neither configured the pipeline is fully inert and `/v1/leaderboard` is not mounted.
+
+## Verify the deployment
+
+```bash
+# gateway is up
+curl https://api.example.com/healthz                                   # ok
+
+# public catalogue, no key needed — proves gateway → upstream mesh works
+curl https://api.example.com/v1/services
+
+# permissionless inference with an sk-… key
+curl https://api.example.com/v1/service/llm/v1/chat/completions \
+  -H "Authorization: Bearer sk-…" -H "Content-Type: application/json" \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"hi"}]}'
+
+# self-service plane: 401 without a Neon Auth JWT, 201 with one
+curl -i https://api.example.com/manage/keys
+
+# optional analytics
+curl "https://api.example.com/v1/leaderboard?hours=168&service=llm"
+```
+
+## Operations notes
+
+- **Key revocation is cached.** A validated key is cached for `CACHE_TTL` (14 days by default),
+  so a revoked key may keep working until its entry expires or the gateway restarts. Negative
+  results cache for 30 s. Trusted-region evaluator decisions (v2) are never cached.
+- **Migrations on every release.** `keyctl migrate` is idempotent and runs as the Fly
+  `release_command`; it is safe to re-run by hand against any Neon branch.
+- **Neon branching for staging.** Create a Neon branch per pull request or per staging app and
+  point its `DATABASE_URL` there — the `release_command` fully provisions an empty branch.
+  Production data is protected by Neon's point-in-time restore.
+- **Node-key rotation.** Generate a new Ed25519 key, set it as `NODE_CREDENTIAL_SIGNING_KEY`
+  with a fresh `…_KID`, and list the old public key in `NODE_CREDENTIAL_VERIFY_KEYS` until all
+  nodes have renewed (≤ 15 minutes), then remove it.
+- **Fail-closed posture.** An unreachable Neon database or a misconfigured JWKS URL disables
+  the `/manage/*` plane and fails ACL evaluation closed; the pure-proxy surface degrades to
+  cached keys only.
+
+## Related documents
+
+- [Routing](/docs/tutorial/routing) — head/worker topology, identity groups, relays
+- [Trusted Regions](/docs/tutorial/trusted-regions) — the enforcement model the control plane anchors
+- [Security](/docs/advanced/security) — node wallet identity and the mesh threat model
+- The gateway repository ships the authoritative endpoint references: `README.md` and
+  `docs/frontend-integration.md`
