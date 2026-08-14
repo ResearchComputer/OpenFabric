@@ -139,6 +139,7 @@ after the bundle is fixed:
 
 **Pages:**
 - `/account` — wallet + Neon Auth login, API-key management (wallet keys + `sk-` keys), and account overview.
+- `/account/wallet` — link Solana wallets, send OTELA, and (once the email on the Neon Auth account is verified) claim a one-time OTELA grant from the faucet. The faucet status and claim endpoints live on `NEXT_PUBLIC_API_BASE_URL` under `/manage/faucet`; no additional build variable is required.
 - `/account/instances` — claim peers, set inherited ACLs, and switch between peer-wide and service-managed policy.
 - `/account/regions` — create trusted regions, invite claimed peers, and manage membership lifecycle.
 - `/account/services` — public permissionless service catalogue only; names there are not provider-authentic.

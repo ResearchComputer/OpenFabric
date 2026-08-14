@@ -24,6 +24,27 @@ export interface ManageWallet {
   is_primary: boolean;
 }
 
+export interface FaucetStatus {
+  enabled: boolean;
+  email_verified: boolean;
+  mint: string;
+  amount_raw: number;
+  amount_ui: string;
+  decimals: number;
+  claimed: boolean;
+  claimed_at: string | null;
+  wallet: string | null;
+  tx_signature: string | null;
+}
+
+export interface FaucetClaim {
+  status: string;
+  wallet: string;
+  amount_raw: number;
+  amount_ui: string;
+  tx_signature: string;
+}
+
 export interface WalletChallenge {
   id: string;
   message: string;
@@ -1184,6 +1205,88 @@ export async function deleteManageWallet(
     },
     walletDeleteError,
   );
+}
+
+function normalizeFaucetStatus(value: unknown): FaucetStatus {
+  if (!isRecord(value)) {
+    throw new Error("Faucet status payload must be an object");
+  }
+  return {
+    enabled: readBoolean(value.enabled),
+    email_verified: readBoolean(value.email_verified),
+    mint: readString(value.mint) ?? "",
+    amount_raw: readNumber(value.amount_raw) ?? 0,
+    amount_ui: readString(value.amount_ui) ?? "0",
+    decimals: readNumber(value.decimals) ?? 0,
+    claimed: readBoolean(value.claimed),
+    claimed_at: readString(value.claimed_at),
+    wallet: readString(value.wallet),
+    tx_signature: readString(value.tx_signature),
+  };
+}
+
+function faucetStatusError(status: number): string {
+  switch (status) {
+    case 401:
+      return "Not authenticated — sign in again";
+    case 503:
+      return "The faucet is temporarily unavailable";
+    default:
+      return `Faucet status failed: ${status}`;
+  }
+}
+
+function faucetClaimError(status: number, detail: string): string {
+  switch (status) {
+    case 401:
+      return "Not authenticated — sign in again";
+    case 403:
+      return detail || "Verify your email before claiming from the faucet";
+    case 404:
+      return detail || "The faucet is not enabled on this deployment";
+    case 409:
+      return detail || "You have already claimed from the faucet";
+    case 503:
+      return detail || "The faucet payout failed — try again shortly";
+    default:
+      return detail || `Faucet claim failed: ${status}`;
+  }
+}
+
+export async function getFaucetStatus(
+  baseUrl: string,
+  jwt: string,
+): Promise<FaucetStatus> {
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/faucet`,
+    { headers: authHeaders(jwt) },
+    (status) => faucetStatusError(status),
+  );
+  return normalizeFaucetStatus(body);
+}
+
+export async function claimFaucet(
+  baseUrl: string,
+  jwt: string,
+): Promise<FaucetClaim> {
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/faucet/claim`,
+    {
+      method: "POST",
+      headers: authHeaders(jwt),
+    },
+    faucetClaimError,
+  );
+  if (!isRecord(body) || readString(body.tx_signature) === null) {
+    throw new Error("Faucet claim response is missing tx_signature");
+  }
+  return {
+    status: readString(body.status) ?? "claimed",
+    wallet: readString(body.wallet) ?? "",
+    amount_raw: readNumber(body.amount_raw) ?? 0,
+    amount_ui: readString(body.amount_ui) ?? "",
+    tx_signature: readString(body.tx_signature) ?? "",
+  };
 }
 
 export async function listManageInstances(

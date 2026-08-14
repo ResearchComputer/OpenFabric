@@ -214,6 +214,7 @@ func p2pServiceForwardWithScope(c *gin.Context, scope routingScope) {
 	requestPeer := c.Param("peerId")
 	requestPath := buildInternalServicePath(scope, c.Param("path"))
 	clientWallet := ""
+	forwardKeyHash := ""
 	if isControlPlaneEnabled() {
 		decision, cpErr := authorizeRequestForScope(ctx, c.GetHeader("Authorization"), scope, []string{requestPeer}, "")
 		if cpErr != nil {
@@ -227,6 +228,11 @@ func p2pServiceForwardWithScope(c *gin.Context, scope routingScope) {
 			return
 		}
 		clientWallet = decision.PrimaryWallet
+		// Forward only the key hash to the worker, stripping the client's raw
+		// Authorization so the API key never traverses the libp2p hop.
+		if bearer, perr := parseBearerToken(c.GetHeader("Authorization")); perr == nil {
+			forwardKeyHash = sha256Hex(bearer)
+		}
 	}
 	if clientWallet == "" {
 		clientWallet = resolveClientWallet(c)
@@ -261,6 +267,10 @@ func p2pServiceForwardWithScope(c *gin.Context, scope routingScope) {
 		req.Host = target.Host
 		if clientWallet != "" {
 			req.Header.Set("X-Otela-Client-Wallet", clientWallet)
+		}
+		if forwardKeyHash != "" {
+			req.Header.Set("X-Otela-Key-Hash", forwardKeyHash)
+			req.Header.Del("Authorization")
 		}
 	}
 
@@ -304,6 +314,13 @@ func ServiceForwardHandler(c *gin.Context) {
 		req.URL.Host = req.Host
 		req.URL.Scheme = target.Scheme
 		req.URL.Path = target.Path
+		// The worker has already authorized the request against the control
+		// plane (using X-Otela-Key-Hash when forwarded by a trusted head).
+		// Drop the client's raw Authorization so it never reaches the local
+		// backend (e.g. SGLang), which has no use for it and should not be
+		// able to observe or log API keys.
+		req.Header.Del("Authorization")
+		req.Header.Del("X-Otela-Key-Hash")
 	}
 	st.Mark("local_proxy")
 
@@ -602,6 +619,7 @@ func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 	}
 
 	clientWallet := ""
+	forwardKeyHash := ""
 	if isControlPlaneEnabled() {
 		decision, cpErr := authorizeRequestForScope(ctx, c.GetHeader("Authorization"), scope, candidates, "")
 		if cpErr != nil {
@@ -614,6 +632,12 @@ func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 			return
 		}
 		clientWallet = decision.PrimaryWallet
+		// The head has validated the bearer. Forward only its hash to workers
+		// (X-Otela-Key-Hash) and strip the raw Authorization so the client's
+		// API key never traverses the libp2p hop or reaches a local backend.
+		if bearer, perr := parseBearerToken(c.GetHeader("Authorization")); perr == nil {
+			forwardKeyHash = sha256Hex(bearer)
+		}
 	}
 
 	if scope.trusted() {
@@ -768,6 +792,10 @@ func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 			req.Host = target.Host
 			if clientWallet != "" {
 				req.Header.Set("X-Otela-Client-Wallet", clientWallet)
+			}
+			if forwardKeyHash != "" {
+				req.Header.Set("X-Otela-Key-Hash", forwardKeyHash)
+				req.Header.Del("Authorization")
 			}
 		}
 

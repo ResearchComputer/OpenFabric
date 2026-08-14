@@ -599,3 +599,84 @@ func TestEvaluateBearerForScopeWorkerNeverCaches(t *testing.T) {
 		t.Fatalf("requests=%d, want 2", requests)
 	}
 }
+
+// TestEvaluateKeyHashForScopeMatchesBearer verifies that a head forwarding
+// X-Otela-Key-Hash (computed as sha256Hex(bearer)) yields exactly the same
+// control-plane decision as forwarding the raw bearer. This is the security
+// invariant behind stripping Authorization on trusted hops: the worker can
+// authorize without ever seeing the client's API key.
+func TestEvaluateKeyHashForScopeMatchesBearer(t *testing.T) {
+	resetAuthClientTestState()
+
+	var lastKeyHash string
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req aclEvaluateV2Request
+		if err := decodeStrictJSON(r.Body, &req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		lastKeyHash = req.KeyHash
+		_ = json.NewEncoder(w).Encode(aclEvaluateV2Response{
+			KeyID:         "scope-key",
+			PrimaryWallet: "WalletPrimary",
+			DecisionScope: aclDecisionScope{
+				Partition: req.Partition,
+				Region:    req.Region,
+				RouteKind: req.RouteKind,
+				Service:   req.Service,
+			},
+			Decisions: []aclDecisionV2{
+				{PeerID: "peer-a", Allowed: true, Reason: "instance_acl_allow", PolicyScope: "service", ServiceExposure: "permissionless"},
+			},
+			CacheTTLSeconds: 30,
+		})
+	}))
+	defer mock.Close()
+
+	viper.Set("security.control_plane.url", mock.URL)
+	viper.Set("security.control_plane.token", "internal-token")
+	viper.Set("security.control_plane.cache_ttl", "1m")
+	viper.Set("security.control_plane.stale_if_error", "1m")
+
+	scope, err := newRoutingScope(partitionPermissionless, "", routeKindServiceIngress, "svc-public")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+
+	const bearer = "user-bearer-123"
+	expectedHash := sha256Hex(bearer)
+
+	if _, cpErr := evaluateBearerForScope(context.Background(), bearer, scope, []string{"peer-a"}, ""); cpErr != nil {
+		t.Fatalf("bearer decision err=%v", cpErr)
+	}
+	if lastKeyHash != expectedHash {
+		t.Fatalf("bearer path key_hash=%q, want %q", lastKeyHash, expectedHash)
+	}
+
+	if _, cpErr := evaluateKeyHashForScope(context.Background(), expectedHash, scope, []string{"peer-a"}, ""); cpErr != nil {
+		t.Fatalf("key-hash decision err=%v", cpErr)
+	}
+	if lastKeyHash != expectedHash {
+		t.Fatalf("key-hash path key_hash=%q, want %q", lastKeyHash, expectedHash)
+	}
+}
+
+// TestAuthorizeKeyHashForScopeRejectsEmpty ensures the worker does not
+// silently allow a trusted request that arrives without either an
+// Authorization or X-Otela-Key-Hash header.
+func TestAuthorizeKeyHashForScopeRejectsEmpty(t *testing.T) {
+	resetAuthClientTestState()
+	viper.Set("security.control_plane.url", "http://unused")
+	viper.Set("security.control_plane.token", "internal-token")
+
+	scope, err := newRoutingScope(partitionTrustedRegion, "us-east", routeKindWorker, "svc")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+	decision, cpErr := authorizeKeyHashForScope(context.Background(), "", scope, []string{"peer-a"}, "upstream")
+	if cpErr == nil {
+		t.Fatalf("expected error for empty key hash, got decision=%#v", decision)
+	}
+	if cpErr.Status != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", cpErr.Status)
+	}
+}

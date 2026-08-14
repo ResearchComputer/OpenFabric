@@ -1136,6 +1136,48 @@ body {
   color: var(--ac-success);
 }
 
+.otm-faucet-claimed {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-canvas);
+}
+
+.otm-faucet-claimed strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.otm-faucet-claimed p {
+  margin: 0 0 8px;
+  color: var(--ac-muted, #8a94a6);
+  font-size: 0.85rem;
+}
+
+.otm-faucet-claimed code {
+  font-size: 0.8rem;
+}
+
+.otm-faucet-claim {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-canvas);
+}
+
+.otm-faucet-claim p {
+  margin: 0;
+  color: var(--ac-muted, #8a94a6);
+  font-size: 0.85rem;
+}
+
 /* --------------------------------------------------------- auth / gate view */
 
 .acct-centered {

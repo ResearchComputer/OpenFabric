@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   CheckCircle2,
   Copy,
+  Gift,
   KeyRound,
   Loader2,
   LogIn,
@@ -23,6 +24,13 @@ import {
   type ApiKeyInfo,
   type CreatedApiKey,
 } from '../auth-api';
+import { getAuthJwt } from '../neon-auth';
+import {
+  claimFaucet,
+  getFaucetStatus,
+  type FaucetClaim,
+  type FaucetStatus,
+} from '../manage-api';
 import { formatDate, middleEllipsis, uiAmountToRaw } from '../format';
 import {
   buildOtelaTransfer,
@@ -46,6 +54,8 @@ export default function WalletView() {
     balances,
     connection,
     rpcUrl,
+    neonUser,
+    linkedWallets,
     connectWallet,
     disconnectWallet,
     refreshBalances,
@@ -65,6 +75,8 @@ export default function WalletView() {
   const [amount, setAmount] = useState('');
   const [rpcDraftUrl, setRpcDraftUrl] = useState(rpcUrl);
   const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [faucet, setFaucet] = useState<FaucetStatus | null>(null);
+  const [faucetClaim, setFaucetClaim] = useState<FaucetClaim | null>(null);
 
   useEffect(() => {
     setRpcDraftUrl(rpcUrl);
@@ -195,6 +207,41 @@ export default function WalletView() {
       showNotice('error', error instanceof Error ? error.message : String(error));
     } finally {
       releasePending('transfer');
+    }
+  }
+
+  const refreshFaucet = useCallback(async () => {
+    if (!neonUser) return;
+    const jwt = await getAuthJwt();
+    setFaucet(await getFaucetStatus(tokenManagerConfig.apiBaseUrl, jwt));
+  }, [neonUser]);
+
+  useEffect(() => {
+    if (!neonUser) {
+      setFaucet(null);
+      setFaucetClaim(null);
+      return;
+    }
+    refreshFaucet().catch((error: unknown) =>
+      showNotice('error', error instanceof Error ? error.message : String(error)),
+    );
+  }, [neonUser, refreshFaucet, showNotice]);
+
+  async function handleFaucetClaim() {
+    if (!neonUser) return;
+    setPending('faucet');
+    setFaucetClaim(null);
+    try {
+      const jwt = await getAuthJwt();
+      const claim = await claimFaucet(tokenManagerConfig.apiBaseUrl, jwt);
+      setFaucetClaim(claim);
+      setFaucet((prev) => (prev ? { ...prev, claimed: true, claimed_at: new Date().toISOString(), tx_signature: claim.tx_signature, wallet: claim.wallet } : prev));
+      await refreshBalances(claim.wallet);
+      showNotice('success', `${claim.amount_ui} OTELA claimed`);
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : String(error));
+    } finally {
+      releasePending('faucet');
     }
   }
 
@@ -543,6 +590,85 @@ export default function WalletView() {
             View transaction
           </a>
         ) : null}
+      </section>
+
+      <section className="otm-panel otm-faucet-panel">
+        <div className="otm-panel-heading">
+          <div>
+            <p className="otm-eyebrow">Faucet</p>
+            <h2>Claim test OTELA</h2>
+          </div>
+        </div>
+
+        {!neonUser ? (
+          <div className="otm-empty-state">
+            Sign in with OpenTela to claim from the faucet.
+          </div>
+        ) : faucet === null ? (
+          <div className="otm-empty-state">Loading faucet status…</div>
+        ) : !faucet.enabled ? (
+          <div className="otm-empty-state">
+            The faucet is not enabled on this deployment.
+          </div>
+        ) : !faucet.email_verified ? (
+          <div className="otm-empty-state">
+            Verify your email to claim {faucet.amount_ui} OTELA from the
+            faucet. Check your inbox for a verification email from Neon Auth.
+          </div>
+        ) : faucet.claimed || faucetClaim ? (
+          <div className="otm-faucet-claimed">
+            <CheckCircle2 className="otm-success-icon" size={22} />
+            <div>
+              <strong>
+                {faucetClaim?.amount_ui ?? faucet.amount_ui} OTELA claimed
+              </strong>
+              <p>
+                Sent to{' '}
+                <code>{faucetClaim?.wallet ?? faucet.wallet ?? 'your wallet'}</code>
+              </p>
+              {(faucetClaim?.tx_signature ?? faucet.tx_signature) ? (
+                <a
+                  className="otm-tx-link"
+                  href={explorerTransactionUrl(
+                    faucetClaim?.tx_signature ?? faucet.tx_signature ?? '',
+                    tokenManagerConfig.solanaCluster,
+                  )}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View transaction
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="otm-faucet-claim">
+            <p>
+              Claim {faucet.amount_ui} OTELA once per verified account. Tokens
+              are sent to your{' '}
+              {linkedWallets.length > 0 ? 'primary linked wallet' : 'linked wallet'}.
+            </p>
+            <button
+              type="button"
+              className="otm-primary-button"
+              onClick={handleFaucetClaim}
+              disabled={
+                pending === 'faucet' ||
+                linkedWallets.length === 0 ||
+                Boolean(faucet.claimed)
+              }
+            >
+              {pending === 'faucet' ? (
+                <Loader2 className="otm-spin" size={16} />
+              ) : (
+                <Gift size={16} />
+              )}
+              {linkedWallets.length === 0
+                ? 'Link a wallet first'
+                : `Claim ${faucet.amount_ui} OTELA`}
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );

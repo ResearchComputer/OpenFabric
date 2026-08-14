@@ -81,7 +81,24 @@ func accessControlMiddleware() gin.HandlerFunc {
 				if isLibp2pRemoteAddr(c.Request.RemoteAddr) {
 					upstreamPeerID = c.Request.RemoteAddr
 				}
-				decision, cpErr := authorizeRequestForScope(c.Request.Context(), c.GetHeader("Authorization"), scope, []string{protocol.MyID}, upstreamPeerID)
+				// Prefer a pre-computed key hash forwarded by a trusted head
+				// (X-Otela-Key-Hash). This keeps the client's raw API key off
+				// the worker: the head validates the bearer once and forwards
+				// only the hash, so the worker never sees the original key.
+				// When both headers are present the hash wins and a mismatch
+				// fails closed. Treat the hash as a bearer-equivalent
+				// credential: it must never be logged or forwarded onward.
+				var (
+					decision *controlPlaneDecisionV2
+					cpErr    *controlPlaneError
+					keyHash  = strings.TrimSpace(c.GetHeader("X-Otela-Key-Hash"))
+					authHdr  = c.GetHeader("Authorization")
+				)
+				if keyHash != "" {
+					decision, cpErr = authorizeKeyHashForScope(c.Request.Context(), keyHash, scope, []string{protocol.MyID}, upstreamPeerID)
+				} else {
+					decision, cpErr = authorizeRequestForScope(c.Request.Context(), authHdr, scope, []string{protocol.MyID}, upstreamPeerID)
+				}
 				if cpErr != nil {
 					c.AbortWithStatusJSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})
 					return
@@ -96,6 +113,11 @@ func accessControlMiddleware() gin.HandlerFunc {
 				controlPlaneAuthoritative = true
 			}
 		} else if isControlPlaneEnabled() {
+			// Legacy (no routing scope) requests still authorize from the raw
+			// Authorization header. Heads strip Authorization in favour of
+			// X-Otela-Key-Hash only on scoped routes, so key-hash support is
+			// intentionally not mirrored here — revisit if head-side
+			// stripping ever expands beyond scoped forwards.
 			decision, cpErr := authorizeRequestForPeers(c.Request.Context(), c.GetHeader("Authorization"), []string{protocol.MyID})
 			if cpErr != nil {
 				c.AbortWithStatusJSON(cpErr.Status, gin.H{"error": cpErr.clientMessage()})

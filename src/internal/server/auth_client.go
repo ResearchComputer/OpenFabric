@@ -646,6 +646,13 @@ func evaluateBearerForPeers(ctx context.Context, bearer string, peerIDs []string
 }
 
 func evaluateBearerForScope(ctx context.Context, bearer string, scope routingScope, peerIDs []string, upstreamPeerID string) (*controlPlaneDecisionV2, *controlPlaneError) {
+	return evaluateKeyHashForScope(ctx, sha256Hex(bearer), scope, peerIDs, upstreamPeerID)
+}
+
+// evaluateKeyHashForScope is the key-hash-aware core of evaluateBearerForScope.
+// A trusted head forwards the caller's key hash via X-Otela-Key-Hash instead
+// of the raw bearer, so the client's API key never has to reach the worker.
+func evaluateKeyHashForScope(ctx context.Context, keyHash string, scope routingScope, peerIDs []string, upstreamPeerID string) (*controlPlaneDecisionV2, *controlPlaneError) {
 	uniquePeers := uniquePeerIDs(peerIDs)
 	if len(uniquePeers) == 0 {
 		return &controlPlaneDecisionV2{
@@ -654,7 +661,6 @@ func evaluateBearerForScope(ctx context.Context, bearer string, scope routingSco
 		}, nil
 	}
 
-	keyHash := sha256Hex(bearer)
 	now := time.Now()
 	cacheKey := cacheKeyForDecisionV2(keyHash, scope, uniquePeers)
 	useCache := shouldCacheDecisionV2(scope)
@@ -778,6 +784,23 @@ func authorizeRequestForScope(ctx context.Context, authHeader string, scope rout
 		return nil, &controlPlaneError{Status: http.StatusUnauthorized, Err: err}
 	}
 	return evaluateBearerForScope(ctx, bearer, scope, peerIDs, upstreamPeerID)
+}
+
+// authorizeKeyHashForScope is like authorizeRequestForScope but accepts a
+// pre-computed key hash — typically forwarded by a trusted head via
+// X-Otela-Key-Hash — so the raw client API key never has to reach the
+// worker. On trusted routes the worker's own node credential is used for
+// the control-plane call (set inside evaluateKeyHashForScope), not the
+// client's key.
+func authorizeKeyHashForScope(ctx context.Context, keyHash string, scope routingScope, peerIDs []string, upstreamPeerID string) (*controlPlaneDecisionV2, *controlPlaneError) {
+	if !isControlPlaneEnabled() {
+		return nil, nil
+	}
+	keyHash = strings.TrimSpace(keyHash)
+	if keyHash == "" {
+		return nil, &controlPlaneError{Status: http.StatusUnauthorized, Err: errMissingBearer}
+	}
+	return evaluateKeyHashForScope(ctx, keyHash, scope, peerIDs, upstreamPeerID)
 }
 
 // verifyBearerToken calls the legacy auth server to resolve a bearer token into

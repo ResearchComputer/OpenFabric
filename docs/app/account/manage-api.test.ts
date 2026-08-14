@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cancelManageRegionInvitation,
+  claimFaucet,
   createManageInstance,
   createManageKey,
   createManageRegion,
@@ -8,6 +9,7 @@ import {
   createWalletChallenge,
   deleteManageInstance,
   deleteManageWallet,
+  getFaucetStatus,
   linkManageWallet,
   listManageInstanceServices,
   listManageInstances,
@@ -180,6 +182,48 @@ describe("manage-api wallets", () => {
     );
     expect(error).toBeInstanceOf(ManageApiError);
     expect((error as ManageApiError).status).toBe(0);
+  });
+});
+
+describe("manage-api faucet", () => {
+  it("normalizes faucet status payloads", async () => {
+    mockFetch(200, {
+      enabled: true,
+      email_verified: true,
+      mint: "EsmcTrdLkFqV3mv4CjLF3AmCx132ixfFSYYRWD78cDzR",
+      amount_raw: 1_000_000_000,
+      amount_ui: "1",
+      decimals: 9,
+      claimed: false,
+    });
+    const status = await getFaucetStatus(BASE, "jwt");
+    expect(status.enabled).toBe(true);
+    expect(status.email_verified).toBe(true);
+    expect(status.amount_ui).toBe("1");
+    expect(status.claimed).toBe(false);
+  });
+
+  it("maps 403 faucet claims to email-verification messaging", async () => {
+    mockFetch(403, { detail: "email must be verified" });
+    await expect(claimFaucet(BASE, "jwt")).rejects.toThrow(/email/i);
+  });
+
+  it("maps 409 duplicate claims", async () => {
+    mockFetch(409, { detail: "already claimed" });
+    await expect(claimFaucet(BASE, "jwt")).rejects.toThrow(/already claimed/i);
+  });
+
+  it("returns the claim payload on success", async () => {
+    mockFetch(201, {
+      status: "claimed",
+      wallet: WALLET,
+      amount_raw: 1_000_000_000,
+      amount_ui: "1",
+      tx_signature: "sig-xyz",
+    });
+    const claim = await claimFaucet(BASE, "jwt");
+    expect(claim.tx_signature).toBe("sig-xyz");
+    expect(claim.amount_ui).toBe("1");
   });
 });
 
