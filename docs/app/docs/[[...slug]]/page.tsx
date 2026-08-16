@@ -21,7 +21,20 @@ export default async function Page(props: {
   const MDX = data.body as MDXContent;
 
   return (
-    <DocsPage toc={data.toc} full={data.full}>
+    <DocsPage
+      toc={data.toc}
+      full={data.full}
+      editOnGithub={{
+        owner: 'eth-easl',
+        repo: 'OpenTela',
+        sha: 'main',
+        // repo root is one level up from the docs app, then the content dir
+        path: `docs/content/docs/${page.path}`,
+      }}
+      lastUpdate={
+        data.lastModified ? new Date(data.lastModified as string) : undefined
+      }
+    >
       <DocsTitle>{page.data.title}</DocsTitle>
       {data.experimental && (
         <div className="mt-2 mb-1">

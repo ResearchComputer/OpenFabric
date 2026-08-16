@@ -104,7 +104,7 @@ export default function ObservatoryView() {
   const modelOptions = services.find((s) => s.name === SERVICE)?.models ?? [];
 
   return (
-    <main className="obs-shell">
+    <main id="nd-main" className="obs-shell">
       <div className="obs-wrap">
         <header className="acct-page-head">
           <div>

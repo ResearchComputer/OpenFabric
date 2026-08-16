@@ -29,7 +29,7 @@ function AccountGate({ children }: { children: ReactNode }) {
 
   if (!isNeonConfigured()) {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <div className="acct-card">
           <p className="otm-eyebrow">OpenTela</p>
           <h1>Account</h1>
@@ -52,7 +52,7 @@ function AccountGate({ children }: { children: ReactNode }) {
   // Until mounted, server and client render the same placeholder (no hydration mismatch).
   if (gate === 'loading') {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <div className="acct-card">
           <p className="acct-login-sub">Loading…</p>
         </div>
@@ -63,7 +63,7 @@ function AccountGate({ children }: { children: ReactNode }) {
   // Asking for the password again would be a lie: the session was never checked.
   if (gate === 'unreachable') {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <div className="acct-card">
           <p className="otm-eyebrow">OpenTela</p>
           <h1>Can’t check your sign-in</h1>
@@ -90,7 +90,7 @@ function AccountGate({ children }: { children: ReactNode }) {
   // (the auth server refuses unverified sign-ins anyway).
   if (gate === 'verify-email') {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <VerifyEmailView email={neonUser?.email} onSignOut={signOut} />
       </main>
     );
@@ -99,7 +99,7 @@ function AccountGate({ children }: { children: ReactNode }) {
   return (
     <div className="acct-shell">
       <Sidebar />
-      <main className="acct-main">
+      <main id="nd-main" className="acct-main">
         {notice ? (
           <div className="acct-notice-wrap">
             <div className={`otm-notice ${notice.kind}`} role="status">

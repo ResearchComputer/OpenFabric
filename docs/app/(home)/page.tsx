@@ -142,7 +142,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
 
 export default function HomePage() {
   return (
-    <main className="flex min-h-dvh flex-col">
+    <main id="nd-main" className="flex min-h-dvh flex-col">
       {/* Hero */}
       <section className="relative overflow-hidden px-6 pt-24 pb-20">
         {/* Grid background */}
@@ -202,9 +202,9 @@ export default function HomePage() {
       {/* Features */}
       <section className="mx-auto w-full max-w-6xl px-6 py-16">
         <SectionLabel>Features</SectionLabel>
-        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
+        <h2 className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
           Everything you need for decentralized inference
-        </p>
+        </h2>
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
             <div
@@ -226,9 +226,9 @@ export default function HomePage() {
       {/* News */}
       <section className="mx-auto w-full max-w-6xl px-6 py-16">
         <SectionLabel>News</SectionLabel>
-        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
+        <h2 className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
           From the OpenTela blog
-        </p>
+        </h2>
         <div className="grid gap-6 sm:grid-cols-2">
           {news.map((item) => (
             <Link
@@ -256,9 +256,9 @@ export default function HomePage() {
       {/* Community */}
       <section className="mx-auto w-full max-w-6xl px-6 py-16">
         <SectionLabel>Community</SectionLabel>
-        <p className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
+        <h2 className="mt-2 mb-12 max-w-xl text-2xl font-semibold tracking-tight">
           Get involved
-        </p>
+        </h2>
         <div className="grid gap-6 sm:grid-cols-3">
           {community.map((item) => (
             <a
@@ -293,19 +293,19 @@ export default function HomePage() {
           <div className="flex gap-6">
             <Link
               href="/docs"
-              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+              className="-my-2 py-2 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Documentation
             </Link>
             <Link
               href="/observatory"
-              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+              className="-my-2 py-2 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Observatory
             </Link>
             <Link
               href="/account"
-              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+              className="-my-2 py-2 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Account
             </Link>
@@ -313,7 +313,7 @@ export default function HomePage() {
               href="https://github.com/eth-easl/OpenTela"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
+              className="-my-2 py-2 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               GitHub
             </a>

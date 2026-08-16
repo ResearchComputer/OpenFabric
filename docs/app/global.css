@@ -119,6 +119,50 @@ body {
   font-weight: 450;
 }
 
+/* Skip-to-content link: hidden until focused (it is the first tab stop, see
+   app/skip-link.tsx). Docks below the top edge so it clears the navbar. */
+.skip-link {
+  position: fixed;
+  top: -100%;
+  left: 16px;
+  z-index: 100;
+  padding: 8px 14px;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 8px;
+  background: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgb(20 15 10 / 0.12);
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+/* Text links inherit the browser's 1px auto outline at 50% opacity — too
+   subtle next to the 2px emerald ring used on buttons. Match them. Icon-only
+   links (svg as only child) keep their own box-shadow ring. */
+a:focus-visible:not(:has(> svg:only-child)) {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* WCAG 2.5.8: vendor auth controls render standalone links/buttons ~20px
+   tall — pad them up to the 24px minimum click height. */
+.acct-centered a {
+  padding-block: 3px;
+}
+
+.acct-centered button {
+  min-height: 24px;
+}
+
 /* Subtle grid + emerald glow used behind the hero (sglang grid decoration) */
 .grid-bg {
   background-image: linear-gradient(
@@ -231,7 +275,7 @@ body {
   margin: 16px 0 4px;
   padding: 0 10px;
   color: var(--ac-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -395,7 +439,7 @@ body {
 .acct-section-label {
   margin: 0 0 10px;
   color: var(--ac-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -457,7 +501,7 @@ body {
 .otm-eyebrow {
   margin: 0 0 2px;
   color: var(--ac-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -483,7 +527,7 @@ body {
 
 .otm-metric-panel > span {
   color: var(--ac-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -573,7 +617,7 @@ body {
   border-bottom: 1px solid var(--ac-line);
   background: var(--ac-band);
   color: var(--ac-muted);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -666,7 +710,7 @@ body {
 
 .obs-shell .obs-field-label {
   color: var(--ac-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -766,7 +810,7 @@ body {
   padding: 2px 9px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -819,7 +863,7 @@ body {
   display: grid;
   gap: 5px;
   color: var(--ac-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -897,7 +941,7 @@ body {
   display: grid;
   gap: 5px;
   color: var(--ac-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1141,7 +1185,7 @@ button.acct-back-link + a.acct-back-link {
   display: block;
   margin-bottom: 5px;
   color: color-mix(in oklab, #92400e 88%, var(--ac-ink));
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;

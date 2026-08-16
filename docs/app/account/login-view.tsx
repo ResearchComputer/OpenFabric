@@ -15,7 +15,7 @@ export default function LoginView() {
 
   if (!authClient) {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <div className="acct-card">
           <p className="acct-login-sub">Account sign-in unavailable.</p>
         </div>
@@ -25,7 +25,7 @@ export default function LoginView() {
 
   if (verifying) {
     return (
-      <main className="acct-centered">
+      <main id="nd-main" className="acct-centered">
         <VerifyEmailView onCancel={() => setVerifying(false)} />
       </main>
     );
@@ -34,7 +34,7 @@ export default function LoginView() {
   // AuthView renders its own titled card ("Sign In" + description), so this
   // wrapper contributes brand only — a second heading/card would duplicate it.
   return (
-    <main className="acct-centered">
+    <main id="nd-main" className="acct-centered">
       <div className="acct-login">
         <div className="acct-login-brand">
           {/* The vendor card's "Sign In" title is not a heading element, so this

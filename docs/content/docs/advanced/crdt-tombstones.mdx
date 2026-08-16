@@ -1,0 +1,86 @@
+---
+title: "CRDT Tombstones & Compaction"
+description: How deletions replicate in the CRDT store via tombstones, and how background compaction keeps the datastore from growing without bound.
+---
+
+A conflict-free replicated datastore cannot simply erase deleted keys — if one
+peer deleted a key outright while another still held it, the key would be
+"resurrected" the next time the two peers synchronized. Instead, deletions are
+recorded as **tombstones**: markers that travel through the gossip protocol
+like any other write, so every peer learns that the key is gone.
+
+OpenTela maintains tombstones at two levels.
+
+## Storage-level tombstones
+
+Every delete operation on the CRDT datastore writes a tombstone entry (under
+the `/set/t/` namespace) containing the timestamp of the deletion. During
+sync, a peer that receives a tombstone removes the element locally and keeps
+the marker so it can propagate the deletion onward.
+
+Tombstones themselves occupy space, so a background compactor prunes them
+once every peer has had ample time to learn about the deletion. The compactor
+runs on every node:
+
+- **Retention** — tombstones older than this are removed. Default: **24 hours**.
+- **Interval** — how often compaction runs. Default: **hourly**.
+- **Batch** — maximum tombstones removed per run. Default: **512**.
+
+Each run happens shortly after startup and then on the interval tick, e.g.:
+
+```
+DEBUG  protocol/tombstone_compactor.go  Compacted 37 tombstones older than 24h0m0s
+```
+
+### Configuration
+
+All three knobs are configurable in `cfg.yaml`:
+
+```yaml
+crdt:
+  tombstone_retention: 24h
+  tombstone_compaction_interval: 1h
+  tombstone_compaction_batch: 512
+```
+
+Setting `tombstone_retention` to `0` or a negative duration disables
+compaction entirely (not recommended — the store will grow monotonically).
+
+When the scalability feature flag `scalability.crdt_tuned` is enabled (see
+[Bandwidth Overhead](/docs/advanced/bandwidth-overhead)), the compactor
+switches to more aggressive presets for large meshes: **6h retention,
+10-minute interval, batch 4096**:
+
+```
+INFO  Tombstone compaction using tuned parameters (6h/10m/4096)
+```
+
+## Application-level tombstones ("Left" nodes)
+
+Above the storage layer, the node table tracks peer departures. When a peer
+leaves the mesh cleanly it is marked with status `Left` rather than being
+deleted immediately — the same tombstone principle, applied to cluster
+membership. Each compaction cycle also sweeps the node table and removes
+peers that have been in the `Left` state past the retention window:
+
+```
+DEBUG  protocol/tombstone_compactor.go  Cleaned up 2 left nodes
+```
+
+This is why a departed worker may still appear in the node table for a while:
+its membership tombstone is being gossiped before final cleanup.
+
+## Why this matters for peer churn
+
+Very frequent joins/leaves inflate tombstone traffic and keep blocks alive
+longer than necessary. If you are investigating
+[head processing errors](/docs/advanced/crdt-internals#head-processing-errors)
+and see sustained churn:
+
+1. Check node-table turnover — many `Left` entries appearing per hour
+   indicates an unstable deployment (crash-looping workers, aggressive
+   autoscalers, or SLURM jobs timing out).
+2. Verify compaction is running — at `debug` level you should see the
+   hourly `Compacted N tombstones` line.
+3. On large, churn-heavy meshes, prefer the tuned preset
+   (`scalability.crdt_tuned: true`) over hand-tuning individual values.
