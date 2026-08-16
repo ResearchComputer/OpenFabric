@@ -1316,3 +1316,249 @@ body {
     padding: 16px 18px 0;
   }
 }
+
+/* --- Billing panel (Step 6) ------------------------------------------- */
+
+.otm-billing-grid {
+  margin-top: 4px;
+}
+
+.otm-mode-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--ac-accent-tint);
+  color: var(--ac-accent);
+}
+
+.otm-caps-heading {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 18px 0 10px;
+  color: var(--ac-text);
+}
+
+.otm-caps-heading > svg {
+  margin-top: 2px;
+  color: var(--ac-muted);
+  flex: none;
+}
+
+.otm-caps-heading p {
+  margin: 2px 0 0;
+  color: var(--ac-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.otm-caps-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-panel);
+}
+
+.otm-caps-fields {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.otm-caps-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ac-muted);
+}
+
+.otm-caps-fields input {
+  padding: 8px 10px;
+  border: 1px solid var(--ac-line);
+  border-radius: 8px;
+  background: var(--ac-bg);
+  color: var(--ac-text);
+  font: inherit;
+}
+
+@media (max-width: 560px) {
+  .otm-caps-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.otm-billing-instructions {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--ac-line);
+  border-radius: 12px;
+  background: var(--ac-panel);
+}
+
+.otm-deposit-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.otm-deposit-facts dt {
+  font-size: 12px;
+  color: var(--ac-muted);
+  margin-bottom: 3px;
+}
+
+.otm-deposit-facts dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.otm-deposit-facts code {
+  font-size: 12px;
+  color: var(--ac-text);
+}
+
+.otm-billing-ledger,
+.otm-billing-deposits {
+  margin-top: 18px;
+}
+
+.otm-billing-ledger h3,
+.otm-billing-deposits h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ac-text);
+}
+
+.otm-ledger-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.otm-ledger-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.otm-ledger-list li.otm-credit {
+  background: color-mix(in oklab, var(--ac-success) 9%, transparent);
+}
+
+.otm-ledger-list li.otm-debit {
+  background: color-mix(in oklab, var(--ac-danger) 9%, transparent);
+}
+
+.otm-ledger-amount {
+  font-weight: 600;
+}
+
+.otm-ledger-model {
+  color: var(--ac-muted);
+  font-size: 12px;
+}
+
+.otm-ledger-time {
+  margin-left: auto;
+  color: var(--ac-muted);
+  font-size: 12px;
+}
+
+/* Withdrawals (Step 7): form + live state badges */
+.otm-withdraw-form {
+  margin-top: 14px;
+}
+
+.otm-billing-withdrawals {
+  margin-top: 14px;
+}
+
+.otm-billing-withdrawals h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ac-text);
+}
+
+.otm-withdraw-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+ border-radius: 999px;
+ border: 1px solid var(--ac-border);
+ color: var(--ac-muted);
+  white-space: nowrap;
+}
+
+.otm-withdraw-status-reserved {
+  color: var(--ac-muted);
+}
+
+.otm-withdraw-status-signed,
+.otm-withdraw-status-broadcast {
+  color: #2563eb;
+  border-color: #bfdbfe;
+}
+
+.otm-withdraw-status-finalized {
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.otm-withdraw-status-failed,
+.otm-withdraw-status-restored {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+/* --- Market prices (Step 6) -------------------------------------------- */
+
+.otm-market-note {
+  margin: 0;
+  color: var(--ac-muted);
+  font-size: 13px;
+  max-width: 42ch;
+  line-height: 1.45;
+}
+
+.otm-market-table th,
+.otm-market-table td {
+  text-align: left;
+}
+
+.otm-market-model {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.otm-price-triple {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0;
+  line-height: 1.2;
+}
+
+.otm-price-triple strong {
+  font-size: 14px;
+}
+
+.otm-price-triple small {
+  color: var(--ac-muted);
+  font-size: 11px;
+}

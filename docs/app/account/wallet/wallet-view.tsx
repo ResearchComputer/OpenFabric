@@ -32,6 +32,7 @@ import {
   type FaucetStatus,
 } from '../manage-api';
 import { formatDate, middleEllipsis, uiAmountToRaw } from '../format';
+import BillingPanel from './billing-panel';
 import {
   buildOtelaTransfer,
   explorerTransactionUrl,
@@ -592,6 +593,7 @@ export default function WalletView() {
         ) : null}
       </section>
 
+      <BillingPanel />
       <section className="otm-panel otm-faucet-panel">
         <div className="otm-panel-heading">
           <div>

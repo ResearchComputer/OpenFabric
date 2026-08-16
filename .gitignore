@@ -21,3 +21,6 @@ contrib/reward-program/node_modules/
 contrib/reward-program/.anchor/
 contrib/reward-program/test-ledger/
 contrib/reward-program/deployments/
+
+# Frontend (docs app) dependencies and Vite caches
+node_modules/

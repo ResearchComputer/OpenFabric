@@ -17,6 +17,13 @@ import {
   listManageRegions,
   listManageWallets,
   ManageApiError,
+  getBillingState,
+  updateBillingPreferences,
+  listBillingLedger,
+  listBillingDeposits,
+  createWithdrawal,
+  listWithdrawals,
+  getWithdrawal,
   replaceManageInstanceAcl,
   replaceManageInstanceServiceAcl,
   replaceManageInstanceServices,
@@ -669,5 +676,234 @@ describe("manage-api trusted regions", () => {
       "https://api.example/manage/regions/8/members/99",
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+});
+
+describe("manage-api billing", () => {
+  it("normalizes billing bigint fields plus withdrawal capability", async () => {
+    mockFetch(200, {
+      mode: "enforce",
+      balance: {
+        credit_raw: "5000000",
+        reserved_raw: "1000000",
+        available_raw: "4000000",
+        updated_at: "2026-07-29T12:00:00Z",
+      },
+      caps: {
+        input_per_million: 2000,
+        cached_input_per_million: null,
+        output_per_million: 6000,
+      },
+      deposits: {
+        enabled: true,
+        treasury_ata: "ATA",
+        mint: "Mint",
+        token_program: "Prog",
+        decimals: 9,
+      },
+      withdrawals: {
+        enabled: true,
+        primary_linked_wallet: WALLET,
+      },
+    });
+    const state = await getBillingState(BASE, "jwt");
+    expect(state.mode).toBe("enforce");
+    expect(state.balance.available_raw).toBe(4_000_000n);
+    expect(state.caps.cached_input_per_million).toBeNull();
+    expect(state.caps.input_per_million).toBe(2000);
+    expect(state.deposits.enabled).toBe(true);
+    expect(state.deposits.decimals).toBe(9);
+    expect(state.withdrawals_enabled).toBe(true);
+    expect(state.primary_linked_wallet).toBe(WALLET);
+  });
+
+  it("PATCH preferences sends all three caps and clears with null", async () => {
+    const spy = mockFetch(200, {
+      input_per_million: 1500,
+      cached_input_per_million: null,
+      output_per_million: 9000,
+    });
+    const caps = await updateBillingPreferences(BASE, "jwt", {
+      input_per_million: 1500,
+      cached_input_per_million: null,
+      output_per_million: 9000,
+    });
+    const init = spy.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({
+      max_input_per_million: 1500,
+      max_cached_input_per_million: null,
+      max_output_per_million: 9000,
+    });
+    expect(caps.cached_input_per_million).toBeNull();
+    expect(caps.output_per_million).toBe(9000);
+  });
+
+  it("maps a 400 cap validation error to the detail", async () => {
+    mockFetch(400, { detail: "caps must not be negative" });
+    await expect(
+      updateBillingPreferences(BASE, "jwt", {
+        input_per_million: -1,
+        cached_input_per_million: null,
+        output_per_million: null,
+      }),
+    ).rejects.toThrow(/negative/i);
+  });
+
+  it("pages the ledger with an opaque cursor and limit", async () => {
+    const spy = mockFetch(200, {
+      entries: [
+        {
+          id: 7,
+          delta_raw: "-5000",
+          source: "usage",
+          leg: "usage",
+          ref: "req-1",
+          created_at: "2026-07-29T12:00:00Z",
+        },
+      ],
+      next: "cursor-abc",
+    });
+    const page = await listBillingLedger(BASE, "jwt", "cursor-prev", 25);
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain("cursor=cursor-prev");
+    expect(url).toContain("limit=25");
+    expect(page.entries[0].id).toBe(7);
+    expect(page.entries[0].delta_raw).toBe(-5_000n);
+    expect(page.next).toBe("cursor-abc");
+  });
+
+  it("lists deposits and normalizes assignment state", async () => {
+    mockFetch(200, {
+      entries: [
+        {
+          transaction_signature: "sig-1",
+          instruction_index: 0,
+          slot: 99,
+          from_wallet: WALLET,
+          amount_raw: "750000",
+          assignment_state: "assigned",
+          credited_at: "2026-07-29T12:00:00Z",
+          seen_at: "2026-07-29T11:59:00Z",
+        },
+      ],
+    });
+    const page = await listBillingDeposits(BASE, "jwt");
+    expect(page.entries[0].transaction_signature).toBe("sig-1");
+    expect(page.entries[0].assignment_state).toBe("assigned");
+    expect(page.entries[0].amount_raw).toBe(750_000n);
+  });
+
+  it("rejects on 401 with a sign-in message", async () => {
+    mockFetch(401, { detail: "unauthorized" });
+    await expect(getBillingState(BASE, "jwt")).rejects.toThrow(
+      /sign in again/i,
+    );
+  });
+});
+
+describe("manage-api withdrawals", () => {
+  it("creates a withdrawal with the idempotency key and returns 202 state", async () => {
+    const spy = mockFetch(202, {
+      id: 42,
+      destination_wallet: WALLET,
+      amount_raw: "750000",
+      state: "reserved",
+      reserved_at: "2026-08-01T12:00:00Z",
+    });
+    const wd = await createWithdrawal(BASE, "jwt", {
+      primary_linked_wallet: WALLET,
+      amount_raw: 750_000n,
+      idempotency_key: "idem-1",
+    });
+    const init = spy.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "idem-1",
+    );
+    expect(JSON.parse(init.body as string)).toEqual({
+      destination_wallet: WALLET,
+      amount_raw: "750000",
+      idempotency_key: "idem-1",
+    });
+    expect(wd.id).toBe(42);
+    expect(wd.state).toBe("reserved");
+    expect(wd.amount_raw).toBe(750_000n);
+  });
+
+  it("surfaces a 402 as an insufficient-credit message", async () => {
+    mockFetch(402, { detail: "insufficient available credit" });
+    await expect(
+      createWithdrawal(BASE, "jwt", {
+        primary_linked_wallet: WALLET,
+        amount_raw: 9_999_999n,
+        idempotency_key: "idem-2",
+      }),
+    ).rejects.toThrow(/insufficient available credit/i);
+  });
+
+  it("surfaces a 409 as an idempotency-key message", async () => {
+    mockFetch(409, { detail: "idempotency key in use" });
+    await expect(
+      createWithdrawal(BASE, "jwt", {
+        primary_linked_wallet: WALLET,
+        amount_raw: 100n,
+        idempotency_key: "dup",
+      }),
+    ).rejects.toThrow(/idempotency key in use/i);
+  });
+
+  it("lists withdrawals and forwards the cursor/limit", async () => {
+    const spy = mockFetch(200, {
+      entries: [
+        {
+          id: 3,
+          destination_wallet: WALLET,
+          amount_raw: "100",
+          state: "finalized",
+          reserved_at: "2026-08-01T12:00:00Z",
+        },
+        {
+          id: 2,
+          destination_wallet: WALLET,
+          amount_raw: "100",
+          state: "broadcast",
+          reserved_at: "2026-07-31T12:00:00Z",
+        },
+      ],
+      next: "cursor-next",
+    });
+    const page = await listWithdrawals(BASE, "jwt", "cursor-prev", 10);
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain("cursor=cursor-prev");
+    expect(url).toContain("limit=10");
+    expect(page.entries).toHaveLength(2);
+    expect(page.entries[0].state).toBe("finalized");
+    expect(page.entries[0].amount_raw).toBe(100n);
+    expect(page.next).toBe("cursor-next");
+  });
+
+  it("fetches a single withdrawal by id", async () => {
+    const spy = mockFetch(200, {
+      id: 55,
+      destination_wallet: WALLET,
+      amount_raw: "1000",
+      state: "signed",
+      signature: "sigbase58",
+      reserved_at: "2026-08-01T12:00:00Z",
+      signed_at: "2026-08-01T12:00:05Z",
+    });
+    const wd = await getWithdrawal(BASE, "jwt", 55);
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain("/manage/billing/withdrawals/55");
+    expect(wd.id).toBe(55);
+    expect(wd.state).toBe("signed");
+    expect(wd.amount_raw).toBe(1_000n);
+    expect(wd.signature).toBe("sigbase58");
+  });
+
+  it("surfaces a 404 from getWithdrawal", async () => {
+    mockFetch(404, { detail: "withdrawal not found" });
+    await expect(getWithdrawal(BASE, "jwt", 999)).rejects.toThrow(/not found/i);
   });
 });

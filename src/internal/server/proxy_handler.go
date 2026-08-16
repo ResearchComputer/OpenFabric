@@ -504,7 +504,8 @@ func shouldShedLoad(available, expected int) bool {
 	return rand.Float64() > acceptRate
 }
 
-// filterByTrust removes candidate peer IDs whose TrustLevel is below minTrust.
+// filterAllowedCandidatesV2 removes candidate peer IDs whose TrustLevel is
+// below minTrust.
 func filterByTrust(candidates []string, minTrust int) []string {
 	var filtered []string
 	for _, id := range candidates {
@@ -517,6 +518,32 @@ func filterByTrust(candidates []string, minTrust int) []string {
 		}
 	}
 	return filtered
+}
+
+// intersectAllowedPeers keeps only candidates whose peer ID appears in the
+// comma-separated X-Otela-Allowed-Peers header. The billing gate
+// (api.opentela.ai) stamps this header with the cheapest affordable peers
+// before forwarding; the mesh head intersects it with its identity-group
+// candidates so a request is never routed to a peer the buyer cannot afford.
+// Order is preserved (the candidates list is already priority-sorted).
+func intersectAllowedPeers(candidates []string, allowedHeader string) []string {
+	set := make(map[string]bool, 8)
+	for _, id := range strings.Split(allowedHeader, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			set[id] = true
+		}
+	}
+	if len(set) == 0 {
+		return candidates
+	}
+	var result []string
+	for _, c := range candidates {
+		if set[c] {
+			result = append(result, c)
+		}
+	}
+	return result
 }
 
 func filterAllowedCandidatesV2(candidates []string, decision *controlPlaneDecisionV2) []string {
@@ -613,6 +640,20 @@ func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 	candidates := selectCandidates(providers, serviceName, matchBody, fallbackLevel)
 	st.Mark("head_dnt")
 	routingFallbackTotal.WithLabelValues(serviceName, strconv.Itoa(fallbackLevel)).Inc()
+
+	// X-Otela-Allowed-Peers: the billing gate (api.opentela.ai) stamps the
+	// cheapest affordable peers on every forwarded request. Intersect the
+	// identity-group candidates with this allowlist so the mesh head never
+	// routes to a peer the buyer cannot afford. An absent header means no
+	// billing constraint (backward compatible with pre-billing traffic).
+	if allowed := c.GetHeader("X-Otela-Allowed-Peers"); allowed != "" {
+		candidates = intersectAllowedPeers(candidates, allowed)
+		if len(candidates) == 0 {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no billing-affordable provider for the requested service."})
+			return
+		}
+	}
+
 	if len(candidates) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No provider found for the requested service."})
 		return

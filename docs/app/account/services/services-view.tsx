@@ -4,7 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Copy, Loader2, RefreshCw } from 'lucide-react';
 import { useAccount } from '../account-context';
 import { tokenManagerConfig } from '../config';
-import { isCatchAll, listMeshServices, type ServiceSummary } from '../services';
+import {
+  isCatchAll,
+  listMeshCatalogue,
+  type MarketEntry,
+  type ServiceSummary,
+} from '../services';
 
 /** Placeholder used in the copied command when the user has no key to hand. */
 const KEY_PLACEHOLDER = '$OPENTELA_API_KEY';
@@ -13,16 +18,20 @@ export default function ServicesView() {
   const { lastCreatedSk, showNotice, pending, setPending, releasePending } =
     useAccount();
   const [services, setServices] = useState<ServiceSummary[]>([]);
+  const [market, setMarket] = useState<MarketEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(
     async (announce: boolean) => {
       setPending('services');
       try {
-        setServices(await listMeshServices(tokenManagerConfig.apiBaseUrl));
+        const catalogue = await listMeshCatalogue(tokenManagerConfig.apiBaseUrl);
+        setServices(catalogue.services);
+        setMarket(catalogue.market);
         if (announce) showNotice('success', 'Catalogue refreshed');
       } catch (error) {
         setServices([]);
+        setMarket([]);
         showNotice('error', error instanceof Error ? error.message : String(error));
       } finally {
         setLoaded(true);
@@ -167,6 +176,71 @@ export default function ServicesView() {
           </div>
         )}
       </section>
+
+      {market.length > 0 ? (
+        <section className="otm-panel otm-market-panel">
+          <div className="otm-panel-heading">
+            <div>
+              <p className="otm-eyebrow">Price discovery</p>
+              <h2>Market prices</h2>
+            </div>
+            <p className="otm-market-note">
+              Live published rates per million tokens. Min/median/max across
+              quoting peers; a dash means no provider is quoting yet.
+            </p>
+          </div>
+          <div className="otm-table-wrap">
+            <table className="otm-market-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Quoters</th>
+                  <th>Input /M</th>
+                  <th>Cached /M</th>
+                  <th>Output /M</th>
+                </tr>
+              </thead>
+              <tbody>
+                {market.map((entry) => (
+                  <MarketRow key={`${entry.service}:${entry.model}`} entry={entry} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
+  );
+}
+
+function MarketRow({ entry }: { entry: MarketEntry }) {
+  return (
+    <tr>
+      <td>
+        <div className="otm-market-model">
+          <code>{entry.model}</code>
+          <span className="otm-eyebrow">{entry.service}</span>
+        </div>
+      </td>
+      <td>{entry.quoters === 0 ? <span className="otm-eyebrow">—</span> : entry.quoters}</td>
+      <td><PriceTripleCell triple={entry.input_per_million} /></td>
+      <td><PriceTripleCell triple={entry.cached_input_per_million} /></td>
+      <td><PriceTripleCell triple={entry.output_per_million} /></td>
+    </tr>
+  );
+}
+
+function PriceTripleCell({ triple }: { triple: { min: number; median: number; max: number } }) {
+  if (triple.min === 0 && triple.max === 0) {
+    return <span className="otm-eyebrow">—</span>;
+  }
+  return (
+    <span className="otm-price-triple">
+      <strong>{triple.median}</strong>
+      <small>
+        {triple.min}
+        {triple.min !== triple.max ? `–${triple.max}` : ''}
+      </small>
+    </span>
   );
 }

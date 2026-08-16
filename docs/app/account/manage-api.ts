@@ -299,6 +299,21 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function readBigInt(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    try {
+      return BigInt(value.trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function readStringArray(value: unknown): string[] {
   return readArray(value)
     .map(readString)
@@ -1560,4 +1575,493 @@ export async function deleteManageRegionMember(
     },
     regionWriteError,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Billing (Step 6). The wallet page reads balance + deposit instructions,
+// edits the three buyer caps, and pages the immutable ledger and credited
+// deposits. Caps are nullable: `null` means unlimited on that axis, `0` means
+// "free peers only". All amounts are raw base units; the UI renders them with
+// the deposit mint's decimals (also returned by GET /manage/billing).
+// ---------------------------------------------------------------------------
+
+export type BillingMode = "off" | "observe" | "enforce";
+
+export interface BillingBalance {
+  credit_raw: bigint;
+  reserved_raw: bigint;
+  available_raw: bigint;
+  updated_at: string;
+}
+
+export interface BillingCaps {
+  input_per_million: number | null;
+  cached_input_per_million: number | null;
+  output_per_million: number | null;
+}
+
+export interface BillingDepositInstructions {
+  enabled: boolean;
+  treasury_ata?: string;
+  mint?: string;
+  token_program?: string;
+  decimals?: number;
+}
+
+export interface BillingState {
+  mode: BillingMode;
+  balance: BillingBalance;
+  caps: BillingCaps;
+  deposits: BillingDepositInstructions;
+  withdrawals_enabled: boolean;
+  primary_linked_wallet: string | null;
+}
+
+export interface BillingLedgerEntry {
+  id: number;
+  delta_raw: bigint;
+  source: string;
+  leg: string;
+  counterparty: string;
+  ref: string;
+  model?: string;
+  input_per_million: number | null;
+  cached_input_per_million: number | null;
+  output_per_million: number | null;
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
+  created_at: string;
+}
+
+export interface BillingLedgerPage {
+  entries: BillingLedgerEntry[];
+  next?: string;
+}
+
+export interface BillingDepositEntry {
+  transaction_signature: string;
+  instruction_index: number;
+  slot: number;
+  from_wallet: string;
+  amount_raw: bigint;
+  assignment_state: "unassigned" | "assigned" | "skipped";
+  credited_at?: string;
+  seen_at: string;
+}
+
+export interface BillingDepositPage {
+  entries: BillingDepositEntry[];
+  next?: string;
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (value === null) return null;
+  return readNumber(value);
+}
+
+function normalizeBillingBalance(value: unknown): BillingBalance {
+  if (!isRecord(value)) {
+    throw new Error("Billing balance payload must be an object");
+  }
+  return {
+    credit_raw: readBigInt(value.credit_raw) ?? 0n,
+    reserved_raw: readBigInt(value.reserved_raw) ?? 0n,
+    available_raw: readBigInt(value.available_raw) ?? 0n,
+    updated_at: readString(value.updated_at) ?? "",
+  };
+}
+
+function normalizeBillingCaps(value: unknown): BillingCaps {
+  if (!isRecord(value)) {
+    return {
+      input_per_million: null,
+      cached_input_per_million: null,
+      output_per_million: null,
+    };
+  }
+  return {
+    input_per_million: readNullableNumber(value.input_per_million),
+    cached_input_per_million: readNullableNumber(
+      value.cached_input_per_million,
+    ),
+    output_per_million: readNullableNumber(value.output_per_million),
+  };
+}
+
+function normalizeBillingDeposits(value: unknown): BillingDepositInstructions {
+  if (!isRecord(value)) {
+    return { enabled: false };
+  }
+  return {
+    enabled: readBoolean(value.enabled),
+    treasury_ata: readString(value.treasury_ata) ?? undefined,
+    mint: readString(value.mint) ?? undefined,
+    token_program: readString(value.token_program) ?? undefined,
+    decimals: readNumber(value.decimals) ?? undefined,
+  };
+}
+
+function normalizeWithdrawalCapability(value: RecordValue): Pick<
+  BillingState,
+  "withdrawals_enabled" | "primary_linked_wallet"
+> {
+  const sources = [
+    value,
+    isRecord(value.withdrawals) ? value.withdrawals : null,
+    isRecord(value.withdrawal) ? value.withdrawal : null,
+    isRecord(value.capability) ? value.capability : null,
+    isRecord(value.capabilities) ? value.capabilities : null,
+  ].filter((entry): entry is RecordValue => entry !== null);
+
+  let withdrawalsEnabled: boolean | null = null;
+  for (const source of sources) {
+    const direct = source.withdrawals_enabled;
+    if (typeof direct === "boolean") {
+      withdrawalsEnabled = direct;
+      break;
+    }
+    const enabled = source.enabled;
+    if (typeof enabled === "boolean") {
+      withdrawalsEnabled = enabled;
+      break;
+    }
+  }
+
+  let primaryLinkedWallet: string | null = null;
+  for (const source of sources) {
+    primaryLinkedWallet = readFirstString(source, [
+      "primary_linked_wallet",
+      "destination_wallet",
+      "wallet",
+    ]);
+    if (primaryLinkedWallet) break;
+  }
+
+  return {
+    withdrawals_enabled:
+      withdrawalsEnabled ?? primaryLinkedWallet !== null,
+    primary_linked_wallet: primaryLinkedWallet,
+  };
+}
+
+function billingError(status: number): string {
+  switch (status) {
+    case 401:
+      return "Not authenticated — sign in again";
+    case 400:
+      return "That cap is not valid — caps are non-negative, or null to clear";
+    default:
+      return `Billing request failed: ${status}`;
+  }
+}
+
+function normalizeBillingState(value: unknown): BillingState {
+  if (!isRecord(value)) {
+    throw new Error("Billing state payload must be an object");
+  }
+  return {
+    mode: (readString(value.mode) as BillingMode) ?? "off",
+    balance: normalizeBillingBalance(value.balance),
+    caps: normalizeBillingCaps(value.caps),
+    deposits: normalizeBillingDeposits(value.deposits),
+    ...normalizeWithdrawalCapability(value),
+  };
+}
+
+export async function getBillingState(
+  baseUrl: string,
+  jwt: string,
+): Promise<BillingState> {
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing`,
+    { headers: authHeaders(jwt) },
+    (status) => billingError(status),
+  );
+  return normalizeBillingState(body);
+}
+
+export async function updateBillingPreferences(
+  baseUrl: string,
+  jwt: string,
+  caps: BillingCaps,
+): Promise<BillingCaps> {
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/preferences`,
+    {
+      method: "PATCH",
+      headers: authHeaders(jwt),
+      body: JSON.stringify({
+        max_input_per_million: caps.input_per_million,
+        max_cached_input_per_million: caps.cached_input_per_million,
+        max_output_per_million: caps.output_per_million,
+      }),
+    },
+    (status, detail) =>
+      status === 400 ? detail || billingError(status) : billingError(status),
+  );
+  return normalizeBillingCaps(body);
+}
+
+export async function listBillingLedger(
+  baseUrl: string,
+  jwt: string,
+  cursor?: string,
+  limit?: number,
+): Promise<BillingLedgerPage> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (typeof limit === "number") params.set("limit", String(limit));
+  const query = params.toString();
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/ledger${query ? `?${query}` : ""}`,
+    { headers: authHeaders(jwt) },
+    (status) => billingError(status),
+  );
+  return normalizeBillingLedgerPage(body);
+}
+
+export async function listBillingDeposits(
+  baseUrl: string,
+  jwt: string,
+  cursor?: string,
+  limit?: number,
+): Promise<BillingDepositPage> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (typeof limit === "number") params.set("limit", String(limit));
+  const query = params.toString();
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/deposits${query ? `?${query}` : ""}`,
+    { headers: authHeaders(jwt) },
+    (status) => billingError(status),
+  );
+  return normalizeBillingDepositPage(body);
+}
+
+function normalizeBillingLedgerEntry(value: unknown): BillingLedgerEntry {
+  if (!isRecord(value)) {
+    throw new Error("Billing ledger entry must be an object");
+  }
+  return {
+    id: readNumber(value.id) ?? 0,
+    delta_raw: readBigInt(value.delta_raw) ?? 0n,
+    source: readString(value.source) ?? "",
+    leg: readString(value.leg) ?? "",
+    counterparty: readString(value.counterparty) ?? "",
+    ref: readString(value.ref) ?? "",
+    model: readString(value.model) ?? undefined,
+    input_per_million: readNullableNumber(value.input_per_million),
+    cached_input_per_million: readNullableNumber(
+      value.cached_input_per_million,
+    ),
+    output_per_million: readNullableNumber(value.output_per_million),
+    input_tokens: readNullableNumber(value.input_tokens),
+    cached_input_tokens: readNullableNumber(value.cached_input_tokens),
+    output_tokens: readNullableNumber(value.output_tokens),
+    created_at: readString(value.created_at) ?? "",
+  };
+}
+
+function normalizeBillingLedgerPage(value: unknown): BillingLedgerPage {
+  if (!isRecord(value)) return { entries: [] };
+  const next = readString(value.next) ?? undefined;
+  const entries = readArray(value.entries).map(normalizeBillingLedgerEntry);
+  return { entries, next };
+}
+
+function normalizeBillingDepositEntry(value: unknown): BillingDepositEntry {
+  if (!isRecord(value)) {
+    throw new Error("Billing deposit entry must be an object");
+  }
+  const state = readString(value.assignment_state);
+  return {
+    transaction_signature: readString(value.transaction_signature) ?? "",
+    instruction_index: readNumber(value.instruction_index) ?? 0,
+    slot: readNumber(value.slot) ?? 0,
+    from_wallet: readString(value.from_wallet) ?? "",
+    amount_raw: readBigInt(value.amount_raw) ?? 0n,
+    assignment_state:
+      state === "unassigned" || state === "skipped" ? state : "assigned",
+    credited_at: readString(value.credited_at) ?? undefined,
+    seen_at: readString(value.seen_at) ?? "",
+  };
+}
+
+function normalizeBillingDepositPage(value: unknown): BillingDepositPage {
+  if (!isRecord(value)) return { entries: [] };
+  const next = readString(value.next) ?? undefined;
+  const entries = readArray(value.entries).map(normalizeBillingDepositEntry);
+  return { entries, next };
+}
+
+// ---------------------------------------------------------------------------
+// Withdrawals (Step 7): a seller reserves on-chain earnings with
+// POST /manage/billing/withdrawals and polls GET /manage/billing/withdrawals
+// (and /{id}) until the transfer finalizes on Solana. The API debits
+// available credit immediately and an off-request worker signs and
+// broadcasts; the UI only reflects state, never the signed transaction.
+// ---------------------------------------------------------------------------
+
+export type BillingWithdrawalState =
+  | "reserved"
+  | "signed"
+  | "broadcast"
+  | "finalized"
+  | "failed"
+  | "restored";
+
+export interface BillingWithdrawal {
+  id: number;
+  destination_wallet: string;
+  amount_raw: bigint;
+  state: BillingWithdrawalState;
+  signature?: string;
+  error?: string;
+  reserved_at: string;
+  blockhash_expires_at?: string;
+  signed_at?: string;
+  broadcast_at?: string;
+  finalized_at?: string;
+}
+
+export interface BillingWithdrawalPage {
+  entries: BillingWithdrawal[];
+  next?: string;
+}
+
+export interface BillingWithdrawalCreateInput {
+  amount_raw: bigint;
+  idempotency_key: string;
+  destination_wallet?: string;
+  primary_linked_wallet?: string;
+}
+
+function withdrawalState(value: unknown): BillingWithdrawalState {
+  const s = readString(value);
+  switch (s) {
+    case "reserved":
+    case "signed":
+    case "broadcast":
+    case "finalized":
+    case "failed":
+    case "restored":
+      return s;
+    default:
+      return "reserved";
+  }
+}
+
+function normalizeWithdrawal(value: unknown): BillingWithdrawal {
+  if (!isRecord(value)) {
+    throw new Error("Withdrawal payload must be an object");
+  }
+  return {
+    id: readNumber(value.id) ?? 0,
+    destination_wallet:
+      readFirstString(value, [
+        "destination_wallet",
+        "primary_linked_wallet",
+        "wallet",
+      ]) ?? "",
+    amount_raw: readBigInt(value.amount_raw) ?? 0n,
+    state: withdrawalState(value.state ?? value.status),
+    signature: readString(value.signature) ?? undefined,
+    error: readString(value.error) ?? undefined,
+    reserved_at: readString(value.reserved_at) ?? "",
+    blockhash_expires_at: readString(value.blockhash_expires_at) ?? undefined,
+    signed_at: readString(value.signed_at) ?? undefined,
+    broadcast_at: readString(value.broadcast_at) ?? undefined,
+    finalized_at: readString(value.finalized_at) ?? undefined,
+  };
+}
+
+function normalizeWithdrawalPage(value: unknown): BillingWithdrawalPage {
+  if (!isRecord(value)) return { entries: [] };
+  const next = readString(value.next) ?? undefined;
+  const entries = readArray(value.entries).map(normalizeWithdrawal);
+  return { entries, next };
+}
+
+// withdrawalError maps non-OK withdrawal responses to a user-facing message.
+// 402 (insufficient available credit) and 409 (idempotency key in use) are
+// surfaced as distinct messages so the form can guide a retry.
+function withdrawalError(status: number): string {
+  switch (status) {
+    case 400:
+      return "That withdrawal is not valid — check the destination and amount";
+    case 402:
+      return "Not enough available credit for that withdrawal";
+    case 404:
+      return "Withdrawal not found";
+    case 409:
+      return "That idempotency key is already in use — try again";
+    default:
+      return `Withdrawal request failed: ${status}`;
+  }
+}
+
+export async function createWithdrawal(
+  baseUrl: string,
+  jwt: string,
+  input: BillingWithdrawalCreateInput,
+): Promise<BillingWithdrawal> {
+  const destinationWallet =
+    input.primary_linked_wallet?.trim() || input.destination_wallet?.trim();
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/withdrawals`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(jwt),
+        "Idempotency-Key": input.idempotency_key,
+      },
+      body: JSON.stringify({
+        amount_raw: input.amount_raw.toString(),
+        idempotency_key: input.idempotency_key,
+        ...(destinationWallet
+          ? { destination_wallet: destinationWallet }
+          : {}),
+      }),
+    },
+    (status, detail) =>
+      status === 400 || status === 402 || status === 409
+        ? detail || withdrawalError(status)
+        : withdrawalError(status),
+  );
+  return normalizeWithdrawal(body);
+}
+
+export async function listWithdrawals(
+  baseUrl: string,
+  jwt: string,
+  cursor?: string,
+  limit?: number,
+): Promise<BillingWithdrawalPage> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (typeof limit === "number") params.set("limit", String(limit));
+  const query = params.toString();
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/withdrawals${query ? `?${query}` : ""}`,
+    { headers: authHeaders(jwt) },
+    (status) => withdrawalError(status),
+  );
+  return normalizeWithdrawalPage(body);
+}
+
+export async function getWithdrawal(
+  baseUrl: string,
+  jwt: string,
+  id: number,
+): Promise<BillingWithdrawal> {
+  const body = await requestJson<unknown>(
+    `${baseUrl}/manage/billing/withdrawals/${id}`,
+    { headers: authHeaders(jwt) },
+    (status, detail) =>
+      status === 404
+        ? detail || withdrawalError(status)
+        : withdrawalError(status),
+  );
+  return normalizeWithdrawal(body);
 }
