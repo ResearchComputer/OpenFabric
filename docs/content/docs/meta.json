@@ -7,6 +7,6 @@
     "cloud",
     "extensions",
     "blog",
-    "proposals"
+    "!proposals"
   ]
 }
