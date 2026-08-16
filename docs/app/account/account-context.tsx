@@ -51,6 +51,8 @@ export interface Notice {
 export interface NeonUser {
   id: string;
   email?: string;
+  /** False while the address still needs the code Neon Auth emails at sign-up. */
+  emailVerified: boolean;
 }
 
 interface AccountValue {
@@ -129,6 +131,9 @@ function NeonSessionSync({
   const { data, isPending, error, refetch } = client.useSession();
   const userId = data?.user?.id;
   const userEmail = data?.user?.email;
+  // Only a definitive false gates someone: a shape that omits the field must
+  // not strand a signed-in user on the verification screen.
+  const userUnverified = data?.user?.emailVerified === false;
   const failure = error ? sessionErrorMessage(error) : null;
 
   useEffect(() => {
@@ -136,8 +141,16 @@ function NeonSessionSync({
     // Only the second is a reason to drop the user: doing it for the first
     // swaps the console for the sign-in screen on any network blip.
     if (failure) return;
-    onUser(userId ? { id: userId, email: userEmail ?? undefined } : null);
-  }, [failure, userId, userEmail, onUser]);
+    onUser(
+      userId
+        ? {
+            id: userId,
+            email: userEmail ?? undefined,
+            emailVerified: !userUnverified,
+          }
+        : null,
+    );
+  }, [failure, userId, userEmail, userUnverified, onUser]);
   useEffect(() => {
     onLoading(Boolean(isPending));
   }, [isPending, onLoading]);

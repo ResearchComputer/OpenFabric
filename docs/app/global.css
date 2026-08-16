@@ -885,6 +885,72 @@ body {
   gap: 8px;
 }
 
+/* ------------------------------------------------------ email verification */
+
+.acct-verify-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.acct-verify-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--ac-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.acct-verify-form input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--ac-line);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: var(--ac-panel);
+  color: var(--ac-ink);
+  font-size: 0.875rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.acct-verify-form input::placeholder {
+  color: color-mix(in oklab, var(--ac-muted) 75%, transparent);
+}
+
+.acct-verify-form input:focus {
+  border-color: var(--ac-accent);
+  outline: 3px solid color-mix(in oklab, var(--ac-accent) 18%, transparent);
+  outline-offset: 0;
+}
+
+.acct-verify-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* The verification affordances outside the vendor auth card are buttons that
+   should read as the quiet links .acct-back-link styles. */
+button.acct-back-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* .acct-centered button's `font: inherit` ties on specificity with the
+     plain class and would win over its font-size. */
+  font-size: 0.82rem;
+}
+
+button.acct-back-link + .acct-back-link,
+button.acct-back-link + a.acct-back-link {
+  margin-left: 14px;
+}
+
 /* ----------------------------------------------------------------- buttons */
 
 .otm-primary-button,

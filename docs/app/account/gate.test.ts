@@ -35,4 +35,34 @@ describe('resolveGate', () => {
       resolveGate({ ...signedIn, hasUser: false, sessionError: 'Failed to fetch' }),
     ).toBe('unreachable');
   });
+
+  // Neon Auth requires email verification at sign-up: the session exists right
+  // away, but the console stays closed until the emailed code is entered.
+  it('sends a signed-in but unverified user to email verification', () => {
+    expect(resolveGate({ ...signedIn, emailVerified: false })).toBe('verify-email');
+  });
+
+  it('shows the console once the address is verified', () => {
+    expect(resolveGate({ ...signedIn, emailVerified: true })).toBe('signed-in');
+  });
+
+  it('verification state survives a failed refetch like the session does', () => {
+    expect(
+      resolveGate({ ...signedIn, emailVerified: false, sessionError: 'Failed to fetch' }),
+    ).toBe('verify-email');
+    expect(
+      resolveGate({ ...signedIn, emailVerified: true, sessionError: 'Failed to fetch' }),
+    ).toBe('signed-in');
+  });
+
+  it('never gates someone whose verification state is unknown', () => {
+    expect(resolveGate({ ...signedIn, emailVerified: null })).toBe('signed-in');
+    expect(resolveGate({ ...signedIn, emailVerified: undefined })).toBe('signed-in');
+  });
+
+  it('asks for verification data only when there is a user', () => {
+    expect(resolveGate({ ...signedIn, hasUser: false, emailVerified: false })).toBe(
+      'signed-out',
+    );
+  });
 });

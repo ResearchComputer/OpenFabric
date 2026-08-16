@@ -13,6 +13,8 @@ const OPAQUE_SESSION_TOKEN = 'remZjVn0TKB6GC0hIfAse1uJRASJGYOM';
 const client = vi.hoisted(() => ({
   getSession: vi.fn(),
   token: vi.fn(),
+  emailOtp: { verifyEmail: vi.fn() },
+  sendVerificationEmail: vi.fn(),
 }));
 
 vi.mock('@neondatabase/neon-js/auth', () => ({
@@ -25,7 +27,8 @@ vi.mock('./config', () => ({
   tokenManagerConfig: { neonAuthUrl: 'https://auth.example/neondb/auth' },
 }));
 
-const { AuthTokenError, getAuthJwt } = await import('./neon-auth');
+const { AuthTokenError, getAuthJwt, verifyEmailCode, resendVerificationEmail } =
+  await import('./neon-auth');
 
 function signedInSession(token: string) {
   return { data: { session: { token }, user: { id: 'user-1' } }, error: null };
@@ -75,5 +78,78 @@ describe('getAuthJwt', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(AuthTokenError);
     expect(String(error)).toMatch(/JWT/i);
+  });
+});
+
+describe('verifyEmailCode', () => {
+  it('submits the emailed code and reports the auto sign-in the server did', async () => {
+    client.emailOtp.verifyEmail.mockResolvedValue({
+      data: { session: { token: JWT }, user: { id: 'user-1' } },
+      error: null,
+    });
+    await expect(verifyEmailCode('a@b.c', '123456')).resolves.toEqual({
+      autoSignedIn: true,
+    });
+    expect(client.emailOtp.verifyEmail).toHaveBeenCalledWith({
+      email: 'a@b.c',
+      otp: '123456',
+    });
+  });
+
+  it('reports no auto sign-in when verification returns no session or token', async () => {
+    client.emailOtp.verifyEmail.mockResolvedValue({
+      data: { status: true },
+      error: null,
+    });
+    await expect(verifyEmailCode('a@b.c', '123456')).resolves.toEqual({
+      autoSignedIn: false,
+    });
+  });
+
+  // The wrong code is the common case; the raw "INVALID_OTP" copy from the
+  // server must not leak into the UI.
+  it('translates a wrong code into guidance', async () => {
+    client.emailOtp.verifyEmail.mockResolvedValue({
+      data: null,
+      error: { status: 400, code: 'INVALID_OTP', message: 'Invalid OTP' },
+    });
+    await expect(verifyEmailCode('a@b.c', '000000')).rejects.toThrow(/does not match/);
+  });
+
+  it('translates an expired code into the documented 15-minute lifetime', async () => {
+    client.emailOtp.verifyEmail.mockResolvedValue({
+      data: null,
+      error: { status: 400, code: 'OTP_EXPIRED', message: 'OTP expired' },
+    });
+    await expect(verifyEmailCode('a@b.c', '000000')).rejects.toThrow(/15 minutes/);
+  });
+
+  it('falls through to the server message for unmapped failures', async () => {
+    client.emailOtp.verifyEmail.mockResolvedValue({
+      data: null,
+      error: { status: 503, message: 'Service Unavailable' },
+    });
+    await expect(verifyEmailCode('a@b.c', '123456')).rejects.toThrow(
+      /503.*Service Unavailable/,
+    );
+  });
+});
+
+describe('resendVerificationEmail', () => {
+  it('points the verification email back at the account console', async () => {
+    client.sendVerificationEmail.mockResolvedValue({ data: { status: true }, error: null });
+    await expect(resendVerificationEmail('a@b.c')).resolves.toBeUndefined();
+    expect(client.sendVerificationEmail).toHaveBeenCalledWith({
+      email: 'a@b.c',
+      callbackURL: `${window.location.origin}/account`,
+    });
+  });
+
+  it('translates an unknown address instead of pretending the email went out', async () => {
+    client.sendVerificationEmail.mockResolvedValue({
+      data: null,
+      error: { status: 404, code: 'USER_NOT_FOUND', message: 'User not found' },
+    });
+    await expect(resendVerificationEmail('a@b.c')).rejects.toThrow(/No account exists/);
   });
 });

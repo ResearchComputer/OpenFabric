@@ -64,3 +64,84 @@ export async function getAuthJwt(): Promise<string> {
   }
   return token;
 }
+
+/**
+ * Outcome of a successful verification-code submission. Neon Auth is
+ * configured to sign the user in as part of verification (the Console's
+ * "auto sign-in after verification" default); when it does, the session
+ * listener carries the gate open by itself.
+ */
+export interface EmailVerificationResult {
+  autoSignedIn: boolean;
+}
+
+/**
+ * Turn a better-auth error into copy a person can act on. The codes below are
+ * the ones the email-OTP and verification endpoints produce; anything else
+ * falls through to the server's own message.
+ */
+function verificationErrorMessage(
+  error: { status?: number; message?: string; statusText?: string; code?: string },
+): string {
+  switch (error.code) {
+    case 'INVALID_OTP':
+      return 'That code does not match the one we emailed. Check it and try again.';
+    case 'OTP_EXPIRED':
+      // Matches the 15-minute lifetime documented for Neon Auth emails.
+      return 'That code has expired (codes last 15 minutes). Request a new one.';
+    case 'TOO_MANY_ATTEMPTS':
+      return 'Too many wrong tries, so the code was invalidated. Request a new one.';
+    case 'USER_NOT_FOUND':
+      return 'No account exists for that email address.';
+    case 'EMAIL_ALREADY_VERIFIED':
+      return 'That email address is already verified. Sign in instead.';
+    default: {
+      const detail = error.message ?? error.statusText;
+      const status = error.status;
+      return `Email verification failed (${status ?? 'no status'})${detail ? `: ${detail}` : ''}`;
+    }
+  }
+}
+
+/**
+ * Submit the 6-digit code Neon Auth emailed at sign-up (the Console's OTP
+ * verification method). On success the auth client's session listener
+ * refetches the session, so an already-signed-in user becomes verified in
+ * place; when the server also auto-signs-in, a signed-out caller becomes
+ * signed in the same way.
+ */
+export async function verifyEmailCode(
+  email: string,
+  code: string,
+): Promise<EmailVerificationResult> {
+  if (!authClient) {
+    throw new Error('Account sign-in unavailable on this deployment');
+  }
+  const result = await authClient.emailOtp.verifyEmail({ email, otp: code });
+  if (result.error) {
+    throw new Error(verificationErrorMessage(result.error));
+  }
+  const data = result.data as
+    | { session?: unknown; token?: unknown }
+    | null
+    | undefined;
+  return { autoSignedIn: Boolean(data?.session ?? data?.token) };
+}
+
+/**
+ * Ask Neon Auth to send the verification email again. Codes expire after 15
+ * minutes, so this is also how a fresh code is requested. The server sends a
+ * code or a link depending on the Console's verification method (OTP here).
+ */
+export async function resendVerificationEmail(email: string): Promise<void> {
+  if (!authClient) {
+    throw new Error('Account sign-in unavailable on this deployment');
+  }
+  const result = await authClient.sendVerificationEmail({
+    email,
+    callbackURL: `${window.location.origin}/account`,
+  });
+  if (result.error) {
+    throw new Error(verificationErrorMessage(result.error));
+  }
+}

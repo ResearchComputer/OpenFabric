@@ -6,6 +6,7 @@ import { resolveGate } from './gate';
 import { isNeonConfigured } from './neon-auth';
 import LoginView from './login-view';
 import Sidebar from './sidebar';
+import VerifyEmailView from './verify-email-view';
 
 export default function AccountShell({ children }: { children: ReactNode }) {
   return (
@@ -16,8 +17,15 @@ export default function AccountShell({ children }: { children: ReactNode }) {
 }
 
 function AccountGate({ children }: { children: ReactNode }) {
-  const { mounted, neonUser, sessionLoading, sessionError, retrySession, notice } =
-    useAccount();
+  const {
+    mounted,
+    neonUser,
+    sessionLoading,
+    sessionError,
+    retrySession,
+    signOut,
+    notice,
+  } = useAccount();
 
   if (!isNeonConfigured()) {
     return (
@@ -38,6 +46,7 @@ function AccountGate({ children }: { children: ReactNode }) {
     sessionLoading,
     sessionError,
     hasUser: Boolean(neonUser),
+    emailVerified: neonUser?.emailVerified ?? null,
   });
 
   // Until mounted, server and client render the same placeholder (no hydration mismatch).
@@ -75,6 +84,17 @@ function AccountGate({ children }: { children: ReactNode }) {
   }
 
   if (gate === 'signed-out') return <LoginView />;
+
+  // Verification is the unpaid first mileage of sign-up: the session exists
+  // but the console stays closed until the emailed code confirms the address
+  // (the auth server refuses unverified sign-ins anyway).
+  if (gate === 'verify-email') {
+    return (
+      <main className="acct-centered">
+        <VerifyEmailView email={neonUser?.email} onSignOut={signOut} />
+      </main>
+    );
+  }
 
   return (
     <div className="acct-shell">
