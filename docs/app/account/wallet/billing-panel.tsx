@@ -259,6 +259,26 @@ export default function BillingPanel() {
     );
   }
 
+  // Billing is disabled on this deployment (BILLING_MODE=off). The API still
+  // serves /manage/billing with mode "off" so the wallet page doesn't 404;
+  // here we surface a clear empty state instead of the full panel, whose
+  // caps form and balances would imply billing is active.
+  if (state.mode === "off") {
+    return (
+      <section className="otm-panel otm-billing-panel">
+        <div className="otm-panel-heading">
+          <div>
+            <p className="otm-eyebrow">Billing</p>
+            <h2>Credit account</h2>
+          </div>
+        </div>
+        <div className="otm-empty-state">
+          Billing is not enabled on this deployment.
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="otm-panel otm-billing-panel">
       <div className="otm-panel-heading">

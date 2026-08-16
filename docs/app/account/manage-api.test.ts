@@ -717,6 +717,39 @@ describe("manage-api billing", () => {
     expect(state.primary_linked_wallet).toBe(WALLET);
   });
 
+  // BILLING_MODE=off deployments now serve /manage/billing with mode "off"
+  // (a zero-cost payload) instead of a 404, so the wallet page can render a
+  // graceful "not enabled" state. The account must parse cleanly with all
+  // balances zero, deposits disabled, and no primary wallet.
+  it("parses an off-mode state with zero balances and no deposits", async () => {
+    mockFetch(200, {
+      mode: "off",
+      balance: {
+        credit_raw: "0",
+        reserved_raw: "0",
+        available_raw: "0",
+        updated_at: "2026-08-16T12:00:00Z",
+      },
+      caps: {
+        input_per_million: null,
+        cached_input_per_million: null,
+        output_per_million: null,
+      },
+      deposits: { enabled: false },
+      withdrawals_enabled: false,
+      primary_linked_wallet: null,
+    });
+    const state = await getBillingState(BASE, "jwt");
+    expect(state.mode).toBe("off");
+    expect(state.balance.available_raw).toBe(0n);
+    expect(state.balance.credit_raw).toBe(0n);
+    expect(state.caps.input_per_million).toBeNull();
+    expect(state.deposits.enabled).toBe(false);
+    expect(state.deposits.decimals).toBeUndefined();
+    expect(state.withdrawals_enabled).toBe(false);
+    expect(state.primary_linked_wallet).toBeNull();
+  });
+
   it("PATCH preferences sends all three caps and clears with null", async () => {
     const spy = mockFetch(200, {
       input_per_million: 1500,
