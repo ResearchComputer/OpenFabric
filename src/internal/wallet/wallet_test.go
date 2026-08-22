@@ -603,6 +603,84 @@ func TestWalletManagerDefaultAccount(t *testing.T) {
 	}
 }
 
+func TestWalletManagerSelectAccount(t *testing.T) {
+	pub1, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key 1: %v", err)
+	}
+	pub2, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key 2: %v", err)
+	}
+	addr1 := base58.Encode(pub1)
+	addr2 := base58.Encode(pub2)
+
+	newManager := func() *WalletManager {
+		return &WalletManager{accounts: []Account{
+			{Type: WalletTypeSolana, PublicKey: addr1, ProviderID: "otela-one"},
+			{Type: WalletTypeSolana, PublicKey: addr2, ProviderID: "otela-two"},
+		}}
+	}
+
+	t.Run("selects the matching managed wallet", func(t *testing.T) {
+		wm := newManager()
+		acc, err := wm.SelectAccount(addr2)
+		if err != nil {
+			t.Fatalf("SelectAccount: %v", err)
+		}
+		if acc.PublicKey != addr2 {
+			t.Fatalf("selected %s, want %s", acc.PublicKey, addr2)
+		}
+		if def, err := wm.DefaultAccount(); err != nil || def.PublicKey != addr2 {
+			t.Fatalf("DefaultAccount=%v %v, want the selected wallet", def, err)
+		}
+		if wm.GetPublicKey() != addr2 || wm.GetProviderID() != "otela-two" {
+			t.Fatalf("getters returned pubkey=%s provider=%s, want the second wallet",
+				wm.GetPublicKey(), wm.GetProviderID())
+		}
+	})
+
+	t.Run("re-selection switches back", func(t *testing.T) {
+		wm := newManager()
+		if _, err := wm.SelectAccount(addr2); err != nil {
+			t.Fatalf("SelectAccount(addr2): %v", err)
+		}
+		if _, err := wm.SelectAccount(addr1); err != nil {
+			t.Fatalf("SelectAccount(addr1): %v", err)
+		}
+		if wm.GetPublicKey() != addr1 {
+			t.Fatalf("GetPublicKey=%s, want %s", wm.GetPublicKey(), addr1)
+		}
+	})
+
+	t.Run("rejects a malformed address", func(t *testing.T) {
+		wm := newManager()
+		if _, err := wm.SelectAccount("not-base58!!!"); err == nil {
+			t.Fatal("expected an error for a malformed address")
+		}
+		// Valid base58 that decodes to the wrong length must fail too.
+		tooShort := base58.Encode([]byte{1, 2, 3})
+		if _, err := wm.SelectAccount(tooShort); err == nil {
+			t.Fatal("expected an error for a wrong-length address")
+		}
+	})
+
+	t.Run("rejects an unmanaged but well-formed address", func(t *testing.T) {
+		wm := newManager()
+		pubOther, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("generate key 3: %v", err)
+		}
+		_, selErr := wm.SelectAccount(base58.Encode(pubOther))
+		if selErr == nil {
+			t.Fatal("expected an error for an unmanaged address")
+		}
+		if !strings.Contains(selErr.Error(), "otela wallet import") {
+			t.Fatalf("error should point the operator at import, got: %v", selErr)
+		}
+	})
+}
+
 func TestWalletManagerAddSolanaAccount(t *testing.T) {
 	tempDir := t.TempDir()
 

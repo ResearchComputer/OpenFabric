@@ -59,6 +59,9 @@ type WalletManager struct {
 	storageDir  string
 	storagePath string
 	accounts    []Account
+	// activeIdx is the account DefaultAccount returns. Zero (the first
+	// managed wallet) until SelectAccount picks another one by address.
+	activeIdx int
 }
 
 // NewWalletManager creates (or opens) the wallet store under
@@ -464,12 +467,41 @@ func (wm *WalletManager) Accounts() []Account {
 	return out
 }
 
-// DefaultAccount returns the first account (the "active" wallet).
+// DefaultAccount returns the active account: the first managed wallet,
+// unless SelectAccount picked another one for this process.
 func (wm *WalletManager) DefaultAccount() (Account, error) {
 	if len(wm.accounts) == 0 {
 		return Account{}, errors.New("no managed accounts")
 	}
-	return wm.accounts[0], nil
+	return wm.accounts[wm.activeIdx], nil
+}
+
+// SelectAccount makes the managed wallet with the given base58 public key
+// (address) the active account for this process: every convenience getter
+// (GetPublicKey, GetPrivateKeyBytes, GetProviderID, ...) and every signature
+// the node produces afterwards uses that wallet. The change is in-memory
+// only — the on-disk account order is untouched. It fails if the address is
+// malformed or not among the managed wallets, because a node can only
+// attest ownership for a key it actually holds.
+func (wm *WalletManager) SelectAccount(address string) (Account, error) {
+	decoded, err := base58.Decode(address)
+	if err != nil || len(decoded) != ed25519.PublicKeySize {
+		return Account{}, fmt.Errorf("invalid wallet address %q (want a base58 Solana public key)", address)
+	}
+	for i := range wm.accounts {
+		if wm.accounts[i].PublicKey == address {
+			wm.activeIdx = i
+			return wm.accounts[i], nil
+		}
+	}
+	keys := make([]string, 0, len(wm.accounts))
+	for _, acc := range wm.accounts {
+		keys = append(keys, acc.PublicKey)
+	}
+	return Account{}, fmt.Errorf(
+		"wallet address %s is not one of the managed wallets (%s); import it "+
+			"first with `otela wallet import`, or pick one from `otela wallet list`",
+		address, strings.Join(keys, ", "))
 }
 
 // AddSolanaAccount generates a new Ed25519 keypair, persists it in

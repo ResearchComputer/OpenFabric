@@ -10,6 +10,7 @@ import (
 	solanaclient "opentela/internal/solana"
 	"opentela/internal/wallet"
 	"opentela/plugins/webui"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -27,7 +28,21 @@ func StartServer() {
 	walletPubkey := ""
 	var walletManager *wallet.WalletManager
 
-	if viper.GetString("wallet.account") == "" {
+	// wallet.address selects which managed wallet the node runs as (base58
+	// public key, e.g. the one linked to the operator's cloud account). It
+	// must be among the locally managed wallets — the node can only attest
+	// ownership for a key it holds. wallet.account stays supported as the
+	// legacy override; when both are given they must agree.
+	walletAddr := viper.GetString("wallet.address")
+	legacyAccount := viper.GetString("wallet.account")
+	if walletAddr != "" && legacyAccount != "" && walletAddr != legacyAccount {
+		common.Logger.Errorf(
+			"conflicting wallet flags: wallet.address=%s but wallet.account=%s; set only wallet.address",
+			walletAddr, legacyAccount)
+		os.Exit(1)
+	}
+
+	if walletAddr == "" && legacyAccount == "" {
 		common.Logger.Debug("Wallet account not set, skipping wallet init")
 	} else {
 		var err error
@@ -35,6 +50,19 @@ func StartServer() {
 		if err != nil {
 			common.Logger.Warn("Failed to initialize wallet: %v", err)
 		} else {
+			if walletAddr != "" {
+				acc, selErr := walletManager.SelectAccount(walletAddr)
+				if selErr != nil {
+					common.Logger.Errorf("cannot start with wallet address: %v", selErr)
+					os.Exit(1)
+				}
+				// Unify downstream identity: access-control and trust code
+				// reads wallet.account, and the attestation is signed with
+				// this exact account's key, so owner and attestation can
+				// never diverge.
+				viper.Set("wallet.account", acc.PublicKey)
+				common.Logger.Infof("Wallet address selected: %s (provider %s)", acc.PublicKey, acc.ProviderID)
+			}
 			walletPublicKey := walletManager.GetPublicKey()
 			providerID := walletManager.GetProviderID()
 			common.Logger.Debugf("Wallet initialized: pubkey=%s provider=%s", walletPublicKey, providerID)

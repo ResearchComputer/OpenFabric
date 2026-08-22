@@ -365,14 +365,19 @@ When a node starts and joins the network, its wallet identity is automatically a
 
 ### Starting a node with wallet ownership
 
-No extra flags are needed — the wallet is loaded automatically:
+No extra flags are needed for the default wallet — point the node at it and set a value for `wallet.account`:
 
 ```bash
 ./otela start \
   --mode standalone \
   --public-addr {YOUR_IP} \
-  --seed 0
+  --seed 0 \
+  --wallet.address 5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
 ```
+
+`--wallet.address` chooses which **managed wallet** the node runs as — useful when the machine holds several (e.g. from earlier imports) or when you want the node to run as exactly the wallet you linked to your cloud account with `otela wallet link`. The address must be in the local store (`otela wallet list`); the node refuses to start with an address it doesn't hold the key for, because it can only attest ownership of a key it controls. Its owner identity, provider ID, and signed attestation all come from that one wallet, so they can never diverge.
+
+The legacy `--wallet.account <pubkey>` override stays supported; if both are given they must agree — prefer `--wallet.address`.
 
 In the startup logs you will see:
 
@@ -437,7 +442,7 @@ This makes it possible to audit which operator provides which services.
 
 ## Step 10: Skipping wallet (optional)
 
-If you don't want to use the ownership mechanism (e.g., for quick local testing), you can start a node without a wallet by leaving `wallet.account` empty:
+If you don't want to use the ownership mechanism (e.g., for quick local testing), you can start a node without a wallet by leaving both `wallet.account` and `wallet.address` empty:
 
 ```bash
 ./otela start --wallet.account "" --mode standalone
@@ -473,7 +478,8 @@ These can also be set via CLI flags or environment variables (prefixed with `OF_
 | Config key | CLI flag | Env var | Description |
 | :--- | :--- | :--- | :--- |
 | `account.wallet` | `--account.wallet` | `OF_ACCOUNT_WALLET` | Path to keypair file |
-| `wallet.account` | `--wallet.account` | `OF_WALLET_ACCOUNT` | Wallet public key override |
+| `wallet.account` | `--wallet.account` | `OF_WALLET_ACCOUNT` | Wallet public key override (legacy) |
+| `wallet.address` | `--wallet.address` | `OF_WALLET_ADDRESS` | Managed wallet (base58 public key) to run as |
 | `solana.rpc` | `--solana.rpc` | `OF_SOLANA_RPC` | Solana JSON-RPC endpoint |
 | `solana.mint` | `--solana.mint` | `OF_SOLANA_MINT` | SPL token mint address to verify |
 | `solana.skip_verification` | `--solana.skip_verification` | `OF_SOLANA_SKIP_VERIFICATION` | Skip token ownership check |

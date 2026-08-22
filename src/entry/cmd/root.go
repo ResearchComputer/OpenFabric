@@ -40,6 +40,7 @@ func init() {
 		common.Logger.Error("Could not bind config-dir flag", "error", err)
 	}
 	startCmd.Flags().String("wallet.account", "", "wallet account")
+	startCmd.Flags().String("wallet.address", "", "base58 public key (address) of the managed wallet to run as")
 	startCmd.Flags().String("account.wallet", "", "path to wallet key file")
 	startCmd.Flags().String("bootstrap.addr", "", "bootstrap address")
 	startCmd.Flags().StringSlice("bootstrap.source", nil, "bootstrap source (HTTP URL, dnsaddr://host, or multiaddr). Repeatable")

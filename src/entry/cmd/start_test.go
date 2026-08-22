@@ -145,6 +145,7 @@ func TestStartCommandFlags(t *testing.T) {
 	// Test that all expected flags are present
 	expectedFlags := []string{
 		"wallet.account",
+		"wallet.address",
 		"account.wallet",
 		"bootstrap.addr",
 		"bootstrap.source",
