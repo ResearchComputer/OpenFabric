@@ -110,7 +110,8 @@ const community: { label: string; description: string; href: string; external?: 
   {
     label: 'Account',
     description: 'API keys & wallet dashboard',
-    href: '/account',
+    href: 'https://cloud.opentela.ai/account',
+    external: true,
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-5">
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.75V9.75A2.25 2.25 0 0 0 18.75 7.5H5.25A2.25 2.25 0 0 0 3 9.75v8.25A2.25 2.25 0 0 0 5.25 20.25h13.5A2.25 2.25 0 0 0 21 18v-3" />
@@ -303,12 +304,12 @@ export default function HomePage() {
             >
               Observatory
             </Link>
-            <Link
-              href="/account"
+            <a
+              href="https://cloud.opentela.ai/account"
               className="-my-2 py-2 text-sm text-fd-muted-foreground transition-colors hover:text-fd-foreground"
             >
               Account
-            </Link>
+            </a>
             <a
               href="https://github.com/eth-easl/OpenTela"
               target="_blank"

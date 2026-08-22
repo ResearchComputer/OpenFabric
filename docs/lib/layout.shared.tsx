@@ -30,7 +30,8 @@ export function baseOptions(showBlogLink = true): BaseLayoutProps {
       },
       {
         text: 'Account',
-        url: '/account',
+        url: 'https://cloud.opentela.ai/account',
+        external: true,
       },
       ...(showBlogLink
         ? [

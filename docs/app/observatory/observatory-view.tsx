@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
-import { tokenManagerConfig } from '../account/config';
-import { formatDate } from '../account/format';
-import { listMeshServices, type ServiceSummary } from '../account/services';
+import { apiBaseUrl } from './config';
+import { formatDate } from './format';
+import { listMeshServices, type ServiceSummary } from './services';
 import {
   DEFAULT_HOURS,
   HOUR_OPTIONS,
@@ -42,7 +42,7 @@ export default function ObservatoryView() {
       const seq = ++requestSeq.current;
       setPending(true);
       try {
-        const next = await fetchObservatory(tokenManagerConfig.apiBaseUrl, {
+        const next = await fetchObservatory(apiBaseUrl, {
           hours,
           service: SERVICE,
           model: model || undefined,
@@ -90,7 +90,7 @@ export default function ObservatoryView() {
   // in the catalogue; a catalogue failure only means the dropdown stays at
   // "all models", so it stays silent.
   useEffect(() => {
-    listMeshServices(tokenManagerConfig.apiBaseUrl)
+    listMeshServices(apiBaseUrl)
       .then((items) => setServices(items))
       .catch(() => setServices([]));
   }, []);

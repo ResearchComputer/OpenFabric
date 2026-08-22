@@ -14,8 +14,26 @@ const config = {
   },
   async redirects() {
     return [
-      { source: '/wallet', destination: '/account', permanent: true },
-      { source: '/token-manager', destination: '/account', permanent: true },
+      {
+        source: '/account/:path*',
+        destination: 'https://cloud.opentela.ai/account/:path*',
+        permanent: true,
+      },
+      {
+        source: '/auth/:path*',
+        destination: 'https://cloud.opentela.ai/auth/:path*',
+        permanent: true,
+      },
+      {
+        source: '/wallet',
+        destination: 'https://cloud.opentela.ai/account/wallet',
+        permanent: true,
+      },
+      {
+        source: '/token-manager',
+        destination: 'https://cloud.opentela.ai/account',
+        permanent: true,
+      },
       { source: '/leaderboard', destination: '/observatory', permanent: true },
     ];
   },

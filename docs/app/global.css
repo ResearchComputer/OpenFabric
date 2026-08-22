@@ -1,23 +1,6 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
-/* Neon auth UI theme + class safelist. This is the "consumers WITH Tailwind v4"
-   entry point and MUST stay after the tailwindcss import. Do NOT switch to
-   '@neondatabase/auth-ui/css': that ships a second full Tailwind build including
-   preflight, which Next appends on client-side navigation to /account and never
-   removes — it then resets padding/borders site-wide (e.g. collapsing the docs
-   search box from 36px to 24px). */
-/* Referenced by explicit path: the package's own './tailwind' entry re-imports
-   these relatively, and those nested paths do not resolve through the bare
-   specifier in this build. theme.css is variables/@property only and
-   theme-inline.css is an `@theme inline` token map, so neither adds element
-   selectors that could leak into the rest of the site. */
-@import '../node_modules/@neondatabase/auth-ui/dist/theme.css';
-@import '../node_modules/@neondatabase/auth-ui/dist/theme-inline.css';
-/* Generate the utility classes the auth components use (they live in vendor
-   markup Tailwind would not otherwise scan). */
-@source '../node_modules/@neondatabase/auth-ui/dist/.safelist.html';
-
 /* OpenTela — warm "observatory" theme: cream canvas, warm neutral surfaces,
    emerald accent. Mirrors the public ada.ai documentation, which runs on the
    same fumadocs preset — so this block is their exact token set. */
