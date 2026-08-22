@@ -148,7 +148,48 @@ Created at:   2025-06-01T10:30:00Z
 
 ---
 
-## Step 3: Export wallet for third-party use
+## Step 3: Link your wallet to your OpenTela Cloud account
+
+Linking binds the default wallet to your account at [cloud.opentela.ai](https://cloud.opentela.ai) so every peer your nodes run is owned by that account. **One OpenTela account operates a single wallet, and every peer it claims is owned by that wallet** — run the link once per account.
+
+```bash
+./otela wallet link --email me@example.com
+```
+
+The CLI prompts for your console password, signs a server-issued challenge with the wallet's private key, and submits the signature (`/manage/wallets/challenges` → `/manage/wallets` on `api.opentela.ai`). The private key never leaves the machine. On success:
+
+```
+✔ Wallet linked to your OpenTela Cloud account
+  Wallet:       5YNmS1R9nNSCDzb5a7mMJ1dwK9uHeAAF4CerBTpfXoA4
+  Primary:      true
+  Linked at:    2025-06-01T10:35:12Z
+
+Next: claim this node's peers from the console:
+  https://cloud.opentela.ai/account
+```
+
+### Sign-in methods
+
+| Method | How |
+| :--- | :--- |
+| `--email <addr>` | The CLI prompts for the console password and fetches a fresh JWT itself. |
+| `--token <jwt>` | Paste a Neon Auth JWT directly (short-lived; useful for scripted/CI flows). |
+
+| Flag | Config key | Env var | Purpose |
+| :--- | :--- | :--- | :--- |
+| `--token` | `account.token` | `OF_ACCOUNT_TOKEN` | Neon Auth JWT |
+| `--email` | `account.email` | `OF_ACCOUNT_EMAIL` | Console sign-in email |
+| `--password` | `account.password` | `OF_ACCOUNT_PASSWORD` | Console password (prompted when omitted on a terminal) |
+| `--api-url` | `account.api_url` | `OF_ACCOUNT_API_URL` | Control-plane base URL (default `https://api.opentela.ai`) |
+| `--neon-auth-url` | `account.neon_auth_url` | `OF_ACCOUNT_NEON_AUTH_URL` | Neon Auth sign-in URL (defaults to production) |
+
+### If the account already has a wallet
+
+The server rejects a second wallet with `409` (one wallet per account). To switch wallets, remove the current one in the console first — removal only succeeds once it no longer proves an active instance (release or migrate its peers first).
+
+---
+
+## Step 4: Export wallet for third-party use
 
 The generated wallet is a standard Solana Ed25519 keypair. You can export it in two formats depending on which third-party wallet you want to use.
 
@@ -210,7 +251,7 @@ MetaMask supports Solana through the [Solana Snap](https://snaps.metamask.io/). 
 
 ---
 
-## Step 4: Import an existing wallet
+## Step 5: Import an existing wallet
 
 If you already have a Solana keypair (from `solana-keygen`, Phantom export, etc.), you can import it:
 
@@ -231,7 +272,7 @@ The imported keypair file is **copied** into the managed directory — the origi
 
 ---
 
-## Step 5: Check balance
+## Step 6: Check balance
 
 You can check the SOL (and SPL token) balance of your default wallet directly from the CLI:
 
@@ -263,7 +304,7 @@ To check your balance on devnet or a custom RPC:
 
 ---
 
-## Step 6: Transfer SOL
+## Step 7: Transfer SOL
 
 You can send native SOL to any Solana wallet directly from the CLI:
 
@@ -293,7 +334,7 @@ The amount is specified in SOL (not lamports). Fractional values are supported u
 
 ---
 
-## Step 7: Get test SOL (devnet airdrop)
+## Step 8: Get test SOL (devnet airdrop)
 
 For testing purposes, you can request free SOL from the Solana devnet faucet:
 
@@ -310,7 +351,7 @@ The default amount is 1 SOL if you omit the argument. This only works on devnet 
 
 ---
 
-## Step 8: Service registration with ownership
+## Step 9: Service registration with ownership
 
 When a node starts and joins the network, its wallet identity is automatically attached to every service it registers. This is the core of the ownership mechanism.
 
@@ -394,7 +435,7 @@ This makes it possible to audit which operator provides which services.
 
 ---
 
-## Step 9: Skipping wallet (optional)
+## Step 10: Skipping wallet (optional)
 
 If you don't want to use the ownership mechanism (e.g., for quick local testing), you can start a node without a wallet by leaving `wallet.account` empty:
 
@@ -451,6 +492,7 @@ These can also be set via CLI flags or environment variables (prefixed with `OF_
 | `otela wallet export --file <path>` | Export keypair in Solana-CLI JSON format (for Solflare / CLI) |
 | `otela wallet export --pubkey <key>` | Export a specific wallet (not the default) |
 | `otela wallet import <keypair.json>` | Import an existing Solana keypair file |
+| `otela wallet link` | Link the default wallet to your OpenTela Cloud account (one wallet per account) |
 | `otela balance` | Show SOL and OTELA balances |
 | `otela wallet transfer <to> <sol>` | Transfer native SOL to another wallet |
 | `otela wallet airdrop [sol]` | Request devnet/testnet SOL from the faucet |
