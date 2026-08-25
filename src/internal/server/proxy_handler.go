@@ -101,7 +101,8 @@ func getTrustedTransport() *http.Transport {
 
 func ErrorHandler(res http.ResponseWriter, req *http.Request, err error) {
 	if _, werr := fmt.Fprintf(res, "ERROR: %s", err.Error()); werr != nil {
-		common.Logger.Error("Error writing error response: ", werr)
+		// The client is usually already gone when this write fails.
+		common.Logger.Debug("Error writing error response: ", werr)
 	}
 }
 
@@ -850,7 +851,7 @@ func globalServiceForwardWithScope(c *gin.Context, scope routingScope) {
 				return
 			}
 			if _, werr := fmt.Fprintf(res, "ERROR: %s", err.Error()); werr != nil {
-				common.Logger.Error("Error writing error response: ", werr)
+				common.Logger.Debug("Error writing error response: ", werr)
 			}
 		}
 

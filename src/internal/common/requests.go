@@ -12,27 +12,27 @@ import (
 func RemoteGET(url string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		Logger.Error("http client: could not create request: ", err)
+		Logger.Debug("http client: could not create request: ", err)
 		return nil, err
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
-		Logger.Error("http client: request failed: ", err)
+		Logger.Debug("http client: request failed: ", err)
 		return nil, err
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		err = fmt.Errorf("unexpected status code: %d", res.StatusCode)
-		Logger.Error("http client: ", err)
+		Logger.Debug("http client: ", err)
 		return nil, err
 	}
 
 	resBody, err := io.ReadAll(res.Body)
 	if err != nil {
-		Logger.Error("http client: could not read response: ", err)
+		Logger.Debug("http client: could not read response: ", err)
 		return nil, err
 	}
 	return resBody, nil

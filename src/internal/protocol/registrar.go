@@ -158,15 +158,28 @@ func healthCheckRemote(port, healthPath string, maxTries int) error {
 }
 
 func registerLLMService(port string) {
-	modelsBytes, err := common.RemoteGET("http://localhost:" + port + "/v1/models")
-	if err != nil {
-		common.Logger.Error("could not fetch models from LLM service: ", err)
-	}
-	common.Logger.Debug("Fetched models from LLM service: ", string(modelsBytes))
+	// The service just passed its health check, but /v1/models can still fail
+	// transiently (e.g. the server finishing warm-up). Nothing re-fetches the
+	// model list later, so a blip here would permanently register this node
+	// without model identity groups — retry briefly, and be loud on final
+	// failure since model-based routing will not reach this node.
+	const modelFetchAttempts = 10
+	const modelFetchInterval = 3 * time.Second
 	var availableModels common.LMAvailableModels
-	err = json.Unmarshal(modelsBytes, &availableModels)
-	if err != nil {
-		common.Logger.Error("could not unmarshal models from LLM service: ", err)
+	for attempt := 1; ; attempt++ {
+		modelsBytes, err := common.RemoteGET("http://localhost:" + port + "/v1/models")
+		if err == nil {
+			common.Logger.Debug("Fetched models from LLM service: ", string(modelsBytes))
+			if err = json.Unmarshal(modelsBytes, &availableModels); err == nil {
+				break
+			}
+		}
+		if attempt == modelFetchAttempts {
+			common.Logger.Errorf("could not fetch models from LLM service after %d attempts, registering without model identity groups: %v", modelFetchAttempts, err)
+			break
+		}
+		common.Logger.Debugf("could not fetch models from LLM service (attempt %d/%d): %v", attempt, modelFetchAttempts, err)
+		time.Sleep(modelFetchInterval)
 	}
 	var identityGroup []string
 	for _, model := range availableModels.Models {
@@ -259,12 +272,12 @@ func ReannounceLocalServices() {
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	if err != nil {
-		common.Logger.Error("Error marshalling self during reannounce: ", err)
+		common.Logger.Debug("Error marshalling self during reannounce: ", err)
 		return
 	}
 	UpdateNodeTableHook(key, value)
 	if err := store.Put(ctx, key, value); err != nil {
-		common.Logger.Warn("Failed to reannounce local services: ", err)
+		common.Logger.Debug("Failed to reannounce local services: ", err)
 	} else {
 		common.Logger.Debug("Re-announced local services")
 	}

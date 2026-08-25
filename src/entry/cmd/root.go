@@ -118,6 +118,9 @@ func initConfig(cmd *cobra.Command) error {
 	viper.SetEnvPrefix("of")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+	// Logging: "stderr" (zap default) or "stdout" (K8s-style collection)
+	viper.SetDefault("log.output", "stderr")
+
 	viper.SetDefault("crdt.tombstone_retention", "24h")
 	viper.SetDefault("crdt.tombstone_compaction_interval", "1h")
 	viper.SetDefault("crdt.tombstone_compaction_batch", 512)
