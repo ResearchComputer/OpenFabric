@@ -30,7 +30,10 @@ func ResolveKeyPath() (string, error) {
 func WriteKeyToFile(priv crypto.PrivKey) {
 	keyData, err := crypto.MarshalPrivateKey(priv)
 	if err != nil {
+		// Continuing would write an empty key file and silently poison the
+		// node's persisted identity; fail hard like the branches below.
 		common.Logger.Error("Error while marshalling private key: ", err)
+		os.Exit(1)
 	}
 	keyPath, err := ResolveKeyPath()
 	if err != nil {
@@ -66,7 +69,10 @@ func LoadKeyFromFile() crypto.PrivKey {
 	}
 	priv, err := crypto.UnmarshalPrivateKey(keyData)
 	if err != nil {
-		common.Logger.Error("Error while unmarshalling private key: ", err)
+		// A corrupt key file means this node will mint a fresh identity
+		// (new peer ID) and overwrite the file — surface that, since peer
+		// IDs appear in bootstrap lists and access-control config.
+		common.Logger.Warn("Error while unmarshalling private key: ", err)
 		return nil
 	}
 	return priv
