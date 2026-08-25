@@ -249,12 +249,12 @@ func ReannounceLocalServices() {
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	if err != nil {
-		common.Logger.Error("Error marshalling self during reannounce: ", err)
+		common.Logger.Debug("Error marshalling self during reannounce: ", err)
 		return
 	}
 	UpdateNodeTableHook(key, value)
 	if err := store.Put(ctx, key, value); err != nil {
-		common.Logger.Warn("Failed to reannounce local services: ", err)
+		common.Logger.Debug("Failed to reannounce local services: ", err)
 	} else {
 		common.Logger.Debug("Re-announced local services")
 	}

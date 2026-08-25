@@ -315,12 +315,14 @@ func AnnounceLeave() {
 	value, err := json.Marshal(myself)
 	myselfMu.Unlock()
 	if err != nil {
-		common.Logger.Error("Error while marshalling peer for leave: ", err)
+		common.Logger.Warn("Error while marshalling peer for leave: ", err)
 		return
 	}
 
 	if err := store.Put(ctx, key, value); err != nil {
-		common.Logger.Error("Error while announcing leave: ", err)
+		// Failure here means peers only learn of our departure via
+		// liveness eviction (ghost until then).
+		common.Logger.Warn("Error while announcing leave: ", err)
 	}
 }
 
@@ -328,7 +330,12 @@ func UpdateNodeTableHook(key ds.Key, value []byte) {
 	table := *getNodeTable()
 	var peer Peer
 	err := json.Unmarshal(value, &peer)
-	common.ReportError(err, "Error while unmarshalling peer")
+	if err != nil {
+		// Hot path: runs for every CRDT update, and the value comes from
+		// remote peers — one peer publishing bad data must not be able to
+		// spam our error log.
+		common.Logger.Debug("Error while unmarshalling peer: ", err)
+	}
 
 	// Verify build attestation from the remote peer.
 	peer.SignedBuild = false
@@ -474,10 +481,14 @@ func GetService(name string) (Service, error) {
 	store, _ := GetCRDTStore()
 	key := ds.NewKey(host.ID().String())
 	value, err := store.Get(context.Background(), key)
-	common.ReportError(err, "Error while getting peer")
+	if err != nil {
+		common.Logger.Debug("Error while getting peer: ", err)
+	}
 	var peer Peer
 	err = json.Unmarshal(value, &peer)
-	common.ReportError(err, "Error while unmarshalling peer")
+	if err != nil {
+		common.Logger.Debug("Error while unmarshalling peer: ", err)
+	}
 	for _, service := range peer.Service {
 		if service.Name == name {
 			return service, nil

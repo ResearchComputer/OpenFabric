@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
 	crdt "opentela/internal/protocol/go-ds-crdt"
 
 	ipfslite "github.com/hsanjuan/ipfs-lite"
@@ -33,6 +34,11 @@ var cancelSubscriptions context.CancelFunc
 
 func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 	once.Do(func() {
+		// Suppress noisy third-party loggers (boxo provider/reprovider busy-loops when no peers)
+		_ = logging.SetLogLevel("provider", "FATAL")
+		_ = logging.SetLogLevel("provider.simple", "FATAL")
+		_ = logging.SetLogLevel("provider.queue", "FATAL")
+
 		mode := viper.GetString("mode")
 		host, dht := GetP2PNode(nil)
 		ctx := context.Background()
@@ -75,7 +81,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			for {
 				msg, err := netSubs.Next(ctx)
 				if err != nil {
-					fmt.Println(err)
+					common.Logger.Debug("pubsub subscription error: ", err)
 					break
 				}
 				host.ConnManager().TagPeer(msg.ReceivedFrom, "keep", 100)
@@ -113,7 +119,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 						return
 					default:
 						if err := topic.Publish(ctx, []byte("ping")); err != nil {
-							common.Logger.Warn("Error while publishing ping: ", err)
+							common.Logger.Debug("Error while publishing ping: ", err)
 						}
 						time.Sleep(20 * time.Second)
 					}
@@ -157,7 +163,11 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 		opts.PutHook = func(k ds.Key, v []byte) {
 			var peer Peer
 			err := json.Unmarshal(v, &peer)
-			common.ReportError(err, "Error while unmarshalling peer")
+			if err != nil {
+				// Hot path: fires for every CRDT put from any peer — corrupt
+				// data from one peer must not spam our error log.
+				common.Logger.Debug("Error while unmarshalling peer: ", err)
+			}
 			// When a new peer is added to the table it is marked as disconnected by default.
 			// Doing so allows to intercept ghost peers by the verification procedure.
 
@@ -178,7 +188,7 @@ func GetCRDTStore() (*crdt.Datastore, context.CancelFunc) {
 			if err == nil {
 				UpdateNodeTableHook(k, value)
 			} else {
-				common.Logger.Error("Error while marshalling peer", err)
+				common.Logger.Debug("Error while marshalling peer", err)
 			}
 		}
 		opts.DeleteHook = func(k ds.Key) {

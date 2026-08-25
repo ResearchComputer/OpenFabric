@@ -31,14 +31,14 @@ func getDefaultBootstrapPeers(bootstrapAddrs []string, mode string) []multiaddr.
 	}
 
 	if len(sources) == 0 {
-		common.Logger.Warn("No bootstrap sources configured")
+		common.Logger.Debug("No bootstrap sources configured")
 		return []multiaddr.Multiaddr{}
 	}
 
 	resolved := resolveBootstrapSources(sources)
 	peers := parseBootstrapMultiaddrs(resolved)
 	if len(peers) == 0 {
-		common.Logger.Warn("No bootstrap addresses discovered from configured sources")
+		common.Logger.Debug("No bootstrap addresses discovered from configured sources")
 		return nil
 	}
 
@@ -73,7 +73,7 @@ func resolveBootstrapSources(sources []string) []string {
 	for _, source := range sources {
 		entries, err := resolveBootstrapSource(strings.TrimSpace(source))
 		if err != nil {
-			common.Logger.With("source", source).Warnf("Bootstrap source failed: %v", err)
+			common.Logger.With("source", source).Debugf("Bootstrap source failed: %v", err)
 			continue
 		}
 		if len(entries) == 0 {
@@ -181,7 +181,7 @@ func parseBootstrapMultiaddrs(addrs []string) []multiaddr.Multiaddr {
 		}
 		ma, err := multiaddr.NewMultiaddr(addr)
 		if err != nil {
-			common.Logger.With("addr", addr).Warnf("Skipping invalid bootstrap multiaddr: %v", err)
+			common.Logger.With("addr", addr).Debugf("Skipping invalid bootstrap multiaddr: %v", err)
 			continue
 		}
 		key := ma.String()

@@ -1084,7 +1084,7 @@ func (store *Datastore) repairDAG(ctx context.Context) error {
 				ticker.Stop()
 				return
 			case <-ticker.C:
-				store.logger.Infof(
+				store.logger.Debugf(
 					"DAG repair in progress. Visited nodes: %d. Last priority: %d. Queued nodes: %d",
 					atomic.LoadUint64(&visitedNodes),
 					atomic.LoadUint64(&lastPriority),

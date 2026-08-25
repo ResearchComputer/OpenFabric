@@ -101,7 +101,7 @@ func StartTicker() {
 			len(connectedPeers), len(allPeers))
 
 		if len(connectedPeers) == 0 {
-			common.Logger.Warnf("Low connection count detected: only %d connected peers", len(connectedPeers))
+			common.Logger.Debugf("Low connection count detected: only %d connected peers", len(connectedPeers))
 			Reconnect()
 		}
 

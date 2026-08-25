@@ -322,7 +322,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 				if b, e := json.Marshal(p); e == nil {
 					UpdateNodeTableHook(datastore.NewKey(pid.String()), b)
 				} else {
-					common.Logger.Error("Failed to marshal peer on connect: ", e)
+					common.Logger.Debug("Failed to marshal peer on connect: ", e)
 				}
 			}(c.RemotePeer())
 		},
@@ -344,7 +344,7 @@ func newHost(ctx context.Context, seed int64, ds datastore.Batching) (host.Host,
 				if b, e := json.Marshal(p); e == nil {
 					UpdateNodeTableHook(datastore.NewKey(pid.String()), b)
 				} else {
-					common.Logger.Error("Failed to marshal peer on disconnect: ", e)
+					common.Logger.Debug("Failed to marshal peer on disconnect: ", e)
 				}
 			}(c.RemotePeer())
 		},
@@ -431,7 +431,7 @@ func tryReconnectToBootstraps(ctx context.Context, h host.Host, dialTimeout time
 
 	peerInfos, err := peer.AddrInfosFromP2pAddrs(addrs...)
 	if err != nil {
-		common.Logger.Error("Failed to parse bootstrap peers during reconnect: ", err)
+		common.Logger.Debug("Failed to parse bootstrap peers during reconnect: ", err)
 		return false
 	}
 
@@ -447,7 +447,7 @@ func tryReconnectToBootstraps(ctx context.Context, h host.Host, dialTimeout time
 		}
 
 		if len(info.Addrs) == 0 {
-			common.Logger.With("peer", info.ID).Warn("Bootstrap peer has no address; skipping")
+			common.Logger.With("peer", info.ID).Debug("Bootstrap peer has no address; skipping")
 			continue
 		}
 
@@ -473,7 +473,7 @@ func tryReconnectToBootstraps(ctx context.Context, h host.Host, dialTimeout time
 		return true
 	}
 
-	common.Logger.Warn("Reconnect attempt failed; no bootstrap peers reachable")
+	common.Logger.Debug("Reconnect attempt failed; no bootstrap peers reachable")
 	return false
 }
 
