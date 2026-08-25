@@ -1,8 +1,0 @@
-[workspace]
-members = ["programs/opentela_rewards"]
-resolver = "2"
-
-[profile.release]
-overflow-checks = true
-lto = "fat"
-codegen-units = 1

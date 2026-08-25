@@ -1,2 +1,0 @@
-[console_scripts]
-otela-fleet = fleet_manager.cli:cli
