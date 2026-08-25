@@ -93,6 +93,11 @@ func RegisterLocalServices() {
 		return
 	}
 	identityGroup := viper.GetStringSlice("service.identity_group")
+	// Same PENDING -> READY flip as the LLM path: the local service passed
+	// its health check and is about to be advertised.
+	myselfMu.Lock()
+	myself.Status = READY
+	myselfMu.Unlock()
 	RegisterAdHocService(serviceName, servicePort, identityGroup)
 }
 
@@ -176,6 +181,11 @@ func registerLLMService(port string) {
 		Port:          port,
 		IdentityGroup: identityGroup,
 	}
+	// Flip peer-level Status to ready now that healthCheckRemote has passed
+	// and we're about to advertise the model.
+	myselfMu.Lock()
+	myself.Status = READY
+	myselfMu.Unlock()
 	provideService(service)
 }
 

@@ -60,6 +60,7 @@ func init() {
 	startCmd.Flags().String("service.health_path", "/health", "HTTP path used to health-check the service before registration")
 	startCmd.Flags().Duration("service.health_interval", 30*time.Second, "How often to re-check the local service after registration; a service that stops answering is withdrawn from the advertisement")
 	startCmd.Flags().Int("service.health_failures", 3, "Consecutive failed health checks before the local service is withdrawn")
+	startCmd.Flags().StringArray("label", nil, "key=value metadata to attach to this peer in the DNT (repeatable, e.g. --label launched_by=$USER)")
 	startCmd.Flags().String("solana.rpc", defaultConfig.Solana.RPC, "Solana RPC endpoint")
 	startCmd.Flags().String("solana.mint", defaultConfig.Solana.Mint, "SPL token mint to verify ownership")
 	startCmd.Flags().Bool("solana.skip_verification", defaultConfig.Solana.SkipVerification, "Skip Solana token ownership verification (use for testing only)")
