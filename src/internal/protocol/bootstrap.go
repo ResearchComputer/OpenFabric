@@ -47,21 +47,39 @@ func getDefaultBootstrapPeers(bootstrapAddrs []string, mode string) []multiaddr.
 }
 
 func collectBootstrapSources() []string {
-	var combined []string
+	var explicit []string
 	appendAll := func(values []string) {
 		if len(values) == 0 {
 			return
 		}
-		combined = append(combined, values...)
+		explicit = append(explicit, values...)
 	}
 
 	appendAll(viper.GetStringSlice("bootstrap.sources"))
 	appendAll(viper.GetStringSlice("bootstrap.source"))
-	appendAll(viper.GetStringSlice("bootstrap.static"))
 	appendAll(viper.GetStringSlice("bootstrap.addrs"))
 
 	if legacy := strings.TrimSpace(viper.GetString("bootstrap.addr")); legacy != "" {
-		combined = append(combined, expandBootstrapValue(legacy)...)
+		explicit = append(explicit, expandBootstrapValue(legacy)...)
+	}
+
+	// Explicitly configured peers take precedence over the bootstrap.static
+	// discovery list rather than being unioned with it.
+	//
+	// bootstrap.static defaults to the public discovery endpoints, so unioning
+	// meant an operator who named their own bootstrap peer silently joined the
+	// public network as well as their own. All nodes share the single
+	// "ocf-crdt" pubsub topic (crdt.go), so the two deployments' records merge
+	// into one CRDT DAG; and because libp2p keys on peer ID rather than
+	// address, a private bootstrap node whose peer ID is also advertised
+	// publicly becomes indistinguishable from the public host — the node
+	// "reaches" its bootstrap peer ID without ever talking to the host the
+	// operator named.
+	//
+	// Fall back to the static list only when nothing explicit is configured.
+	combined := explicit
+	if len(combined) == 0 {
+		combined = append(combined, viper.GetStringSlice("bootstrap.static")...)
 	}
 
 	combined = common.DeduplicateStrings(combined)
