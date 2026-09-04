@@ -44,7 +44,7 @@ func keygen() {
 	}
 	fmt.Printf("public:  %s\n", hex.EncodeToString(pub))
 	fmt.Printf("private: %s\n", hex.EncodeToString(priv))
-	fmt.Println("\nPut the public key in attestation.go (maintainerPubKeyHex).")
+	fmt.Println("\nTrust the public key via security.build_pubkeys (env: OF_SECURITY_BUILD_PUBKEYS).")
 	fmt.Println("Store the private key as a GitHub Actions secret (BUILD_SIGN_KEY).")
 }
 

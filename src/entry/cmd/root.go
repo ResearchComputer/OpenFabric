@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"opentela/internal/attestation"
 	"opentela/internal/common"
 	"os"
 	"path"
@@ -141,6 +142,10 @@ func initConfig(cmd *cobra.Command) error {
 
 	viper.SetDefault("role", "worker")
 	viper.SetDefault("security.require_signed_binary", true)
+	// Trust anchors for build attestation. Defaults to the upstream release
+	// key; operators signing their own builds append or replace it here
+	// (OF_SECURITY_BUILD_PUBKEYS) instead of patching the attestation package.
+	viper.SetDefault(attestation.PubKeysConfigKey, []string{attestation.DefaultPubKeyHex})
 	viper.SetDefault("security.auth_url", "")
 	viper.SetDefault("security.control_plane.url", "")
 	viper.SetDefault("security.control_plane.token", "")
