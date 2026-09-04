@@ -31,10 +31,18 @@ type BuildInfo struct {
 }
 
 // DefaultPubKeyHex is the hex-encoded Ed25519 public key of the upstream
-// release maintainer. It is the default trust anchor; operators who build
-// their own binaries can trust additional (or different) keys via the
-// PubKeysConfigKey config key without patching this file.
-const DefaultPubKeyHex = "df45c7c4dd4450cd0f296ea6250c60e8a0dad2f459dbf5908e38977e45098d8b"
+// release maintainer: the default trust anchor when PubKeysConfigKey is unset.
+//
+// It is a var rather than a const so a distributor signing its own builds can
+// bake in its own default at link time, the same way the signature itself is
+// injected:
+//
+//	-ldflags "-X opentela/internal/attestation.DefaultPubKeyHex=<hex>"
+//
+// That keeps the trust anchor with the build it belongs to instead of
+// requiring every node to be configured. PubKeysConfigKey still overrides it
+// at runtime.
+var DefaultPubKeyHex = "df45c7c4dd4450cd0f296ea6250c60e8a0dad2f459dbf5908e38977e45098d8b"
 
 // PubKeysConfigKey holds the hex-encoded Ed25519 public keys whose build
 // signatures this node accepts, as a list (env: OF_SECURITY_BUILD_PUBKEYS,
