@@ -85,3 +85,49 @@ func TestBootstrapSourcesDNSAddr(t *testing.T) {
 		t.Fatalf("expected 1 peer from dnsaddr, got %d", len(res))
 	}
 }
+
+func TestBootstrapExplicitAddrOverridesStatic(t *testing.T) {
+	viper.Reset()
+	staticAddr := "/ip4/10.9.9.9/tcp/4001/p2p/" + testPeerID
+	explicitAddr := "/ip4/10.1.1.1/tcp/4001/p2p/" + testPeerID
+	viper.Set("bootstrap.static", []string{staticAddr})
+	viper.Set("bootstrap.addr", explicitAddr)
+
+	res := getDefaultBootstrapPeers(nil, "node")
+	if len(res) != 1 {
+		t.Fatalf("expected only the explicit peer, got %d: %v", len(res), res)
+	}
+	if res[0].String() != explicitAddr {
+		t.Fatalf("expected %s, got %s", explicitAddr, res[0].String())
+	}
+}
+
+func TestBootstrapExplicitSourceOverridesStatic(t *testing.T) {
+	viper.Reset()
+	staticAddr := "/ip4/10.9.9.9/tcp/4001/p2p/" + testPeerID
+	explicitAddr := "/ip4/10.2.2.2/tcp/4001/p2p/" + testPeerID
+	viper.Set("bootstrap.static", []string{staticAddr})
+	viper.Set("bootstrap.source", []string{explicitAddr})
+
+	res := getDefaultBootstrapPeers(nil, "node")
+	if len(res) != 1 {
+		t.Fatalf("expected only the explicit source, got %d: %v", len(res), res)
+	}
+	if res[0].String() != explicitAddr {
+		t.Fatalf("expected %s, got %s", explicitAddr, res[0].String())
+	}
+}
+
+func TestBootstrapStaticUsedWhenNoExplicitSources(t *testing.T) {
+	viper.Reset()
+	staticAddr := "/ip4/10.9.9.9/tcp/4001/p2p/" + testPeerID
+	viper.Set("bootstrap.static", []string{staticAddr})
+
+	res := getDefaultBootstrapPeers(nil, "node")
+	if len(res) != 1 {
+		t.Fatalf("expected the static peer, got %d: %v", len(res), res)
+	}
+	if res[0].String() != staticAddr {
+		t.Fatalf("expected %s, got %s", staticAddr, res[0].String())
+	}
+}
