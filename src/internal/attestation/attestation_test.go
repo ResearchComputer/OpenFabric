@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/spf13/viper"
+
 	"opentela/internal/attestation"
 )
 
@@ -48,5 +50,98 @@ func TestVerifyRejectsEmptySignature(t *testing.T) {
 	info := attestation.BuildInfo{Version: "1.0.0", Commit: "abc"}
 	if err := attestation.Verify(info); err == nil {
 		t.Fatal("expected error for empty signature")
+	}
+}
+
+// newKeyPair returns a fresh Ed25519 pair with the public half hex-encoded,
+// matching the form `buildsign keygen` prints and security.build_pubkeys takes.
+func newKeyPair(t *testing.T) (ed25519.PrivateKey, string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv, hex.EncodeToString(pub)
+}
+
+func TestVerifyAcceptsConfiguredPubKey(t *testing.T) {
+	viper.Reset()
+	priv, pubHex := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, []string{pubHex})
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err != nil {
+		t.Fatalf("expected a build signed by a configured key to verify, got %v", err)
+	}
+}
+
+func TestVerifyRejectsKeyNotConfigured(t *testing.T) {
+	viper.Reset()
+	priv, _ := newKeyPair(t)
+	_, otherHex := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, []string{otherHex})
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err == nil {
+		t.Fatal("expected verification to fail for a key that is not trusted")
+	}
+}
+
+func TestVerifyAcceptsAnyOfSeveralPubKeys(t *testing.T) {
+	viper.Reset()
+	priv, pubHex := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, []string{attestation.DefaultPubKeyHex, pubHex})
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err != nil {
+		t.Fatalf("expected the second trusted key to be tried, got %v", err)
+	}
+}
+
+// The value arrives as one delimited string when set through the environment
+// (OF_SECURITY_BUILD_PUBKEYS), not as a real list.
+func TestVerifyAcceptsDelimitedPubKeyString(t *testing.T) {
+	viper.Reset()
+	priv, pubHex := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, attestation.DefaultPubKeyHex+","+pubHex)
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err != nil {
+		t.Fatalf("expected comma-separated keys to be parsed, got %v", err)
+	}
+}
+
+// One malformed entry must not disable the remaining trusted keys.
+func TestVerifyToleratesMalformedPubKeyEntry(t *testing.T) {
+	viper.Reset()
+	priv, pubHex := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, []string{"not-hex", "aabb", pubHex})
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err != nil {
+		t.Fatalf("expected a valid key alongside malformed entries to work, got %v", err)
+	}
+}
+
+func TestVerifyErrorsWhenNoUsablePubKey(t *testing.T) {
+	viper.Reset()
+	priv, _ := newKeyPair(t)
+	viper.Set(attestation.PubKeysConfigKey, []string{"not-hex"})
+
+	info := attestation.BuildInfo{Version: "sai-v0.0.7", Commit: "abc1234"}
+	info.Signature = attestation.Sign(priv, info.Version, info.Commit)
+
+	if err := attestation.Verify(info); err == nil {
+		t.Fatal("expected an error when no configured key is usable")
 	}
 }

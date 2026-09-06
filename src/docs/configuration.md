@@ -88,6 +88,7 @@ in the bootstrap list served by connected peers at `/v1/dnt/bootstraps`.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `security.require_signed_binary` | bool | `true` | Reject peers without valid build attestation |
+| `security.build_pubkeys` | list | upstream release key | Hex-encoded Ed25519 public keys whose build signatures are accepted. Comma- or space-separated via `OF_SECURITY_BUILD_PUBKEYS`. List several to trust your own builds alongside upstream's |
 | `security.auth_url` | string | `""` | Deprecated legacy wallet-auth URL, used only when the control plane is disabled |
 | `security.control_plane.url` | string | `""` | `api.opentela.ai` base URL for instance ACL evaluation; empty disables central ACLs |
 | `security.control_plane.token` | string | `""` | Internal bearer token shared with `api.opentela.ai`; required when the URL is set |
